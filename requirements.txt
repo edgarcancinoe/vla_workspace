@@ -1,1 +1,3 @@
 lerobot[smolvla,feetech,async]
+grpcio>=1.76.0
+grpcio-tools>=1.76.0
