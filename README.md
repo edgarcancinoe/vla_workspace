@@ -5,7 +5,7 @@ This workspace uses `lerobot.async_inference` to control an SO-101 robot via a r
 ## Quick Start
 
 ### 1. The Tunnel (Local Mac)
-In a fresh terminal on your Mac:
+In a fresh terminal on Mac:
 ```bash
 ssh -L 8080:localhost:8080 -p 30660 jose@proxy.vicos.si
 ```

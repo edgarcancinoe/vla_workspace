@@ -5,6 +5,7 @@ actions_per_chunk: 50
 server_address: 127.0.0.1:8080
 policy_device: cuda
 fps: 30
+use_rerun: true
 
 robot:
   type: so101_follower
