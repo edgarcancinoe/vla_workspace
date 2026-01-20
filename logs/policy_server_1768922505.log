@@ -30,3 +30,407 @@ INFO 2026-01-20 15:21:45 y_server.py:420 {'fps': 30,
  'obs_queue_timeout': 1.0,
  'port': 8080}
 INFO 2026-01-20 15:21:45 y_server.py:430 PolicyServer started on 127.0.0.1:8080
+INFO 2026-01-20 15:23:13 y_server.py:112 Client ipv4:127.0.0.1:37172 connected and ready
+INFO 2026-01-20 15:23:13 y_server.py:138 Receiving policy instructions from ipv4:127.0.0.1:37172 | Policy type: smolvla | Pretrained name or path: lerobot/smolvla_base | Actions per chunk: 50 | Device: cuda
+DEBUG 2026-01-20 15:23:13 ionpool.py:1049 Starting new HTTPS connection (1): huggingface.co:443
+DEBUG 2026-01-20 15:23:13 tionpool.py:544 https://huggingface.co:443 "HEAD /lerobot/smolvla_base/resolve/main/config.json HTTP/1.1" 307 0
+DEBUG 2026-01-20 15:23:13 tionpool.py:544 https://huggingface.co:443 "HEAD /api/resolve-cache/models/lerobot/smolvla_base/4d2f2b37fa245361ef1efe6d91ce96b8bd4af511/config.json HTTP/1.1" 200 0
+DEBUG 2026-01-20 15:23:13 ock/_api.py:331 Attempting to acquire lock 139857952590480 on /home/jose/.cache/huggingface/hub/.locks/models--lerobot--smolvla_base/36d4d51c1b01be11b2c7a074ab34bf5ee6db9021.lock
+DEBUG 2026-01-20 15:23:13 ock/_api.py:334 Lock 139857952590480 acquired on /home/jose/.cache/huggingface/hub/.locks/models--lerobot--smolvla_base/36d4d51c1b01be11b2c7a074ab34bf5ee6db9021.lock
+DEBUG 2026-01-20 15:23:13 tionpool.py:544 https://huggingface.co:443 "GET /api/resolve-cache/models/lerobot/smolvla_base/4d2f2b37fa245361ef1efe6d91ce96b8bd4af511/config.json HTTP/1.1" 200 None
+DEBUG 2026-01-20 15:23:13 ock/_api.py:364 Attempting to release lock 139857952590480 on /home/jose/.cache/huggingface/hub/.locks/models--lerobot--smolvla_base/36d4d51c1b01be11b2c7a074ab34bf5ee6db9021.lock
+DEBUG 2026-01-20 15:23:13 ock/_api.py:367 Lock 139857952590480 released on /home/jose/.cache/huggingface/hub/.locks/models--lerobot--smolvla_base/36d4d51c1b01be11b2c7a074ab34bf5ee6db9021.lock
+DEBUG 2026-01-20 15:23:13 d_metavar.py:22 Metavar for type None: None
+DEBUG 2026-01-20 15:23:13 formatter.py:52 action type: None, Result: , nargs: 0, default metavar: None
+DEBUG 2026-01-20 15:23:13 d_metavar.py:22 Metavar for type <class 'str'>: str
+DEBUG 2026-01-20 15:23:13 formatter.py:52 action type: <class 'str'>, Result: str, nargs: None, default metavar: None
+DEBUG 2026-01-20 15:23:13 _wrapper.py:168 wrapped field at n_obs_steps has a default value of 1
+DEBUG 2026-01-20 15:23:13 _wrapper.py:201 wrapped field at input_features has a default value of {}
+DEBUG 2026-01-20 15:23:13 _wrapper.py:201 wrapped field at output_features has a default value of {}
+DEBUG 2026-01-20 15:23:13 _wrapper.py:201 wrapped field at device has a default value of None
+DEBUG 2026-01-20 15:23:13 _wrapper.py:168 wrapped field at use_amp has a default value of False
+DEBUG 2026-01-20 15:23:13 _wrapper.py:168 wrapped field at push_to_hub has a default value of True
+DEBUG 2026-01-20 15:23:13 _wrapper.py:201 wrapped field at repo_id has a default value of None
+DEBUG 2026-01-20 15:23:13 _wrapper.py:201 wrapped field at private has a default value of None
+DEBUG 2026-01-20 15:23:13 _wrapper.py:201 wrapped field at tags has a default value of None
+DEBUG 2026-01-20 15:23:13 _wrapper.py:201 wrapped field at license has a default value of None
+DEBUG 2026-01-20 15:23:13 _wrapper.py:201 wrapped field at pretrained_path has a default value of None
+DEBUG 2026-01-20 15:23:13 ocstring.py:253 Warning: Unable to parse attribute docstring:             current step and additional steps going back).
+DEBUG 2026-01-20 15:23:13 _wrapper.py:309 Arg options for field 'n_obs_steps': {'required': False, 'dest': 'n_obs_steps', 'default': 1, 'help': ' ', 'type': <class 'int'>}
+DEBUG 2026-01-20 15:23:13 _wrapper.py:309 Arg options for field 'input_features': {'required': False, 'dest': 'input_features', 'default': {}, 'help': ' ', 'type': typing.Dict[str, lerobot.configs.types.PolicyFeature]}
+DEBUG 2026-01-20 15:23:13 _wrapper.py:309 Arg options for field 'output_features': {'required': False, 'dest': 'output_features', 'default': {}, 'help': ' ', 'type': typing.Dict[str, lerobot.configs.types.PolicyFeature]}
+DEBUG 2026-01-20 15:23:13 _wrapper.py:309 Arg options for field 'device': {'required': False, 'dest': 'device', 'default': None, 'help': 'e.g. "cuda", "cuda:0", "cpu", or "mps"', 'type': typing.Optional[str]}
+DEBUG 2026-01-20 15:23:13 _wrapper.py:309 Arg options for field 'use_amp': {'required': False, 'dest': 'use_amp', 'default': False, 'help': '`use_amp` determines whether to use Automatic Mixed Precision (AMP) for training and evaluation. With AMP,\nautomatic gradient scaling is used.', 'type': <class 'bool'>}
+DEBUG 2026-01-20 15:23:13 _wrapper.py:309 Arg options for field 'push_to_hub': {'required': False, 'dest': 'push_to_hub', 'default': True, 'help': 'type: ignore[assignment] # TODO: use a different name to avoid override', 'type': <class 'bool'>}
+DEBUG 2026-01-20 15:23:13 _wrapper.py:309 Arg options for field 'repo_id': {'required': False, 'dest': 'repo_id', 'default': None, 'type': typing.Optional[str]}
+DEBUG 2026-01-20 15:23:13 _wrapper.py:309 Arg options for field 'private': {'required': False, 'dest': 'private', 'default': None, 'help': 'Upload on private repository on the Hugging Face hub.', 'type': typing.Optional[bool]}
+DEBUG 2026-01-20 15:23:13 _wrapper.py:309 Arg options for field 'tags': {'required': False, 'dest': 'tags', 'default': None, 'help': 'Add tags to your policy on the hub.', 'type': typing.Optional[typing.List[str]]}
+DEBUG 2026-01-20 15:23:14 _wrapper.py:309 Arg options for field 'license': {'required': False, 'dest': 'license', 'default': None, 'help': 'Add tags to your policy on the hub.', 'type': typing.Optional[str]}
+DEBUG 2026-01-20 15:23:14 _wrapper.py:309 Arg options for field 'pretrained_path': {'required': False, 'dest': 'pretrained_path', 'default': None, 'help': 'Either the repo ID of a model hosted on the Hub or a path to a directory containing weights\nsaved using `Policy.save_pretrained`. If not provided, the policy is initialized from scratch.', 'type': typing.Optional[pathlib.Path]}
+DEBUG 2026-01-20 15:23:14 gparsing.py:143 
+POST PROCESSING
+
+DEBUG 2026-01-20 15:23:14 gparsing.py:144 (raw) parsed args: Namespace()
+DEBUG 2026-01-20 15:23:14 decoding.py:112 from_dict for <class 'lerobot.policies.smolvla.configuration_smolvla.SmolVLAConfig'>
+DEBUG 2026-01-20 15:23:14 decoding.py:132 Decode name = n_obs_steps, type = <class 'int'>
+DEBUG 2026-01-20 15:23:14 decoding.py:132 Decode name = input_features, type = dict[str, lerobot.configs.types.PolicyFeature]
+DEBUG 2026-01-20 15:23:14 decoding.py:261 Decoding a Dict field: dict[str, lerobot.configs.types.PolicyFeature]
+DEBUG 2026-01-20 15:23:14 decoding.py:112 from_dict for <class 'lerobot.configs.types.PolicyFeature'>
+DEBUG 2026-01-20 15:23:14 decoding.py:132 Decode name = type, type = <enum 'FeatureType'>
+DEBUG 2026-01-20 15:23:14 decoding.py:132 Decode name = shape, type = tuple[int, ...]
+DEBUG 2026-01-20 15:23:14 decoding.py:275 Decoding a Tuple field: tuple[int, ...]
+DEBUG 2026-01-20 15:23:14 decoding.py:112 from_dict for <class 'lerobot.configs.types.PolicyFeature'>
+DEBUG 2026-01-20 15:23:14 decoding.py:132 Decode name = type, type = <enum 'FeatureType'>
+DEBUG 2026-01-20 15:23:14 decoding.py:132 Decode name = shape, type = tuple[int, ...]
+DEBUG 2026-01-20 15:23:14 decoding.py:112 from_dict for <class 'lerobot.configs.types.PolicyFeature'>
+DEBUG 2026-01-20 15:23:14 decoding.py:132 Decode name = type, type = <enum 'FeatureType'>
+DEBUG 2026-01-20 15:23:14 decoding.py:132 Decode name = shape, type = tuple[int, ...]
+DEBUG 2026-01-20 15:23:14 decoding.py:112 from_dict for <class 'lerobot.configs.types.PolicyFeature'>
+DEBUG 2026-01-20 15:23:14 decoding.py:132 Decode name = type, type = <enum 'FeatureType'>
+DEBUG 2026-01-20 15:23:14 decoding.py:132 Decode name = shape, type = tuple[int, ...]
+DEBUG 2026-01-20 15:23:14 decoding.py:132 Decode name = output_features, type = dict[str, lerobot.configs.types.PolicyFeature]
+DEBUG 2026-01-20 15:23:14 decoding.py:112 from_dict for <class 'lerobot.configs.types.PolicyFeature'>
+DEBUG 2026-01-20 15:23:14 decoding.py:132 Decode name = type, type = <enum 'FeatureType'>
+DEBUG 2026-01-20 15:23:14 decoding.py:132 Decode name = shape, type = tuple[int, ...]
+DEBUG 2026-01-20 15:23:14 decoding.py:132 Decode name = device, type = typing.Optional[str]
+DEBUG 2026-01-20 15:23:14 decoding.py:293 Decoding a Union field: typing.Optional[str]
+DEBUG 2026-01-20 15:23:14 decoding.py:132 Decode name = use_amp, type = <class 'bool'>
+DEBUG 2026-01-20 15:23:14 decoding.py:132 Decode name = push_to_hub, type = <class 'bool'>
+DEBUG 2026-01-20 15:23:14 decoding.py:132 Decode name = repo_id, type = typing.Optional[str]
+DEBUG 2026-01-20 15:23:14 decoding.py:132 Decode name = private, type = typing.Optional[bool]
+DEBUG 2026-01-20 15:23:14 decoding.py:293 Decoding a Union field: typing.Optional[bool]
+DEBUG 2026-01-20 15:23:14 decoding.py:132 Decode name = tags, type = typing.Optional[list[str]]
+DEBUG 2026-01-20 15:23:14 decoding.py:293 Decoding a Union field: typing.Optional[list[str]]
+DEBUG 2026-01-20 15:23:14 decoding.py:282 Decoding a List field: list[str]
+DEBUG 2026-01-20 15:23:14 decoding.py:132 Decode name = license, type = typing.Optional[str]
+DEBUG 2026-01-20 15:23:14 decoding.py:132 Decode name = chunk_size, type = <class 'int'>
+DEBUG 2026-01-20 15:23:14 decoding.py:132 Decode name = n_action_steps, type = <class 'int'>
+DEBUG 2026-01-20 15:23:14 decoding.py:132 Decode name = normalization_mapping, type = dict[str, lerobot.configs.types.NormalizationMode]
+DEBUG 2026-01-20 15:23:14 decoding.py:261 Decoding a Dict field: dict[str, lerobot.configs.types.NormalizationMode]
+DEBUG 2026-01-20 15:23:14 decoding.py:132 Decode name = max_state_dim, type = <class 'int'>
+DEBUG 2026-01-20 15:23:14 decoding.py:132 Decode name = max_action_dim, type = <class 'int'>
+DEBUG 2026-01-20 15:23:14 decoding.py:132 Decode name = resize_imgs_with_padding, type = tuple[int, int]
+DEBUG 2026-01-20 15:23:14 decoding.py:275 Decoding a Tuple field: tuple[int, int]
+DEBUG 2026-01-20 15:23:14 decoding.py:132 Decode name = empty_cameras, type = <class 'int'>
+DEBUG 2026-01-20 15:23:14 decoding.py:132 Decode name = adapt_to_pi_aloha, type = <class 'bool'>
+DEBUG 2026-01-20 15:23:14 decoding.py:132 Decode name = use_delta_joint_actions_aloha, type = <class 'bool'>
+DEBUG 2026-01-20 15:23:14 decoding.py:132 Decode name = tokenizer_max_length, type = <class 'int'>
+DEBUG 2026-01-20 15:23:14 decoding.py:132 Decode name = num_steps, type = <class 'int'>
+DEBUG 2026-01-20 15:23:14 decoding.py:132 Decode name = use_cache, type = <class 'bool'>
+DEBUG 2026-01-20 15:23:14 decoding.py:132 Decode name = freeze_vision_encoder, type = <class 'bool'>
+DEBUG 2026-01-20 15:23:14 decoding.py:132 Decode name = train_expert_only, type = <class 'bool'>
+DEBUG 2026-01-20 15:23:14 decoding.py:132 Decode name = train_state_proj, type = <class 'bool'>
+DEBUG 2026-01-20 15:23:14 decoding.py:132 Decode name = optimizer_lr, type = <class 'float'>
+DEBUG 2026-01-20 15:23:14 decoding.py:132 Decode name = optimizer_betas, type = tuple[float, float]
+DEBUG 2026-01-20 15:23:14 decoding.py:275 Decoding a Tuple field: tuple[float, float]
+DEBUG 2026-01-20 15:23:14 decoding.py:132 Decode name = optimizer_eps, type = <class 'float'>
+DEBUG 2026-01-20 15:23:14 decoding.py:132 Decode name = optimizer_weight_decay, type = <class 'float'>
+DEBUG 2026-01-20 15:23:14 decoding.py:132 Decode name = optimizer_grad_clip_norm, type = <class 'float'>
+DEBUG 2026-01-20 15:23:14 decoding.py:132 Decode name = scheduler_warmup_steps, type = <class 'int'>
+DEBUG 2026-01-20 15:23:14 decoding.py:132 Decode name = scheduler_decay_steps, type = <class 'int'>
+DEBUG 2026-01-20 15:23:14 decoding.py:132 Decode name = scheduler_decay_lr, type = <class 'float'>
+DEBUG 2026-01-20 15:23:14 decoding.py:132 Decode name = vlm_model_name, type = <class 'str'>
+DEBUG 2026-01-20 15:23:14 decoding.py:132 Decode name = load_vlm_weights, type = <class 'bool'>
+DEBUG 2026-01-20 15:23:14 decoding.py:132 Decode name = add_image_special_tokens, type = <class 'bool'>
+DEBUG 2026-01-20 15:23:14 decoding.py:132 Decode name = attention_mode, type = <class 'str'>
+DEBUG 2026-01-20 15:23:14 decoding.py:132 Decode name = prefix_length, type = <class 'int'>
+DEBUG 2026-01-20 15:23:14 decoding.py:132 Decode name = pad_language_to, type = <class 'str'>
+DEBUG 2026-01-20 15:23:14 decoding.py:132 Decode name = num_expert_layers, type = <class 'int'>
+DEBUG 2026-01-20 15:23:14 decoding.py:132 Decode name = num_vlm_layers, type = <class 'int'>
+DEBUG 2026-01-20 15:23:14 decoding.py:132 Decode name = self_attn_every_n_layers, type = <class 'int'>
+DEBUG 2026-01-20 15:23:14 decoding.py:132 Decode name = expert_width_multiplier, type = <class 'float'>
+DEBUG 2026-01-20 15:23:14 decoding.py:132 Decode name = min_period, type = <class 'float'>
+DEBUG 2026-01-20 15:23:14 decoding.py:132 Decode name = max_period, type = <class 'float'>
+WARNING 2026-01-20 15:23:14 ils/utils.py:52 No accelerated backend detected. Using default cpu, this will be slow.
+WARNING 2026-01-20 15:23:14 /policies.py:82 Device 'cuda' is not available. Switching to 'cpu'.
+DEBUG 2026-01-20 15:23:14 d_metavar.py:22 Metavar for type None: None
+DEBUG 2026-01-20 15:23:14 formatter.py:52 action type: None, Result: , nargs: 0, default metavar: None
+DEBUG 2026-01-20 15:23:14 d_metavar.py:22 Metavar for type <class 'str'>: str
+DEBUG 2026-01-20 15:23:14 formatter.py:52 action type: <class 'str'>, Result: str, nargs: None, default metavar: None
+DEBUG 2026-01-20 15:23:14 _wrapper.py:168 wrapped field at n_obs_steps has a default value of 1
+DEBUG 2026-01-20 15:23:14 _wrapper.py:201 wrapped field at input_features has a default value of {}
+DEBUG 2026-01-20 15:23:14 _wrapper.py:201 wrapped field at output_features has a default value of {}
+DEBUG 2026-01-20 15:23:14 _wrapper.py:201 wrapped field at device has a default value of None
+DEBUG 2026-01-20 15:23:14 _wrapper.py:168 wrapped field at use_amp has a default value of False
+DEBUG 2026-01-20 15:23:14 _wrapper.py:168 wrapped field at push_to_hub has a default value of True
+DEBUG 2026-01-20 15:23:14 _wrapper.py:201 wrapped field at repo_id has a default value of None
+DEBUG 2026-01-20 15:23:14 _wrapper.py:201 wrapped field at private has a default value of None
+DEBUG 2026-01-20 15:23:14 _wrapper.py:201 wrapped field at tags has a default value of None
+DEBUG 2026-01-20 15:23:14 _wrapper.py:201 wrapped field at license has a default value of None
+DEBUG 2026-01-20 15:23:14 _wrapper.py:201 wrapped field at pretrained_path has a default value of None
+DEBUG 2026-01-20 15:23:14 _wrapper.py:168 wrapped field at chunk_size has a default value of 50
+DEBUG 2026-01-20 15:23:14 _wrapper.py:168 wrapped field at n_action_steps has a default value of 50
+DEBUG 2026-01-20 15:23:14 _wrapper.py:201 wrapped field at normalization_mapping has a default value of {'VISUAL': <NormalizationMode.IDENTITY: 'IDENTITY'>, 'STATE': <NormalizationMode.MEAN_STD: 'MEAN_STD'>, 'ACTION': <NormalizationMode.MEAN_STD: 'MEAN_STD'>}
+DEBUG 2026-01-20 15:23:14 _wrapper.py:168 wrapped field at max_state_dim has a default value of 32
+DEBUG 2026-01-20 15:23:14 _wrapper.py:168 wrapped field at max_action_dim has a default value of 32
+DEBUG 2026-01-20 15:23:14 _wrapper.py:201 wrapped field at resize_imgs_with_padding has a default value of (512, 512)
+DEBUG 2026-01-20 15:23:14 _wrapper.py:168 wrapped field at empty_cameras has a default value of 0
+DEBUG 2026-01-20 15:23:14 _wrapper.py:168 wrapped field at adapt_to_pi_aloha has a default value of False
+DEBUG 2026-01-20 15:23:14 _wrapper.py:168 wrapped field at use_delta_joint_actions_aloha has a default value of False
+DEBUG 2026-01-20 15:23:14 _wrapper.py:168 wrapped field at tokenizer_max_length has a default value of 48
+DEBUG 2026-01-20 15:23:14 _wrapper.py:168 wrapped field at num_steps has a default value of 10
+DEBUG 2026-01-20 15:23:14 _wrapper.py:168 wrapped field at use_cache has a default value of True
+DEBUG 2026-01-20 15:23:14 _wrapper.py:168 wrapped field at freeze_vision_encoder has a default value of True
+DEBUG 2026-01-20 15:23:14 _wrapper.py:168 wrapped field at train_expert_only has a default value of True
+DEBUG 2026-01-20 15:23:14 _wrapper.py:168 wrapped field at train_state_proj has a default value of True
+DEBUG 2026-01-20 15:23:14 _wrapper.py:168 wrapped field at optimizer_lr has a default value of 0.0001
+DEBUG 2026-01-20 15:23:14 _wrapper.py:201 wrapped field at optimizer_betas has a default value of (0.9, 0.95)
+DEBUG 2026-01-20 15:23:14 _wrapper.py:168 wrapped field at optimizer_eps has a default value of 1e-08
+DEBUG 2026-01-20 15:23:14 _wrapper.py:168 wrapped field at optimizer_weight_decay has a default value of 1e-10
+DEBUG 2026-01-20 15:23:14 _wrapper.py:168 wrapped field at optimizer_grad_clip_norm has a default value of 10
+DEBUG 2026-01-20 15:23:14 _wrapper.py:168 wrapped field at scheduler_warmup_steps has a default value of 1000
+DEBUG 2026-01-20 15:23:14 _wrapper.py:168 wrapped field at scheduler_decay_steps has a default value of 30000
+DEBUG 2026-01-20 15:23:14 _wrapper.py:168 wrapped field at scheduler_decay_lr has a default value of 2.5e-06
+DEBUG 2026-01-20 15:23:14 _wrapper.py:168 wrapped field at vlm_model_name has a default value of HuggingFaceTB/SmolVLM2-500M-Video-Instruct
+DEBUG 2026-01-20 15:23:14 _wrapper.py:168 wrapped field at load_vlm_weights has a default value of False
+DEBUG 2026-01-20 15:23:14 _wrapper.py:168 wrapped field at add_image_special_tokens has a default value of False
+DEBUG 2026-01-20 15:23:14 _wrapper.py:168 wrapped field at attention_mode has a default value of cross_attn
+DEBUG 2026-01-20 15:23:14 _wrapper.py:168 wrapped field at prefix_length has a default value of -1
+DEBUG 2026-01-20 15:23:14 _wrapper.py:168 wrapped field at pad_language_to has a default value of longest
+DEBUG 2026-01-20 15:23:14 _wrapper.py:168 wrapped field at num_expert_layers has a default value of -1
+DEBUG 2026-01-20 15:23:14 _wrapper.py:168 wrapped field at num_vlm_layers has a default value of 16
+DEBUG 2026-01-20 15:23:14 _wrapper.py:168 wrapped field at self_attn_every_n_layers has a default value of 2
+DEBUG 2026-01-20 15:23:14 _wrapper.py:168 wrapped field at expert_width_multiplier has a default value of 0.75
+DEBUG 2026-01-20 15:23:14 _wrapper.py:168 wrapped field at min_period has a default value of 0.004
+DEBUG 2026-01-20 15:23:14 _wrapper.py:168 wrapped field at max_period has a default value of 4.0
+DEBUG 2026-01-20 15:23:14 _wrapper.py:309 Arg options for field 'n_obs_steps': {'required': False, 'dest': 'n_obs_steps', 'default': 1, 'help': 'Input / output structure.', 'type': <class 'int'>}
+DEBUG 2026-01-20 15:23:14 _wrapper.py:309 Arg options for field 'input_features': {'required': False, 'dest': 'input_features', 'default': {}, 'help': ' ', 'type': typing.Dict[str, lerobot.configs.types.PolicyFeature]}
+DEBUG 2026-01-20 15:23:14 _wrapper.py:309 Arg options for field 'output_features': {'required': False, 'dest': 'output_features', 'default': {}, 'help': ' ', 'type': typing.Dict[str, lerobot.configs.types.PolicyFeature]}
+DEBUG 2026-01-20 15:23:14 _wrapper.py:309 Arg options for field 'device': {'required': False, 'dest': 'device', 'default': None, 'help': 'e.g. "cuda", "cuda:0", "cpu", or "mps"', 'type': typing.Optional[str]}
+DEBUG 2026-01-20 15:23:14 _wrapper.py:309 Arg options for field 'use_amp': {'required': False, 'dest': 'use_amp', 'default': False, 'help': '`use_amp` determines whether to use Automatic Mixed Precision (AMP) for training and evaluation. With AMP,\nautomatic gradient scaling is used.', 'type': <class 'bool'>}
+DEBUG 2026-01-20 15:23:14 _wrapper.py:309 Arg options for field 'push_to_hub': {'required': False, 'dest': 'push_to_hub', 'default': True, 'help': 'type: ignore[assignment] # TODO: use a different name to avoid override', 'type': <class 'bool'>}
+DEBUG 2026-01-20 15:23:14 _wrapper.py:309 Arg options for field 'repo_id': {'required': False, 'dest': 'repo_id', 'default': None, 'type': typing.Optional[str]}
+DEBUG 2026-01-20 15:23:14 _wrapper.py:309 Arg options for field 'private': {'required': False, 'dest': 'private', 'default': None, 'help': 'Upload on private repository on the Hugging Face hub.', 'type': typing.Optional[bool]}
+DEBUG 2026-01-20 15:23:14 _wrapper.py:309 Arg options for field 'tags': {'required': False, 'dest': 'tags', 'default': None, 'help': 'Add tags to your policy on the hub.', 'type': typing.Optional[typing.List[str]]}
+DEBUG 2026-01-20 15:23:14 _wrapper.py:309 Arg options for field 'license': {'required': False, 'dest': 'license', 'default': None, 'help': 'Add tags to your policy on the hub.', 'type': typing.Optional[str]}
+DEBUG 2026-01-20 15:23:14 _wrapper.py:309 Arg options for field 'pretrained_path': {'required': False, 'dest': 'pretrained_path', 'default': None, 'help': 'Either the repo ID of a model hosted on the Hub or a path to a directory containing weights\nsaved using `Policy.save_pretrained`. If not provided, the policy is initialized from scratch.', 'type': typing.Optional[pathlib.Path]}
+DEBUG 2026-01-20 15:23:14 _wrapper.py:309 Arg options for field 'chunk_size': {'required': False, 'dest': 'chunk_size', 'default': 50, 'help': ' ', 'type': <class 'int'>}
+DEBUG 2026-01-20 15:23:14 _wrapper.py:309 Arg options for field 'n_action_steps': {'required': False, 'dest': 'n_action_steps', 'default': 50, 'help': ' ', 'type': <class 'int'>}
+DEBUG 2026-01-20 15:23:14 ocstring.py:253 Warning: Unable to parse attribute docstring:         default_factory=lambda: {
+DEBUG 2026-01-20 15:23:14 _wrapper.py:309 Arg options for field 'normalization_mapping': {'required': False, 'dest': 'normalization_mapping', 'default': {'VISUAL': <NormalizationMode.IDENTITY: 'IDENTITY'>, 'STATE': <NormalizationMode.MEAN_STD: 'MEAN_STD'>, 'ACTION': <NormalizationMode.MEAN_STD: 'MEAN_STD'>}, 'help': ' ', 'type': typing.Dict[str, lerobot.configs.types.NormalizationMode]}
+DEBUG 2026-01-20 15:23:14 _wrapper.py:309 Arg options for field 'max_state_dim': {'required': False, 'dest': 'max_state_dim', 'default': 32, 'help': '\n\nShorter state and action vectors will be padded', 'type': <class 'int'>}
+DEBUG 2026-01-20 15:23:14 _wrapper.py:309 Arg options for field 'max_action_dim': {'required': False, 'dest': 'max_action_dim', 'default': 32, 'help': ' ', 'type': <class 'int'>}
+DEBUG 2026-01-20 15:23:14 _wrapper.py:309 Arg options for field 'resize_imgs_with_padding': {'required': False, 'dest': 'resize_imgs_with_padding', 'default': (512, 512), 'help': 'Image preprocessing', 'type': typing.Tuple[int, int]}
+DEBUG 2026-01-20 15:23:14 _wrapper.py:309 Arg options for field 'empty_cameras': {'required': False, 'dest': 'empty_cameras', 'default': 0, 'help': 'Add empty images. Used by smolvla_aloha_sim which adds the empty\nleft and right wrist cameras in addition to the top camera.', 'type': <class 'int'>}
+DEBUG 2026-01-20 15:23:14 _wrapper.py:309 Arg options for field 'adapt_to_pi_aloha': {'required': False, 'dest': 'adapt_to_pi_aloha', 'default': False, 'help': 'Converts the joint and gripper values from the standard Aloha space to\nthe space used by the pi internal runtime which was used to train the base model.', 'type': <class 'bool'>}
+DEBUG 2026-01-20 15:23:14 _wrapper.py:309 Arg options for field 'use_delta_joint_actions_aloha': {'required': False, 'dest': 'use_delta_joint_actions_aloha', 'default': False, 'help': 'Converts joint dimensions to deltas with respect to the current state before passing to the model.\nGripper dimensions will remain in absolute values.', 'type': <class 'bool'>}
+DEBUG 2026-01-20 15:23:14 _wrapper.py:309 Arg options for field 'tokenizer_max_length': {'required': False, 'dest': 'tokenizer_max_length', 'default': 48, 'help': 'Tokenizer', 'type': <class 'int'>}
+DEBUG 2026-01-20 15:23:14 _wrapper.py:309 Arg options for field 'num_steps': {'required': False, 'dest': 'num_steps', 'default': 10, 'help': 'Decoding', 'type': <class 'int'>}
+DEBUG 2026-01-20 15:23:14 _wrapper.py:309 Arg options for field 'use_cache': {'required': False, 'dest': 'use_cache', 'default': True, 'help': 'Attention utils', 'type': <class 'bool'>}
+DEBUG 2026-01-20 15:23:14 _wrapper.py:309 Arg options for field 'freeze_vision_encoder': {'required': False, 'dest': 'freeze_vision_encoder', 'default': True, 'help': 'Finetuning settings', 'type': <class 'bool'>}
+DEBUG 2026-01-20 15:23:14 _wrapper.py:309 Arg options for field 'train_expert_only': {'required': False, 'dest': 'train_expert_only', 'default': True, 'help': ' ', 'type': <class 'bool'>}
+DEBUG 2026-01-20 15:23:14 _wrapper.py:309 Arg options for field 'train_state_proj': {'required': False, 'dest': 'train_state_proj', 'default': True, 'help': ' ', 'type': <class 'bool'>}
+DEBUG 2026-01-20 15:23:14 _wrapper.py:309 Arg options for field 'optimizer_lr': {'required': False, 'dest': 'optimizer_lr', 'default': 0.0001, 'help': 'Training presets', 'type': <class 'float'>}
+DEBUG 2026-01-20 15:23:14 _wrapper.py:309 Arg options for field 'optimizer_betas': {'required': False, 'dest': 'optimizer_betas', 'default': (0.9, 0.95), 'help': ' ', 'type': typing.Tuple[float, float]}
+DEBUG 2026-01-20 15:23:14 _wrapper.py:309 Arg options for field 'optimizer_eps': {'required': False, 'dest': 'optimizer_eps', 'default': 1e-08, 'help': ' ', 'type': <class 'float'>}
+DEBUG 2026-01-20 15:23:14 _wrapper.py:309 Arg options for field 'optimizer_weight_decay': {'required': False, 'dest': 'optimizer_weight_decay', 'default': 1e-10, 'help': ' ', 'type': <class 'float'>}
+DEBUG 2026-01-20 15:23:14 _wrapper.py:309 Arg options for field 'optimizer_grad_clip_norm': {'required': False, 'dest': 'optimizer_grad_clip_norm', 'default': 10, 'help': ' ', 'type': <class 'float'>}
+DEBUG 2026-01-20 15:23:14 _wrapper.py:309 Arg options for field 'scheduler_warmup_steps': {'required': False, 'dest': 'scheduler_warmup_steps', 'default': 1000, 'help': ' ', 'type': <class 'int'>}
+DEBUG 2026-01-20 15:23:14 _wrapper.py:309 Arg options for field 'scheduler_decay_steps': {'required': False, 'dest': 'scheduler_decay_steps', 'default': 30000, 'help': ' ', 'type': <class 'int'>}
+DEBUG 2026-01-20 15:23:14 _wrapper.py:309 Arg options for field 'scheduler_decay_lr': {'required': False, 'dest': 'scheduler_decay_lr', 'default': 2.5e-06, 'help': ' ', 'type': <class 'float'>}
+DEBUG 2026-01-20 15:23:14 _wrapper.py:309 Arg options for field 'vlm_model_name': {'required': False, 'dest': 'vlm_model_name', 'default': 'HuggingFaceTB/SmolVLM2-500M-Video-Instruct', 'help': 'Select the VLM backbone.', 'type': <class 'str'>}
+DEBUG 2026-01-20 15:23:14 _wrapper.py:309 Arg options for field 'load_vlm_weights': {'required': False, 'dest': 'load_vlm_weights', 'default': False, 'help': 'Set to True in case of training the expert from scratch. True when init from pretrained SmolVLA weights', 'type': <class 'bool'>}
+DEBUG 2026-01-20 15:23:14 _wrapper.py:309 Arg options for field 'add_image_special_tokens': {'required': False, 'dest': 'add_image_special_tokens', 'default': False, 'help': 'Whether to use special image tokens around image features.', 'type': <class 'bool'>}
+DEBUG 2026-01-20 15:23:14 _wrapper.py:309 Arg options for field 'attention_mode': {'required': False, 'dest': 'attention_mode', 'default': 'cross_attn', 'help': ' ', 'type': <class 'str'>}
+DEBUG 2026-01-20 15:23:14 _wrapper.py:309 Arg options for field 'prefix_length': {'required': False, 'dest': 'prefix_length', 'default': -1, 'help': ' ', 'type': <class 'int'>}
+DEBUG 2026-01-20 15:23:14 _wrapper.py:309 Arg options for field 'pad_language_to': {'required': False, 'dest': 'pad_language_to', 'default': 'longest', 'help': '"max_length"', 'type': <class 'str'>}
+DEBUG 2026-01-20 15:23:14 _wrapper.py:309 Arg options for field 'num_expert_layers': {'required': False, 'dest': 'num_expert_layers', 'default': -1, 'help': 'Less or equal to 0 is the default where the action expert has the same number of layers of VLM. Otherwise the expert have less layers.', 'type': <class 'int'>}
+DEBUG 2026-01-20 15:23:14 _wrapper.py:309 Arg options for field 'num_vlm_layers': {'required': False, 'dest': 'num_vlm_layers', 'default': 16, 'help': 'Number of layers used in the VLM (first num_vlm_layers layers)', 'type': <class 'int'>}
+DEBUG 2026-01-20 15:23:14 _wrapper.py:309 Arg options for field 'self_attn_every_n_layers': {'required': False, 'dest': 'self_attn_every_n_layers', 'default': 2, 'help': 'Interleave SA layers each self_attn_every_n_layers', 'type': <class 'int'>}
+DEBUG 2026-01-20 15:23:14 _wrapper.py:309 Arg options for field 'expert_width_multiplier': {'required': False, 'dest': 'expert_width_multiplier', 'default': 0.75, 'help': 'The action expert hidden size (wrt to the VLM)', 'type': <class 'float'>}
+DEBUG 2026-01-20 15:23:14 _wrapper.py:309 Arg options for field 'min_period': {'required': False, 'dest': 'min_period', 'default': 0.004, 'help': 'sensitivity range for the timestep used in sine-cosine positional encoding', 'type': <class 'float'>}
+DEBUG 2026-01-20 15:23:14 _wrapper.py:309 Arg options for field 'max_period': {'required': False, 'dest': 'max_period', 'default': 4.0, 'help': ' ', 'type': <class 'float'>}
+DEBUG 2026-01-20 15:23:14 d_metavar.py:22 Metavar for type <class 'str'>: str
+DEBUG 2026-01-20 15:23:14 formatter.py:52 action type: <class 'str'>, Result: str, nargs: None, default metavar: None
+DEBUG 2026-01-20 15:23:14 _wrapper.py:168 wrapped field at rtc_config.enabled has a default value of False
+DEBUG 2026-01-20 15:23:14 _wrapper.py:201 wrapped field at rtc_config.prefix_attention_schedule has a default value of LINEAR
+DEBUG 2026-01-20 15:23:14 _wrapper.py:168 wrapped field at rtc_config.max_guidance_weight has a default value of 10.0
+DEBUG 2026-01-20 15:23:14 _wrapper.py:168 wrapped field at rtc_config.execution_horizon has a default value of 10
+DEBUG 2026-01-20 15:23:14 _wrapper.py:168 wrapped field at rtc_config.debug has a default value of False
+DEBUG 2026-01-20 15:23:14 _wrapper.py:168 wrapped field at rtc_config.debug_maxlen has a default value of 100
+DEBUG 2026-01-20 15:23:14 _wrapper.py:309 Arg options for field 'enabled': {'required': False, 'dest': 'rtc_config.enabled', 'default': False, 'help': 'Infrastructure', 'type': <class 'bool'>}
+DEBUG 2026-01-20 15:23:14 _wrapper.py:309 Arg options for field 'prefix_attention_schedule': {'required': False, 'dest': 'rtc_config.prefix_attention_schedule', 'default': <RTCAttentionSchedule.LINEAR: 'LINEAR'>, 'help': 'Core RTC settings\nTodo change to exp', 'type': <enum 'RTCAttentionSchedule'>}
+DEBUG 2026-01-20 15:23:14 _wrapper.py:309 Arg options for field 'max_guidance_weight': {'required': False, 'dest': 'rtc_config.max_guidance_weight', 'default': 10.0, 'help': ' ', 'type': <class 'float'>}
+DEBUG 2026-01-20 15:23:14 _wrapper.py:309 Arg options for field 'execution_horizon': {'required': False, 'dest': 'rtc_config.execution_horizon', 'default': 10, 'help': ' ', 'type': <class 'int'>}
+DEBUG 2026-01-20 15:23:14 _wrapper.py:309 Arg options for field 'debug': {'required': False, 'dest': 'rtc_config.debug', 'default': False, 'help': 'Debug settings', 'type': <class 'bool'>}
+DEBUG 2026-01-20 15:23:14 _wrapper.py:309 Arg options for field 'debug_maxlen': {'required': False, 'dest': 'rtc_config.debug_maxlen', 'default': 100, 'help': ' ', 'type': <class 'int'>}
+DEBUG 2026-01-20 15:23:14 gparsing.py:143 
+POST PROCESSING
+
+DEBUG 2026-01-20 15:23:14 gparsing.py:144 (raw) parsed args: Namespace()
+DEBUG 2026-01-20 15:23:14 decoding.py:112 from_dict for <class 'lerobot.policies.smolvla.configuration_smolvla.SmolVLAConfig'>
+DEBUG 2026-01-20 15:23:14 decoding.py:132 Decode name = n_obs_steps, type = <class 'int'>
+DEBUG 2026-01-20 15:23:14 decoding.py:132 Decode name = input_features, type = dict[str, lerobot.configs.types.PolicyFeature]
+DEBUG 2026-01-20 15:23:14 decoding.py:112 from_dict for <class 'lerobot.configs.types.PolicyFeature'>
+DEBUG 2026-01-20 15:23:14 decoding.py:132 Decode name = type, type = <enum 'FeatureType'>
+DEBUG 2026-01-20 15:23:14 decoding.py:132 Decode name = shape, type = tuple[int, ...]
+DEBUG 2026-01-20 15:23:14 decoding.py:112 from_dict for <class 'lerobot.configs.types.PolicyFeature'>
+DEBUG 2026-01-20 15:23:14 decoding.py:132 Decode name = type, type = <enum 'FeatureType'>
+DEBUG 2026-01-20 15:23:14 decoding.py:132 Decode name = shape, type = tuple[int, ...]
+DEBUG 2026-01-20 15:23:14 decoding.py:112 from_dict for <class 'lerobot.configs.types.PolicyFeature'>
+DEBUG 2026-01-20 15:23:14 decoding.py:132 Decode name = type, type = <enum 'FeatureType'>
+DEBUG 2026-01-20 15:23:14 decoding.py:132 Decode name = shape, type = tuple[int, ...]
+DEBUG 2026-01-20 15:23:14 decoding.py:112 from_dict for <class 'lerobot.configs.types.PolicyFeature'>
+DEBUG 2026-01-20 15:23:14 decoding.py:132 Decode name = type, type = <enum 'FeatureType'>
+DEBUG 2026-01-20 15:23:14 decoding.py:132 Decode name = shape, type = tuple[int, ...]
+DEBUG 2026-01-20 15:23:14 decoding.py:132 Decode name = output_features, type = dict[str, lerobot.configs.types.PolicyFeature]
+DEBUG 2026-01-20 15:23:14 decoding.py:112 from_dict for <class 'lerobot.configs.types.PolicyFeature'>
+DEBUG 2026-01-20 15:23:14 decoding.py:132 Decode name = type, type = <enum 'FeatureType'>
+DEBUG 2026-01-20 15:23:14 decoding.py:132 Decode name = shape, type = tuple[int, ...]
+DEBUG 2026-01-20 15:23:14 decoding.py:132 Decode name = device, type = typing.Optional[str]
+DEBUG 2026-01-20 15:23:14 decoding.py:132 Decode name = use_amp, type = <class 'bool'>
+DEBUG 2026-01-20 15:23:14 decoding.py:132 Decode name = push_to_hub, type = <class 'bool'>
+DEBUG 2026-01-20 15:23:14 decoding.py:132 Decode name = repo_id, type = typing.Optional[str]
+DEBUG 2026-01-20 15:23:14 decoding.py:132 Decode name = private, type = typing.Optional[bool]
+DEBUG 2026-01-20 15:23:14 decoding.py:132 Decode name = tags, type = typing.Optional[list[str]]
+DEBUG 2026-01-20 15:23:14 decoding.py:132 Decode name = license, type = typing.Optional[str]
+DEBUG 2026-01-20 15:23:14 decoding.py:132 Decode name = chunk_size, type = <class 'int'>
+DEBUG 2026-01-20 15:23:14 decoding.py:132 Decode name = n_action_steps, type = <class 'int'>
+DEBUG 2026-01-20 15:23:14 decoding.py:132 Decode name = normalization_mapping, type = dict[str, lerobot.configs.types.NormalizationMode]
+DEBUG 2026-01-20 15:23:14 decoding.py:132 Decode name = max_state_dim, type = <class 'int'>
+DEBUG 2026-01-20 15:23:14 decoding.py:132 Decode name = max_action_dim, type = <class 'int'>
+DEBUG 2026-01-20 15:23:14 decoding.py:132 Decode name = resize_imgs_with_padding, type = tuple[int, int]
+DEBUG 2026-01-20 15:23:14 decoding.py:132 Decode name = empty_cameras, type = <class 'int'>
+DEBUG 2026-01-20 15:23:14 decoding.py:132 Decode name = adapt_to_pi_aloha, type = <class 'bool'>
+DEBUG 2026-01-20 15:23:14 decoding.py:132 Decode name = use_delta_joint_actions_aloha, type = <class 'bool'>
+DEBUG 2026-01-20 15:23:14 decoding.py:132 Decode name = tokenizer_max_length, type = <class 'int'>
+DEBUG 2026-01-20 15:23:14 decoding.py:132 Decode name = num_steps, type = <class 'int'>
+DEBUG 2026-01-20 15:23:14 decoding.py:132 Decode name = use_cache, type = <class 'bool'>
+DEBUG 2026-01-20 15:23:14 decoding.py:132 Decode name = freeze_vision_encoder, type = <class 'bool'>
+DEBUG 2026-01-20 15:23:14 decoding.py:132 Decode name = train_expert_only, type = <class 'bool'>
+DEBUG 2026-01-20 15:23:14 decoding.py:132 Decode name = train_state_proj, type = <class 'bool'>
+DEBUG 2026-01-20 15:23:14 decoding.py:132 Decode name = optimizer_lr, type = <class 'float'>
+DEBUG 2026-01-20 15:23:14 decoding.py:132 Decode name = optimizer_betas, type = tuple[float, float]
+DEBUG 2026-01-20 15:23:14 decoding.py:132 Decode name = optimizer_eps, type = <class 'float'>
+DEBUG 2026-01-20 15:23:14 decoding.py:132 Decode name = optimizer_weight_decay, type = <class 'float'>
+DEBUG 2026-01-20 15:23:14 decoding.py:132 Decode name = optimizer_grad_clip_norm, type = <class 'float'>
+DEBUG 2026-01-20 15:23:14 decoding.py:132 Decode name = scheduler_warmup_steps, type = <class 'int'>
+DEBUG 2026-01-20 15:23:14 decoding.py:132 Decode name = scheduler_decay_steps, type = <class 'int'>
+DEBUG 2026-01-20 15:23:14 decoding.py:132 Decode name = scheduler_decay_lr, type = <class 'float'>
+DEBUG 2026-01-20 15:23:14 decoding.py:132 Decode name = vlm_model_name, type = <class 'str'>
+DEBUG 2026-01-20 15:23:14 decoding.py:132 Decode name = load_vlm_weights, type = <class 'bool'>
+DEBUG 2026-01-20 15:23:14 decoding.py:132 Decode name = add_image_special_tokens, type = <class 'bool'>
+DEBUG 2026-01-20 15:23:14 decoding.py:132 Decode name = attention_mode, type = <class 'str'>
+DEBUG 2026-01-20 15:23:14 decoding.py:132 Decode name = prefix_length, type = <class 'int'>
+DEBUG 2026-01-20 15:23:14 decoding.py:132 Decode name = pad_language_to, type = <class 'str'>
+DEBUG 2026-01-20 15:23:14 decoding.py:132 Decode name = num_expert_layers, type = <class 'int'>
+DEBUG 2026-01-20 15:23:14 decoding.py:132 Decode name = num_vlm_layers, type = <class 'int'>
+DEBUG 2026-01-20 15:23:14 decoding.py:132 Decode name = self_attn_every_n_layers, type = <class 'int'>
+DEBUG 2026-01-20 15:23:14 decoding.py:132 Decode name = expert_width_multiplier, type = <class 'float'>
+DEBUG 2026-01-20 15:23:14 decoding.py:132 Decode name = min_period, type = <class 'float'>
+DEBUG 2026-01-20 15:23:14 decoding.py:132 Decode name = max_period, type = <class 'float'>
+WARNING 2026-01-20 15:23:14 ils/utils.py:52 No accelerated backend detected. Using default cpu, this will be slow.
+WARNING 2026-01-20 15:23:14 /policies.py:82 Device 'cuda' is not available. Switching to 'cpu'.
+DEBUG 2026-01-20 15:23:14 tionpool.py:544 https://huggingface.co:443 "HEAD /HuggingFaceTB/SmolVLM2-500M-Video-Instruct/resolve/main/config.json HTTP/1.1" 307 0
+DEBUG 2026-01-20 15:23:14 tionpool.py:544 https://huggingface.co:443 "HEAD /api/resolve-cache/models/HuggingFaceTB/SmolVLM2-500M-Video-Instruct/7b375e1b73b11138ff12fe22c8f2822d8fe03467/config.json HTTP/1.1" 200 0
+DEBUG 2026-01-20 15:23:14 ock/_api.py:331 Attempting to acquire lock 139857564689376 on /home/jose/.cache/huggingface/transformers/.locks/models--HuggingFaceTB--SmolVLM2-500M-Video-Instruct/2463e842695989a207176fdb249327a494b05cfb.lock
+DEBUG 2026-01-20 15:23:14 ock/_api.py:334 Lock 139857564689376 acquired on /home/jose/.cache/huggingface/transformers/.locks/models--HuggingFaceTB--SmolVLM2-500M-Video-Instruct/2463e842695989a207176fdb249327a494b05cfb.lock
+DEBUG 2026-01-20 15:23:14 tionpool.py:544 https://huggingface.co:443 "GET /api/resolve-cache/models/HuggingFaceTB/SmolVLM2-500M-Video-Instruct/7b375e1b73b11138ff12fe22c8f2822d8fe03467/config.json HTTP/1.1" 200 None
+DEBUG 2026-01-20 15:23:14 ock/_api.py:364 Attempting to release lock 139857564689376 on /home/jose/.cache/huggingface/transformers/.locks/models--HuggingFaceTB--SmolVLM2-500M-Video-Instruct/2463e842695989a207176fdb249327a494b05cfb.lock
+DEBUG 2026-01-20 15:23:14 ock/_api.py:367 Lock 139857564689376 released on /home/jose/.cache/huggingface/transformers/.locks/models--HuggingFaceTB--SmolVLM2-500M-Video-Instruct/2463e842695989a207176fdb249327a494b05cfb.lock
+DEBUG 2026-01-20 15:23:14 tionpool.py:544 https://huggingface.co:443 "HEAD /HuggingFaceTB/SmolVLM2-500M-Video-Instruct/resolve/main/adapter_config.json HTTP/1.1" 404 0
+DEBUG 2026-01-20 15:23:14 tionpool.py:544 https://huggingface.co:443 "HEAD /HuggingFaceTB/SmolVLM2-500M-Video-Instruct/resolve/main/model.safetensors HTTP/1.1" 302 0
+DEBUG 2026-01-20 15:23:14 ock/_api.py:331 Attempting to acquire lock 139857564690672 on /home/jose/.cache/huggingface/transformers/.locks/models--HuggingFaceTB--SmolVLM2-500M-Video-Instruct/b9bfd456c9472c0acd5719d6e514c4b859891af205ee1a736552fd3497b8b0c3.lock
+DEBUG 2026-01-20 15:23:14 ock/_api.py:334 Lock 139857564690672 acquired on /home/jose/.cache/huggingface/transformers/.locks/models--HuggingFaceTB--SmolVLM2-500M-Video-Instruct/b9bfd456c9472c0acd5719d6e514c4b859891af205ee1a736552fd3497b8b0c3.lock
+DEBUG 2026-01-20 15:23:14 tionpool.py:544 https://huggingface.co:443 "GET /api/models/HuggingFaceTB/SmolVLM2-500M-Video-Instruct/xet-read-token/7b375e1b73b11138ff12fe22c8f2822d8fe03467 HTTP/1.1" 200 365
+DEBUG 2026-01-20 15:23:18 ock/_api.py:364 Attempting to release lock 139857564690672 on /home/jose/.cache/huggingface/transformers/.locks/models--HuggingFaceTB--SmolVLM2-500M-Video-Instruct/b9bfd456c9472c0acd5719d6e514c4b859891af205ee1a736552fd3497b8b0c3.lock
+DEBUG 2026-01-20 15:23:18 ock/_api.py:367 Lock 139857564690672 released on /home/jose/.cache/huggingface/transformers/.locks/models--HuggingFaceTB--SmolVLM2-500M-Video-Instruct/b9bfd456c9472c0acd5719d6e514c4b859891af205ee1a736552fd3497b8b0c3.lock
+DEBUG 2026-01-20 15:23:19 tionpool.py:544 https://huggingface.co:443 "HEAD /HuggingFaceTB/SmolVLM2-500M-Video-Instruct/resolve/main/generation_config.json HTTP/1.1" 307 0
+DEBUG 2026-01-20 15:23:19 tionpool.py:544 https://huggingface.co:443 "HEAD /api/resolve-cache/models/HuggingFaceTB/SmolVLM2-500M-Video-Instruct/7b375e1b73b11138ff12fe22c8f2822d8fe03467/generation_config.json HTTP/1.1" 200 0
+DEBUG 2026-01-20 15:23:19 ock/_api.py:331 Attempting to acquire lock 139857564691680 on /home/jose/.cache/huggingface/transformers/.locks/models--HuggingFaceTB--SmolVLM2-500M-Video-Instruct/eace9aa6d392fd94dbe0c90825074c53fd7ecd4a.lock
+DEBUG 2026-01-20 15:23:19 ock/_api.py:334 Lock 139857564691680 acquired on /home/jose/.cache/huggingface/transformers/.locks/models--HuggingFaceTB--SmolVLM2-500M-Video-Instruct/eace9aa6d392fd94dbe0c90825074c53fd7ecd4a.lock
+DEBUG 2026-01-20 15:23:19 tionpool.py:544 https://huggingface.co:443 "GET /api/resolve-cache/models/HuggingFaceTB/SmolVLM2-500M-Video-Instruct/7b375e1b73b11138ff12fe22c8f2822d8fe03467/generation_config.json HTTP/1.1" 200 136
+DEBUG 2026-01-20 15:23:19 ock/_api.py:364 Attempting to release lock 139857564691680 on /home/jose/.cache/huggingface/transformers/.locks/models--HuggingFaceTB--SmolVLM2-500M-Video-Instruct/eace9aa6d392fd94dbe0c90825074c53fd7ecd4a.lock
+DEBUG 2026-01-20 15:23:19 ock/_api.py:367 Lock 139857564691680 released on /home/jose/.cache/huggingface/transformers/.locks/models--HuggingFaceTB--SmolVLM2-500M-Video-Instruct/eace9aa6d392fd94dbe0c90825074c53fd7ecd4a.lock
+DEBUG 2026-01-20 15:23:19 tionpool.py:544 https://huggingface.co:443 "HEAD /HuggingFaceTB/SmolVLM2-500M-Video-Instruct/resolve/main/custom_generate/generate.py HTTP/1.1" 404 0
+DEBUG 2026-01-20 15:23:19 tionpool.py:544 https://huggingface.co:443 "HEAD /HuggingFaceTB/SmolVLM2-500M-Video-Instruct/resolve/main/processor_config.json HTTP/1.1" 307 0
+DEBUG 2026-01-20 15:23:19 tionpool.py:544 https://huggingface.co:443 "HEAD /api/resolve-cache/models/HuggingFaceTB/SmolVLM2-500M-Video-Instruct/7b375e1b73b11138ff12fe22c8f2822d8fe03467/processor_config.json HTTP/1.1" 200 0
+DEBUG 2026-01-20 15:23:19 ock/_api.py:331 Attempting to acquire lock 139855008060832 on /home/jose/.cache/huggingface/transformers/.locks/models--HuggingFaceTB--SmolVLM2-500M-Video-Instruct/83df8c48da1f41e1a9129a4bc2aba000eb2b529f.lock
+DEBUG 2026-01-20 15:23:19 ock/_api.py:334 Lock 139855008060832 acquired on /home/jose/.cache/huggingface/transformers/.locks/models--HuggingFaceTB--SmolVLM2-500M-Video-Instruct/83df8c48da1f41e1a9129a4bc2aba000eb2b529f.lock
+DEBUG 2026-01-20 15:23:19 tionpool.py:544 https://huggingface.co:443 "GET /api/resolve-cache/models/HuggingFaceTB/SmolVLM2-500M-Video-Instruct/7b375e1b73b11138ff12fe22c8f2822d8fe03467/processor_config.json HTTP/1.1" 200 67
+DEBUG 2026-01-20 15:23:19 ock/_api.py:364 Attempting to release lock 139855008060832 on /home/jose/.cache/huggingface/transformers/.locks/models--HuggingFaceTB--SmolVLM2-500M-Video-Instruct/83df8c48da1f41e1a9129a4bc2aba000eb2b529f.lock
+DEBUG 2026-01-20 15:23:19 ock/_api.py:367 Lock 139855008060832 released on /home/jose/.cache/huggingface/transformers/.locks/models--HuggingFaceTB--SmolVLM2-500M-Video-Instruct/83df8c48da1f41e1a9129a4bc2aba000eb2b529f.lock
+DEBUG 2026-01-20 15:23:19 tionpool.py:544 https://huggingface.co:443 "GET /api/models/HuggingFaceTB/SmolVLM2-500M-Video-Instruct/tree/main/additional_chat_templates?recursive=False&expand=False HTTP/1.1" 404 64
+DEBUG 2026-01-20 15:23:20 tionpool.py:544 https://huggingface.co:443 "HEAD /HuggingFaceTB/SmolVLM2-500M-Video-Instruct/resolve/main/processor_config.json HTTP/1.1" 307 0
+DEBUG 2026-01-20 15:23:20 tionpool.py:544 https://huggingface.co:443 "HEAD /api/resolve-cache/models/HuggingFaceTB/SmolVLM2-500M-Video-Instruct/7b375e1b73b11138ff12fe22c8f2822d8fe03467/processor_config.json HTTP/1.1" 200 0
+DEBUG 2026-01-20 15:23:20 tionpool.py:544 https://huggingface.co:443 "HEAD /HuggingFaceTB/SmolVLM2-500M-Video-Instruct/resolve/main/chat_template.json HTTP/1.1" 307 0
+DEBUG 2026-01-20 15:23:20 tionpool.py:544 https://huggingface.co:443 "HEAD /api/resolve-cache/models/HuggingFaceTB/SmolVLM2-500M-Video-Instruct/7b375e1b73b11138ff12fe22c8f2822d8fe03467/chat_template.json HTTP/1.1" 200 0
+DEBUG 2026-01-20 15:23:20 ock/_api.py:331 Attempting to acquire lock 139855008061600 on /home/jose/.cache/huggingface/transformers/.locks/models--HuggingFaceTB--SmolVLM2-500M-Video-Instruct/1d342e4f070c962a14ba4ece4e06212bc70d8e36.lock
+DEBUG 2026-01-20 15:23:20 ock/_api.py:334 Lock 139855008061600 acquired on /home/jose/.cache/huggingface/transformers/.locks/models--HuggingFaceTB--SmolVLM2-500M-Video-Instruct/1d342e4f070c962a14ba4ece4e06212bc70d8e36.lock
+DEBUG 2026-01-20 15:23:20 tionpool.py:544 https://huggingface.co:443 "GET /api/resolve-cache/models/HuggingFaceTB/SmolVLM2-500M-Video-Instruct/7b375e1b73b11138ff12fe22c8f2822d8fe03467/chat_template.json HTTP/1.1" 200 430
+DEBUG 2026-01-20 15:23:20 ock/_api.py:364 Attempting to release lock 139855008061600 on /home/jose/.cache/huggingface/transformers/.locks/models--HuggingFaceTB--SmolVLM2-500M-Video-Instruct/1d342e4f070c962a14ba4ece4e06212bc70d8e36.lock
+DEBUG 2026-01-20 15:23:20 ock/_api.py:367 Lock 139855008061600 released on /home/jose/.cache/huggingface/transformers/.locks/models--HuggingFaceTB--SmolVLM2-500M-Video-Instruct/1d342e4f070c962a14ba4ece4e06212bc70d8e36.lock
+DEBUG 2026-01-20 15:23:20 tionpool.py:544 https://huggingface.co:443 "HEAD /HuggingFaceTB/SmolVLM2-500M-Video-Instruct/resolve/main/chat_template.jinja HTTP/1.1" 404 0
+DEBUG 2026-01-20 15:23:20 tionpool.py:544 https://huggingface.co:443 "HEAD /HuggingFaceTB/SmolVLM2-500M-Video-Instruct/resolve/main/audio_tokenizer_config.json HTTP/1.1" 404 0
+DEBUG 2026-01-20 15:23:20 tionpool.py:544 https://huggingface.co:443 "HEAD /HuggingFaceTB/SmolVLM2-500M-Video-Instruct/resolve/main/preprocessor_config.json HTTP/1.1" 307 0
+DEBUG 2026-01-20 15:23:20 tionpool.py:544 https://huggingface.co:443 "HEAD /api/resolve-cache/models/HuggingFaceTB/SmolVLM2-500M-Video-Instruct/7b375e1b73b11138ff12fe22c8f2822d8fe03467/preprocessor_config.json HTTP/1.1" 200 0
+DEBUG 2026-01-20 15:23:20 ock/_api.py:331 Attempting to acquire lock 139853532879584 on /home/jose/.cache/huggingface/transformers/.locks/models--HuggingFaceTB--SmolVLM2-500M-Video-Instruct/bf7669a38692ad141d333db3be18bd55cb6e2c59.lock
+DEBUG 2026-01-20 15:23:20 ock/_api.py:334 Lock 139853532879584 acquired on /home/jose/.cache/huggingface/transformers/.locks/models--HuggingFaceTB--SmolVLM2-500M-Video-Instruct/bf7669a38692ad141d333db3be18bd55cb6e2c59.lock
+DEBUG 2026-01-20 15:23:20 tionpool.py:544 https://huggingface.co:443 "GET /api/resolve-cache/models/HuggingFaceTB/SmolVLM2-500M-Video-Instruct/7b375e1b73b11138ff12fe22c8f2822d8fe03467/preprocessor_config.json HTTP/1.1" 200 599
+DEBUG 2026-01-20 15:23:20 ock/_api.py:364 Attempting to release lock 139853532879584 on /home/jose/.cache/huggingface/transformers/.locks/models--HuggingFaceTB--SmolVLM2-500M-Video-Instruct/bf7669a38692ad141d333db3be18bd55cb6e2c59.lock
+DEBUG 2026-01-20 15:23:20 ock/_api.py:367 Lock 139853532879584 released on /home/jose/.cache/huggingface/transformers/.locks/models--HuggingFaceTB--SmolVLM2-500M-Video-Instruct/bf7669a38692ad141d333db3be18bd55cb6e2c59.lock
+DEBUG 2026-01-20 15:23:20 tionpool.py:544 https://huggingface.co:443 "HEAD /HuggingFaceTB/SmolVLM2-500M-Video-Instruct/resolve/main/processor_config.json HTTP/1.1" 307 0
+DEBUG 2026-01-20 15:23:20 tionpool.py:544 https://huggingface.co:443 "HEAD /api/resolve-cache/models/HuggingFaceTB/SmolVLM2-500M-Video-Instruct/7b375e1b73b11138ff12fe22c8f2822d8fe03467/processor_config.json HTTP/1.1" 200 0
+DEBUG 2026-01-20 15:23:21 tionpool.py:544 https://huggingface.co:443 "HEAD /HuggingFaceTB/SmolVLM2-500M-Video-Instruct/resolve/main/tokenizer_config.json HTTP/1.1" 307 0
+DEBUG 2026-01-20 15:23:21 tionpool.py:544 https://huggingface.co:443 "HEAD /api/resolve-cache/models/HuggingFaceTB/SmolVLM2-500M-Video-Instruct/7b375e1b73b11138ff12fe22c8f2822d8fe03467/tokenizer_config.json HTTP/1.1" 200 0
+DEBUG 2026-01-20 15:23:21 ock/_api.py:331 Attempting to acquire lock 139853532879920 on /home/jose/.cache/huggingface/transformers/.locks/models--HuggingFaceTB--SmolVLM2-500M-Video-Instruct/e4042a1126290fdb96ece2a4ad8dd7108c5de484.lock
+DEBUG 2026-01-20 15:23:21 ock/_api.py:334 Lock 139853532879920 acquired on /home/jose/.cache/huggingface/transformers/.locks/models--HuggingFaceTB--SmolVLM2-500M-Video-Instruct/e4042a1126290fdb96ece2a4ad8dd7108c5de484.lock
+DEBUG 2026-01-20 15:23:21 tionpool.py:544 https://huggingface.co:443 "GET /api/resolve-cache/models/HuggingFaceTB/SmolVLM2-500M-Video-Instruct/7b375e1b73b11138ff12fe22c8f2822d8fe03467/tokenizer_config.json HTTP/1.1" 200 None
+DEBUG 2026-01-20 15:23:21 ock/_api.py:364 Attempting to release lock 139853532879920 on /home/jose/.cache/huggingface/transformers/.locks/models--HuggingFaceTB--SmolVLM2-500M-Video-Instruct/e4042a1126290fdb96ece2a4ad8dd7108c5de484.lock
+DEBUG 2026-01-20 15:23:21 ock/_api.py:367 Lock 139853532879920 released on /home/jose/.cache/huggingface/transformers/.locks/models--HuggingFaceTB--SmolVLM2-500M-Video-Instruct/e4042a1126290fdb96ece2a4ad8dd7108c5de484.lock
+DEBUG 2026-01-20 15:23:21 tionpool.py:544 https://huggingface.co:443 "GET /api/models/HuggingFaceTB/SmolVLM2-500M-Video-Instruct/tree/main/additional_chat_templates?recursive=False&expand=False HTTP/1.1" 404 64
+DEBUG 2026-01-20 15:23:21 tionpool.py:544 https://huggingface.co:443 "GET /api/models/HuggingFaceTB/SmolVLM2-500M-Video-Instruct/tree/main?recursive=True&expand=False HTTP/1.1" 200 9294
+DEBUG 2026-01-20 15:23:21 tionpool.py:544 https://huggingface.co:443 "HEAD /HuggingFaceTB/SmolVLM2-500M-Video-Instruct/resolve/main/vocab.json HTTP/1.1" 307 0
+DEBUG 2026-01-20 15:23:21 tionpool.py:544 https://huggingface.co:443 "HEAD /api/resolve-cache/models/HuggingFaceTB/SmolVLM2-500M-Video-Instruct/7b375e1b73b11138ff12fe22c8f2822d8fe03467/vocab.json HTTP/1.1" 200 0
+DEBUG 2026-01-20 15:23:21 ock/_api.py:331 Attempting to acquire lock 139853532883856 on /home/jose/.cache/huggingface/transformers/.locks/models--HuggingFaceTB--SmolVLM2-500M-Video-Instruct/0ad5ecc2035b7031b88afb544ee95e2d49baa484.lock
+DEBUG 2026-01-20 15:23:21 ock/_api.py:334 Lock 139853532883856 acquired on /home/jose/.cache/huggingface/transformers/.locks/models--HuggingFaceTB--SmolVLM2-500M-Video-Instruct/0ad5ecc2035b7031b88afb544ee95e2d49baa484.lock
+DEBUG 2026-01-20 15:23:21 tionpool.py:544 https://huggingface.co:443 "GET /api/resolve-cache/models/HuggingFaceTB/SmolVLM2-500M-Video-Instruct/7b375e1b73b11138ff12fe22c8f2822d8fe03467/vocab.json HTTP/1.1" 200 None
+DEBUG 2026-01-20 15:23:21 ock/_api.py:364 Attempting to release lock 139853532883856 on /home/jose/.cache/huggingface/transformers/.locks/models--HuggingFaceTB--SmolVLM2-500M-Video-Instruct/0ad5ecc2035b7031b88afb544ee95e2d49baa484.lock
+DEBUG 2026-01-20 15:23:21 ock/_api.py:367 Lock 139853532883856 released on /home/jose/.cache/huggingface/transformers/.locks/models--HuggingFaceTB--SmolVLM2-500M-Video-Instruct/0ad5ecc2035b7031b88afb544ee95e2d49baa484.lock
+DEBUG 2026-01-20 15:23:21 tionpool.py:544 https://huggingface.co:443 "HEAD /HuggingFaceTB/SmolVLM2-500M-Video-Instruct/resolve/main/merges.txt HTTP/1.1" 307 0
+DEBUG 2026-01-20 15:23:21 tionpool.py:544 https://huggingface.co:443 "HEAD /api/resolve-cache/models/HuggingFaceTB/SmolVLM2-500M-Video-Instruct/7b375e1b73b11138ff12fe22c8f2822d8fe03467/merges.txt HTTP/1.1" 200 0
+DEBUG 2026-01-20 15:23:21 ock/_api.py:331 Attempting to acquire lock 139853532882368 on /home/jose/.cache/huggingface/transformers/.locks/models--HuggingFaceTB--SmolVLM2-500M-Video-Instruct/69503b13f727ba3812b6803e97442a6de05ef5eb.lock
+DEBUG 2026-01-20 15:23:21 ock/_api.py:334 Lock 139853532882368 acquired on /home/jose/.cache/huggingface/transformers/.locks/models--HuggingFaceTB--SmolVLM2-500M-Video-Instruct/69503b13f727ba3812b6803e97442a6de05ef5eb.lock
+DEBUG 2026-01-20 15:23:21 tionpool.py:544 https://huggingface.co:443 "GET /api/resolve-cache/models/HuggingFaceTB/SmolVLM2-500M-Video-Instruct/7b375e1b73b11138ff12fe22c8f2822d8fe03467/merges.txt HTTP/1.1" 200 None
+DEBUG 2026-01-20 15:23:21 ock/_api.py:364 Attempting to release lock 139853532882368 on /home/jose/.cache/huggingface/transformers/.locks/models--HuggingFaceTB--SmolVLM2-500M-Video-Instruct/69503b13f727ba3812b6803e97442a6de05ef5eb.lock
+DEBUG 2026-01-20 15:23:21 ock/_api.py:367 Lock 139853532882368 released on /home/jose/.cache/huggingface/transformers/.locks/models--HuggingFaceTB--SmolVLM2-500M-Video-Instruct/69503b13f727ba3812b6803e97442a6de05ef5eb.lock
+DEBUG 2026-01-20 15:23:21 tionpool.py:544 https://huggingface.co:443 "HEAD /HuggingFaceTB/SmolVLM2-500M-Video-Instruct/resolve/main/tokenizer.json HTTP/1.1" 307 0
+DEBUG 2026-01-20 15:23:21 tionpool.py:544 https://huggingface.co:443 "HEAD /api/resolve-cache/models/HuggingFaceTB/SmolVLM2-500M-Video-Instruct/7b375e1b73b11138ff12fe22c8f2822d8fe03467/tokenizer.json HTTP/1.1" 200 0
+DEBUG 2026-01-20 15:23:21 ock/_api.py:331 Attempting to acquire lock 139853532883424 on /home/jose/.cache/huggingface/transformers/.locks/models--HuggingFaceTB--SmolVLM2-500M-Video-Instruct/a4005d1cf3170a31600a5c96f95768166cbc2b28.lock
+DEBUG 2026-01-20 15:23:21 ock/_api.py:334 Lock 139853532883424 acquired on /home/jose/.cache/huggingface/transformers/.locks/models--HuggingFaceTB--SmolVLM2-500M-Video-Instruct/a4005d1cf3170a31600a5c96f95768166cbc2b28.lock
+DEBUG 2026-01-20 15:23:21 tionpool.py:544 https://huggingface.co:443 "GET /api/resolve-cache/models/HuggingFaceTB/SmolVLM2-500M-Video-Instruct/7b375e1b73b11138ff12fe22c8f2822d8fe03467/tokenizer.json HTTP/1.1" 200 None
+DEBUG 2026-01-20 15:23:21 ock/_api.py:364 Attempting to release lock 139853532883424 on /home/jose/.cache/huggingface/transformers/.locks/models--HuggingFaceTB--SmolVLM2-500M-Video-Instruct/a4005d1cf3170a31600a5c96f95768166cbc2b28.lock
+DEBUG 2026-01-20 15:23:21 ock/_api.py:367 Lock 139853532883424 released on /home/jose/.cache/huggingface/transformers/.locks/models--HuggingFaceTB--SmolVLM2-500M-Video-Instruct/a4005d1cf3170a31600a5c96f95768166cbc2b28.lock
+DEBUG 2026-01-20 15:23:22 tionpool.py:544 https://huggingface.co:443 "HEAD /HuggingFaceTB/SmolVLM2-500M-Video-Instruct/resolve/main/added_tokens.json HTTP/1.1" 307 0
+DEBUG 2026-01-20 15:23:22 tionpool.py:544 https://huggingface.co:443 "HEAD /api/resolve-cache/models/HuggingFaceTB/SmolVLM2-500M-Video-Instruct/7b375e1b73b11138ff12fe22c8f2822d8fe03467/added_tokens.json HTTP/1.1" 200 0
+DEBUG 2026-01-20 15:23:22 ock/_api.py:331 Attempting to acquire lock 139853532883568 on /home/jose/.cache/huggingface/transformers/.locks/models--HuggingFaceTB--SmolVLM2-500M-Video-Instruct/71dc811700b6aa9274d3697ee7d4fb2d5375e766.lock
+DEBUG 2026-01-20 15:23:22 ock/_api.py:334 Lock 139853532883568 acquired on /home/jose/.cache/huggingface/transformers/.locks/models--HuggingFaceTB--SmolVLM2-500M-Video-Instruct/71dc811700b6aa9274d3697ee7d4fb2d5375e766.lock
+DEBUG 2026-01-20 15:23:22 tionpool.py:544 https://huggingface.co:443 "GET /api/resolve-cache/models/HuggingFaceTB/SmolVLM2-500M-Video-Instruct/7b375e1b73b11138ff12fe22c8f2822d8fe03467/added_tokens.json HTTP/1.1" 200 None
+DEBUG 2026-01-20 15:23:22 ock/_api.py:364 Attempting to release lock 139853532883568 on /home/jose/.cache/huggingface/transformers/.locks/models--HuggingFaceTB--SmolVLM2-500M-Video-Instruct/71dc811700b6aa9274d3697ee7d4fb2d5375e766.lock
+DEBUG 2026-01-20 15:23:22 ock/_api.py:367 Lock 139853532883568 released on /home/jose/.cache/huggingface/transformers/.locks/models--HuggingFaceTB--SmolVLM2-500M-Video-Instruct/71dc811700b6aa9274d3697ee7d4fb2d5375e766.lock
+DEBUG 2026-01-20 15:23:22 tionpool.py:544 https://huggingface.co:443 "HEAD /HuggingFaceTB/SmolVLM2-500M-Video-Instruct/resolve/main/special_tokens_map.json HTTP/1.1" 307 0
+DEBUG 2026-01-20 15:23:22 tionpool.py:544 https://huggingface.co:443 "HEAD /api/resolve-cache/models/HuggingFaceTB/SmolVLM2-500M-Video-Instruct/7b375e1b73b11138ff12fe22c8f2822d8fe03467/special_tokens_map.json HTTP/1.1" 200 0
+DEBUG 2026-01-20 15:23:22 ock/_api.py:331 Attempting to acquire lock 139853532884480 on /home/jose/.cache/huggingface/transformers/.locks/models--HuggingFaceTB--SmolVLM2-500M-Video-Instruct/2b5aee28d56c0e9d89ff6bc70818fba986a90ca9.lock
+DEBUG 2026-01-20 15:23:22 ock/_api.py:334 Lock 139853532884480 acquired on /home/jose/.cache/huggingface/transformers/.locks/models--HuggingFaceTB--SmolVLM2-500M-Video-Instruct/2b5aee28d56c0e9d89ff6bc70818fba986a90ca9.lock
+DEBUG 2026-01-20 15:23:22 tionpool.py:544 https://huggingface.co:443 "GET /api/resolve-cache/models/HuggingFaceTB/SmolVLM2-500M-Video-Instruct/7b375e1b73b11138ff12fe22c8f2822d8fe03467/special_tokens_map.json HTTP/1.1" 200 868
+DEBUG 2026-01-20 15:23:22 ock/_api.py:364 Attempting to release lock 139853532884480 on /home/jose/.cache/huggingface/transformers/.locks/models--HuggingFaceTB--SmolVLM2-500M-Video-Instruct/2b5aee28d56c0e9d89ff6bc70818fba986a90ca9.lock
+DEBUG 2026-01-20 15:23:22 ock/_api.py:367 Lock 139853532884480 released on /home/jose/.cache/huggingface/transformers/.locks/models--HuggingFaceTB--SmolVLM2-500M-Video-Instruct/2b5aee28d56c0e9d89ff6bc70818fba986a90ca9.lock
+DEBUG 2026-01-20 15:23:22 tionpool.py:544 https://huggingface.co:443 "HEAD /HuggingFaceTB/SmolVLM2-500M-Video-Instruct/resolve/main/video_preprocessor_config.json HTTP/1.1" 404 0
+DEBUG 2026-01-20 15:23:22 tionpool.py:544 https://huggingface.co:443 "HEAD /HuggingFaceTB/SmolVLM2-500M-Video-Instruct/resolve/main/preprocessor_config.json HTTP/1.1" 307 0
+DEBUG 2026-01-20 15:23:22 tionpool.py:544 https://huggingface.co:443 "HEAD /api/resolve-cache/models/HuggingFaceTB/SmolVLM2-500M-Video-Instruct/7b375e1b73b11138ff12fe22c8f2822d8fe03467/preprocessor_config.json HTTP/1.1" 200 0
+DEBUG 2026-01-20 15:23:22 tionpool.py:544 https://huggingface.co:443 "HEAD /HuggingFaceTB/SmolVLM2-500M-Video-Instruct/resolve/main/processor_config.json HTTP/1.1" 307 0
+DEBUG 2026-01-20 15:23:22 tionpool.py:544 https://huggingface.co:443 "HEAD /api/resolve-cache/models/HuggingFaceTB/SmolVLM2-500M-Video-Instruct/7b375e1b73b11138ff12fe22c8f2822d8fe03467/processor_config.json HTTP/1.1" 200 0
+DEBUG 2026-01-20 15:23:23 tionpool.py:544 https://huggingface.co:443 "GET /api/models/HuggingFaceTB/SmolVLM2-500M-Video-Instruct/tree/main/additional_chat_templates?recursive=False&expand=False HTTP/1.1" 404 64
+DEBUG 2026-01-20 15:23:23 tionpool.py:544 https://huggingface.co:443 "HEAD /HuggingFaceTB/SmolVLM2-500M-Video-Instruct/resolve/main/processor_config.json HTTP/1.1" 307 0
+DEBUG 2026-01-20 15:23:23 tionpool.py:544 https://huggingface.co:443 "HEAD /api/resolve-cache/models/HuggingFaceTB/SmolVLM2-500M-Video-Instruct/7b375e1b73b11138ff12fe22c8f2822d8fe03467/processor_config.json HTTP/1.1" 200 0
+DEBUG 2026-01-20 15:23:23 tionpool.py:544 https://huggingface.co:443 "HEAD /HuggingFaceTB/SmolVLM2-500M-Video-Instruct/resolve/main/chat_template.json HTTP/1.1" 307 0
+DEBUG 2026-01-20 15:23:23 tionpool.py:544 https://huggingface.co:443 "HEAD /api/resolve-cache/models/HuggingFaceTB/SmolVLM2-500M-Video-Instruct/7b375e1b73b11138ff12fe22c8f2822d8fe03467/chat_template.json HTTP/1.1" 200 0
+DEBUG 2026-01-20 15:23:23 tionpool.py:544 https://huggingface.co:443 "HEAD /HuggingFaceTB/SmolVLM2-500M-Video-Instruct/resolve/main/chat_template.jinja HTTP/1.1" 404 0
+DEBUG 2026-01-20 15:23:23 tionpool.py:544 https://huggingface.co:443 "HEAD /HuggingFaceTB/SmolVLM2-500M-Video-Instruct/resolve/main/audio_tokenizer_config.json HTTP/1.1" 404 0
+DEBUG 2026-01-20 15:23:31 tionpool.py:544 https://huggingface.co:443 "HEAD /lerobot/smolvla_base/resolve/main/model.safetensors HTTP/1.1" 302 0
+DEBUG 2026-01-20 15:23:31 ock/_api.py:331 Attempting to acquire lock 139853532888032 on /home/jose/.cache/huggingface/hub/.locks/models--lerobot--smolvla_base/7cd549ac2351fb069c0ddb3c34ad2d09cfc92b56a15dccdfc2e41467aaca01eb.lock
+DEBUG 2026-01-20 15:23:31 ock/_api.py:334 Lock 139853532888032 acquired on /home/jose/.cache/huggingface/hub/.locks/models--lerobot--smolvla_base/7cd549ac2351fb069c0ddb3c34ad2d09cfc92b56a15dccdfc2e41467aaca01eb.lock
+DEBUG 2026-01-20 15:23:31 tionpool.py:544 https://huggingface.co:443 "GET /api/models/lerobot/smolvla_base/xet-read-token/4d2f2b37fa245361ef1efe6d91ce96b8bd4af511 HTTP/1.1" 200 365
+DEBUG 2026-01-20 15:23:33 ock/_api.py:364 Attempting to release lock 139853532888032 on /home/jose/.cache/huggingface/hub/.locks/models--lerobot--smolvla_base/7cd549ac2351fb069c0ddb3c34ad2d09cfc92b56a15dccdfc2e41467aaca01eb.lock
+DEBUG 2026-01-20 15:23:33 ock/_api.py:367 Lock 139853532888032 released on /home/jose/.cache/huggingface/hub/.locks/models--lerobot--smolvla_base/7cd549ac2351fb069c0ddb3c34ad2d09cfc92b56a15dccdfc2e41467aaca01eb.lock
+ERROR 2026-01-20 15:23:33 /_server.py:638 Exception calling application: Data processing error: CAS service error : IO Error: No space left on device (os error 28)
