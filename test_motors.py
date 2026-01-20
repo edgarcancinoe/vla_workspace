@@ -16,16 +16,16 @@ def scan_port(port_name):
     
     # Open port
     if not port_handler.openPort():
-        print(f"❌ Failed to open port {port_name}")
+        print(f"Failed to open port {port_name}")
         return []
     
     # Set baudrate
     if not port_handler.setBaudRate(BAUDRATE):
-        print(f"❌ Failed to set baudrate to {BAUDRATE}")
+        print(f"Failed to set baudrate to {BAUDRATE}")
         port_handler.closePort()
         return []
     
-    print(f"✓ Port opened successfully at {BAUDRATE} baud")
+    print(f"Port opened successfully at {BAUDRATE} baud")
     
     # Scan for motors (IDs 0-253)
     found_motors = []
@@ -36,13 +36,13 @@ def scan_port(port_name):
         model_number, result, error = packet_handler.ping(port_handler, motor_id)
         
         if result == dxl.COMM_SUCCESS:
-            print(f"  ✓ Found motor ID {motor_id}, Model: {model_number}")
+            print(f"Found motor ID {motor_id}, Model: {model_number}")
             found_motors.append((motor_id, model_number))
     
     port_handler.closePort()
     
     if not found_motors:
-        print("  No motors found in IDs 1-10")
+        print("No motors found in IDs 1-10")
     
     return found_motors
 

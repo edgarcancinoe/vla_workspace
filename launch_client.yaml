@@ -24,13 +24,13 @@ robot:
   port: /dev/cu.usbmodem5AB90655421
   calibration_dir: .cache/calibration
   cameras:
-    laptop:
+    camera1:  # Top
       type: opencv
       index_or_path: 0
       width: 640
-      height: 480
+      height: 360
       fps: 30
-    external:
+    camera2:  # Bottom
       type: opencv
       index_or_path: 1
       width: 640
