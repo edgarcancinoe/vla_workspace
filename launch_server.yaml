@@ -9,7 +9,7 @@
 # from the robot control computer.
 
 # Configuration for lerobot.async_inference.policy_server
-host: 0.0.0.0  # Listen on all interfaces to accept remote connections
+host: 127.0.0.1  # Localhost is fine when using SSH tunnel
 port: 8080
 fps: 30
 inference_latency: 0.033
