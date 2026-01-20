@@ -53,7 +53,20 @@ The client will:
 3. Connect to the policy server (through the tunnel)
 4. Start executing actions
 
+
+### 4. Control the Robot
+
+To tell the robot what to do, edit `launch_client.yaml`:
+
+```yaml
+task: "pick up the red block"
+```
+
+Change this string to whatever instructions you want to give the VLA model.
+*Note: The effectiveness depends on the model's training data and your workspace setup.*
+
 ## Troubleshooting
+
 
 ### "Connection refused" error
 - ✅ Check that the policy server is running on flexo

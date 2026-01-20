@@ -18,6 +18,8 @@ server_address: 127.0.0.1:8080
 policy_device: cuda
 fps: 30
 use_rerun: true
+task: "pick up the red block"  # CHANGE THIS to describe what you want the robot to do!
+
 
 robot:
   type: so101_follower
