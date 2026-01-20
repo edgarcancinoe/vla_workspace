@@ -5,14 +5,12 @@
 source /home/jose/conda/etc/profile.d/conda.sh
 conda activate vla
 
-# Use GPU 7 (the free one)
+# Set HuggingFace cache directories to avoid permission issues with /opt/cache
 export CUDA_VISIBLE_DEVICES=7
-
-# Set HuggingFace cache directories to a location with 1.7TB free space
-export HF_HOME="$HOME/huggingface_cache"
-export TRANSFORMERS_CACHE="$HOME/huggingface_cache/transformers"
-export HF_DATASETS_CACHE="$HOME/huggingface_cache/datasets"
-export HF_HUB_CACHE="$HOME/huggingface_cache/hub"
+export HF_HOME="$HOME/.cache/huggingface"
+export TRANSFORMERS_CACHE="$HOME/.cache/huggingface/transformers"
+export HF_DATASETS_CACHE="$HOME/.cache/huggingface/datasets"
 
 # Run the policy server
 python -m lerobot.async_inference.policy_server --config_path launch_server.yaml "$@"
+
