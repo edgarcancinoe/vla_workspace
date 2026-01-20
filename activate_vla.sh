@@ -1,5 +1,5 @@
 #!/bin/bash
-# Activate the vla conda environment and disable user site-packages
+# Activate the vla conda environment and disable user site-packages (file only for cluster vicos)
 source ~/conda/etc/profile.d/conda.sh
 conda activate vla
 export PYTHONNOUSERSITE=1

@@ -1,5 +1,15 @@
+# PURPOSE:
+# This file configures the Policy Server for asynchronous inference.
+# It acts as the central computation node that:
+# 1. Hosts the machine learning policy model.
+# 2. Receives observations from the Robot Client.
+# 3. Computes the optimal actions and sends them back to the client.
+#
+# Usage: This server allows for remote inference, offloading heavy computation 
+# from the robot control computer.
+
 # Configuration for lerobot.async_inference.policy_server
-host: 127.0.0.1
+host: 0.0.0.0  # Listen on all interfaces to accept remote connections
 port: 8080
 fps: 30
 inference_latency: 0.033

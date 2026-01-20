@@ -1,3 +1,15 @@
+# PURPOSE:
+# This file configures the robot client for asynchronous inference using the LeRobot framework.
+# It is responsible for:
+# 1. Interfacing with the physical robot hardware (follower arm, cameras).
+# 2. Connecting to the remote Policy Server to request actions based on observations.
+# 3. executing the received actions on the robot.
+#
+# Configuration includes:
+# - Policy settings (model path, type)
+# - Server connection details
+# - Robot hardware specifications (ports, camera indices)
+
 # Configuration for lerobot.async_inference.robot_client
 policy_type: smolvla
 pretrained_name_or_path: lerobot/smolvla_base
@@ -15,6 +27,12 @@ robot:
     laptop:
       type: opencv
       index_or_path: 0
+      width: 640
+      height: 480
+      fps: 30
+    external:
+      type: opencv
+      index_or_path: 1
       width: 640
       height: 480
       fps: 30
