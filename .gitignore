@@ -1,0 +1,40 @@
+# Logs
+logs/
+*.log
+
+# Cache directories
+.cache/
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# Python virtual environments
+venv/
+env/
+ENV/
+
+# HuggingFace cache
+.huggingface/
+
+# Rerun recordings
+recordings/
+
+# Output directories
+outputs/
+checkpoints/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Temporary files
+*.tmp
+tmp/
