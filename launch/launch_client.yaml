@@ -19,7 +19,11 @@ policy_device: cuda
 client_device: cpu
 fps: 30
 use_rerun: true
-task: "Pick up all the orange cubes and place them inside the white container."
+task: "pick up the orange cube and place it inside the box"
+# Map robot camera names to what the policy expects
+rename_map:
+  observation.images.top: observation.images.camera2
+  observation.images.lateral: observation.images.camera1 
 
 
 robot:
@@ -28,15 +32,15 @@ robot:
   # port is now in robot_config.yaml
   calibration_dir: /Users/edgarcancino/Documents/Academic/EMAI Thesis/vla_workspace/.cache/calibration
   cameras:
-    top:  # Must match training data
+    top:  # Will be renamed to camera2 by rename_map
       type: opencv
       index_or_path: 0
-      width: 640
-      height: 480
+      width: 256  # Match policy input size
+      height: 256
       fps: 30
-    lateral:  # Must match training data
+    lateral:  # Will be renamed to camera1 by rename_map
       type: opencv
       index_or_path: 1
-      width: 640
-      height: 480
+      width: 256  # Match policy input size
+      height: 256
       fps: 30
