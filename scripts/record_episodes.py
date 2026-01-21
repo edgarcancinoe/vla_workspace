@@ -176,6 +176,7 @@ def main():
     log_say("Stop recording")
     robot.disconnect()
     teleop.disconnect()
+    dataset.finalize()
     dataset.push_to_hub()
 
 if __name__ == "__main__":
