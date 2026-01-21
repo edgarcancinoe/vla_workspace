@@ -12,28 +12,29 @@
 
 # Configuration for lerobot.async_inference.robot_client
 policy_type: smolvla
-pretrained_name_or_path: lerobot/smolvla_base
+pretrained_name_or_path: /home/jose/vla_workspace/launch/outputs/train/smolvla_20260121_122931/checkpoints/020000/pretrained_model
 actions_per_chunk: 50
 server_address: 127.0.0.1:8080
 policy_device: cuda
+client_device: cpu
 fps: 30
 use_rerun: true
-task: "pick up the cube and place it inside the box"  # CHANGE THIS to describe what you want the robot to do!
+task: "Pick up all the orange cubes and place them inside the white container."
 
 
 robot:
   id: my_awesome_follower_arm
-  type: so101_follower
+  type: so100_follower
   # port is now in robot_config.yaml
-  calibration_dir: .cache/calibration
+  calibration_dir: /Users/edgarcancino/Documents/Academic/EMAI Thesis/vla_workspace/.cache/calibration
   cameras:
-    camera1:  # Top
+    top:  # Must match training data
       type: opencv
       index_or_path: 0
       width: 640
-      height: 360
+      height: 480
       fps: 30
-    camera2:  # Bottom
+    lateral:  # Must match training data
       type: opencv
       index_or_path: 1
       width: 640
