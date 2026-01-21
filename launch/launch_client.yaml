@@ -18,10 +18,13 @@ server_address: 127.0.0.1:8080
 policy_device: cuda
 fps: 30
 use_rerun: true
+task: "pick up the cube and place it inside the box"  # CHANGE THIS to describe what you want the robot to do!
+
 
 robot:
+  id: my_awesome_follower_arm
   type: so101_follower
-  port: /dev/cu.usbmodem5AB90655421
+  # port is now in robot_config.yaml
   calibration_dir: .cache/calibration
   cameras:
     camera1:  # Top

@@ -1,0 +1,4 @@
+robot:
+  port: /dev/cu.usbmodem5AB90655421  # Follower port
+
+leader_port: /dev/tty.usbmodem5AAF2198491

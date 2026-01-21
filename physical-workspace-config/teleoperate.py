@@ -1,28 +1,85 @@
+import yaml
+import rerun as rr
+from pathlib import Path
 from lerobot.cameras.opencv.configuration_opencv import OpenCVCameraConfig
-from lerobot.teleoperators.koch_leader import KochLeaderConfig, KochLeader
-from lerobot.robots.koch_follower import KochFollowerConfig, KochFollower
+from lerobot.robots.so100_follower.config_so100_follower import SO100FollowerConfig
+from lerobot.robots.so100_follower.so100_follower import SO100Follower
+from lerobot.teleoperators.so100_leader.config_so100_leader import SO100LeaderConfig
+from lerobot.teleoperators.so100_leader.so100_leader import SO100Leader
+from lerobot.utils.visualization_utils import init_rerun
+
+# Load config
+config_path = Path(__file__).parent.parent / "robot_config.yaml"
+with open(config_path, "r") as f:
+    config_data = yaml.safe_load(f)
+
+# ... existing code ...
+import shutil
+import argparse
+parser = argparse.ArgumentParser()
+parser.add_argument("--calibrate", action="store_true", help="Force recalibration of the robot and leader arm")
+args = parser.parse_args()
+
+follower_port = config_data["robot"]["port"]
+leader_port = config_data["leader_port"]
+
+# Define shared calibration directory
+calibration_dir = Path(__file__).parent.parent / ".cache" / "calibration"
+
+if args.calibrate:
+    print(f"Force calibration requested. Removing calibration files in {calibration_dir}...")
+    if calibration_dir.exists():
+        shutil.rmtree(calibration_dir)
+        print("Calibration files removed.")
+
+print(f"Follower Port: {follower_port}")
+print(f"Leader Port: {leader_port}")
 
 camera_config = {
-    "front": OpenCVCameraConfig(index_or_path=0, width=1920, height=1080, fps=30)
+    "camera1": OpenCVCameraConfig(index_or_path=0, width=640, height=360, fps=30),
+    "camera2": OpenCVCameraConfig(index_or_path=1, width=640, height=480, fps=30)
 }
 
-robot_config = KochFollowerConfig(
-    port="/dev/tty.usbmodem5AB90655421",
-    id="my_red_robot_arm",
-    cameras=camera_config
+robot_config = SO100FollowerConfig(
+    port=follower_port,
+    id="my_awesome_follower_arm",
+    cameras=camera_config,
+    calibration_dir=calibration_dir
 )
 
-teleop_config = KochLeaderConfig(
-    port="/dev/tty.usbmodem5AAF2198491",
-    id="my_blue_leader_arm",
+teleop_config = SO100LeaderConfig(
+    port=leader_port,
+    id="my_awesome_leader_arm",
+    calibration_dir=calibration_dir
 )
 
-robot = KochFollower(robot_config)
-teleop_device = KochLeader(teleop_config)
-robot.connect()
-teleop_device.connect()
+robot = SO100Follower(robot_config)
+teleop_device = SO100Leader(teleop_config)
 
-while True:
-    observation = robot.get_observation()
-    action = teleop_device.get_action()
-    robot.send_action(action)
+print("Connecting devices...")
+# Pass calibrate flag to connection methods
+robot.connect(calibrate=args.calibrate)
+teleop_device.connect(calibrate=args.calibrate)
+
+init_rerun(session_name="teleoperate")
+
+print("Connected! Teleoperating...")
+
+step = 0
+try:
+    while True:
+        observation = robot.get_observation()
+        action = teleop_device.get_action()
+        robot.send_action(action)
+        
+        rr.set_time_sequence("step", step)
+        for cam_name in camera_config.keys():
+            key = f"observation.images.{cam_name}"
+            if key in observation:
+                rr.log(key, rr.Image(observation[key]))
+        
+        step += 1
+except KeyboardInterrupt:
+    print("\nStopping...")
+    robot.disconnect()
+    teleop_device.disconnect()
