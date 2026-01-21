@@ -6,7 +6,7 @@ source /home/jose/conda/etc/profile.d/conda.sh
 conda activate vla
 
 # Set HuggingFace cache directories to avoid permission issues with /opt/cache
-export CUDA_VISIBLE_DEVICES=7
+export CUDA_VISIBLE_DEVICES=0
 export HF_HOME="$HOME/.cache/huggingface"
 export TRANSFORMERS_CACHE="$HOME/.cache/huggingface/transformers"
 export HF_DATASETS_CACHE="$HOME/.cache/huggingface/datasets"
