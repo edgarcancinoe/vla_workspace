@@ -55,7 +55,7 @@ DATASET_REPO_ID="${HF_USER}/${DATASET_NAME}"
 BATCH_SIZE="${BATCH_SIZE:-64}"
 
 # Number of training steps
-STEPS="${STEPS:-20000}"
+STEPS="${STEPS:-1}"
 
 # Output Configuration
 # Directory where training logs and checkpoints will be saved
@@ -98,7 +98,9 @@ POLICY_REPO_ID="${POLICY_REPO_ID:-${HF_USER}/smolvla_finetuned}"
 # GRAD_ACCUM="${GRAD_ACCUM:-1}"
 
 # Save checkpoint every N steps
-# SAVE_FREQ="${SAVE_FREQ:-1000}"
+SAVE_FREQ="${SAVE_FREQ:-5000}"
+
+POLICY_PUSH_TO_HUB="${POLICY_PUSH_TO_HUB:-false}"
 
 # Evaluation frequency
 # EVAL_FREQ="${EVAL_FREQ:-500}"
@@ -159,6 +161,7 @@ echo "Configuration:"
 echo "  Dataset:        ${DATASET_REPO_ID}"
 echo "  Batch Size:     ${BATCH_SIZE}"
 echo "  Steps:          ${STEPS}"
+echo "  Save Freq:      ${SAVE_FREQ}"
 echo "  Output Dir:     ${OUTPUT_DIR}"
 echo "  Job Name:       ${JOB_NAME}"
 echo "  Device:         ${DEVICE}"
@@ -166,6 +169,7 @@ echo "  CUDA_VISIBLE_DEVICES: ${CUDA_VISIBLE_DEVICES}"
 echo "  W&B Enabled:    ${WANDB_ENABLE}"
 echo "  Policy Path:    ${POLICY_PATH}"
 echo "  Policy Repo ID: ${POLICY_REPO_ID}"
+echo "  Push to Hub:    ${POLICY_PUSH_TO_HUB}"
 echo ""
 
 # Check W&B login status if enabled
@@ -204,10 +208,12 @@ echo ""
 python -m lerobot.scripts.lerobot_train \
   --policy.path="${POLICY_PATH}" \
   --policy.repo_id="${POLICY_REPO_ID}" \
+  --policy.push_to_hub="${POLICY_PUSH_TO_HUB}" \
   --dataset.repo_id="${DATASET_REPO_ID}" \
   --rename_map='{"observation.images.lateral": "observation.images.camera1", "observation.images.top": "observation.images.camera2"}' \
   --batch_size="${BATCH_SIZE}" \
   --steps="${STEPS}" \
+  --save_freq="${SAVE_FREQ}" \
   --output_dir="${OUTPUT_DIR}" \
   --job_name="${JOB_NAME}" \
   --policy.device="${DEVICE}" \

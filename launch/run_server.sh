@@ -11,6 +11,9 @@ export HF_HOME="$HOME/.cache/huggingface"
 export TRANSFORMERS_CACHE="$HOME/.cache/huggingface/transformers"
 export HF_DATASETS_CACHE="$HOME/.cache/huggingface/datasets"
 
+# Get the directory where this script is located
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
 # Run the policy server
-python -m lerobot.async_inference.policy_server --config_path launch_server.yaml "$@"
+python -m lerobot.async_inference.policy_server --config_path "${SCRIPT_DIR}/launch_server.yaml" "$@"
 
