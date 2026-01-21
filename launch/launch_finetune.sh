@@ -26,20 +26,22 @@ fi
 # ============================================================================
 # CACHE CONFIGURATION
 # ============================================================================
-# Set cache directories to workspace to avoid permission issues
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-WORKSPACE_DIR="$(dirname "$SCRIPT_DIR")"
-export HF_HOME="${WORKSPACE_DIR}/.cache/huggingface"
-export HUGGINGFACE_HUB_CACHE="${WORKSPACE_DIR}/.cache/huggingface/hub"
-export TRANSFORMERS_CACHE="${WORKSPACE_DIR}/.cache/huggingface/transformers"
-export HF_DATASETS_CACHE="${WORKSPACE_DIR}/.cache/huggingface/datasets"
+# Use local /tmp for all cache to avoid NFS issues
+CACHE_ROOT="/tmp/vla_cache_${USER}"
+mkdir -p "$CACHE_ROOT"
+export HF_HOME="$CACHE_ROOT"
+export HF_LEROBOT_HOME="${CACHE_ROOT}/lerobot"
 
-# Create cache directory if it doesn't exist
-mkdir -p "${WORKSPACE_DIR}/.cache/huggingface"
+# Create directories
+mkdir -p "$HF_LEROBOT_HOME"
 
 # ============================================================================
 # CONFIGURATION - Adjust these variables to your setup
 # ============================================================================
+
+# Workspace path detection
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+WORKSPACE_DIR="$(dirname "$SCRIPT_DIR")"
 
 # Dataset Configuration
 # Replace with your Hugging Face username and dataset name
@@ -69,7 +71,7 @@ DEVICE="${DEVICE:-cuda}"
 
 # CUDA Device Selection
 # Specify which GPU to use (0, 1, 2, etc.). Leave empty to use all available GPUs.
-CUDA_DEVICE="${CUDA_DEVICE:-}"
+CUDA_DEVICE="${CUDA_DEVICE:-0}"
 
 # Weights & Biases Configuration
 # Set to true to enable W&B logging (requires: wandb login)
@@ -203,6 +205,7 @@ python -m lerobot.scripts.lerobot_train \
   --policy.path="${POLICY_PATH}" \
   --policy.repo_id="${POLICY_REPO_ID}" \
   --dataset.repo_id="${DATASET_REPO_ID}" \
+  --rename_map='{"observation.images.lateral": "observation.images.camera1", "observation.images.top": "observation.images.camera2"}' \
   --batch_size="${BATCH_SIZE}" \
   --steps="${STEPS}" \
   --output_dir="${OUTPUT_DIR}" \
