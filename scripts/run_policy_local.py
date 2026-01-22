@@ -53,7 +53,7 @@ def main():
             shutil.rmtree(DATA_DIR)
 
     # Load hardware config
-    config_path = Path(__file__).parent.parent / "robot_config.yaml"
+    config_path = Path(__file__).parent.parent / "config" / "robot_config.yaml"
     with open(config_path, 'r') as f:
         config_data = yaml.safe_load(f)
 

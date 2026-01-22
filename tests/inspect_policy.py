@@ -18,6 +18,8 @@ def print_feature_details(features, title):
 
 def print_normalization_stats(policy):
     print("\nNORMALIZATION STATS:")
+    # Print everything all items in policy
+    print(policy.__dict__)
     if hasattr(policy, "normalization_stats") and policy.normalization_stats:
         for key, stats in policy.normalization_stats.items():
             print(f"  - {key}:")

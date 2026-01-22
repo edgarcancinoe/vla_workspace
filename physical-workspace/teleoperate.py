@@ -9,7 +9,7 @@ from lerobot.teleoperators.so100_leader.so100_leader import SO100Leader
 from lerobot.utils.visualization_utils import init_rerun
 
 # Load config
-config_path = Path(__file__).parent.parent / "robot_config.yaml"
+config_path = Path(__file__).parent.parent / "config" / "robot_config.yaml"
 with open(config_path, "r") as f:
     config_data = yaml.safe_load(f)
 
@@ -66,11 +66,22 @@ init_rerun(session_name="teleoperate")
 print("Connected! Teleoperating...")
 
 step = 0
+print_interval = 30  # Print positions every 30 steps (~1 second at 30 FPS)
+
 try:
     while True:
         observation = robot.get_observation()
         action = teleop_device.get_action()
         robot.send_action(action)
+        
+        # Print positions periodically
+        if step % print_interval == 0:
+            position_dict = {key: f"{val:.4f}" for key, val in action.items() if key.endswith('.pos')}
+            print("\nCurrent Positions:")
+            print("performed_action = {")
+            for key, val in position_dict.items():
+                print(f'    "{key}": {val},')
+            print("}")
         
         rr.set_time_sequence("step", step)
         for cam_name in camera_config.keys():

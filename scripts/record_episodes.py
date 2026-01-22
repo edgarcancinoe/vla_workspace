@@ -15,19 +15,19 @@ from lerobot.scripts.lerobot_record import record_loop
 from lerobot.processor import make_default_processors
 
 
-NUM_EPISODES = 60
+NUM_EPISODES = 100
 FPS = 30
-EPISODE_TIME_SEC = 40
+EPISODE_TIME_SEC = 60
 RESET_TIME_SEC = 10
-TASK_DESCRIPTION = "Pick up the orange cube and place it inside the white container."
+TASK_DESCRIPTION = "Pick all cubes and place them inside the white container."
 
-DATA_DIR = Path("/Users/edgarcancino/Documents/Academic/EMAI Thesis/vla_workspace/outputs/datasets/SO101-F7")
+DATA_DIR = Path("/Users/edgarcancino/Documents/Academic/EMAI Thesis/vla_workspace/outputs/datasets/SO101-1")
 
 HF_USER = "edgarcancinoe"
 HF_REPO_ID = "soarm101_pick_cubes_place_box" 
 
-START_FROM_SCRATCH = True
-RESUME_DATASET = False
+START_FROM_SCRATCH = False
+RESUME_DATASET = True
 
 assert not (START_FROM_SCRATCH and RESUME_DATASET), "Cannot start from scratch and resume dataset at the same time."
 
@@ -41,7 +41,7 @@ def main():
             shutil.rmtree(TARGET_DIR)
 
     # Load HW Config
-    config_path = Path(__file__).parent.parent / "robot_config.yaml"
+    config_path = Path(__file__).parent.parent / "config" / "robot_config.yaml"
     with open(config_path, 'r') as f:
         config_data = yaml.safe_load(f)
 
