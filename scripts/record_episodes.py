@@ -15,19 +15,19 @@ from lerobot.scripts.lerobot_record import record_loop
 from lerobot.processor import make_default_processors
 
 
-NUM_EPISODES = 120
+NUM_EPISODES = 60
 FPS = 30
 EPISODE_TIME_SEC = 40
 RESET_TIME_SEC = 10
-TASK_DESCRIPTION = "Pick up all the orange cubes and place them inside the white container."
+TASK_DESCRIPTION = "Pick up the orange cube and place it inside the white container."
 
 DATA_DIR = Path("/Users/edgarcancino/Documents/Academic/EMAI Thesis/vla_workspace/outputs/datasets/SO101-F7")
 
 HF_USER = "edgarcancinoe"
 HF_REPO_ID = "soarm101_pick_cubes_place_box" 
 
-START_FROM_SCRATCH = False
-RESUME_DATASET = True
+START_FROM_SCRATCH = True
+RESUME_DATASET = False
 
 assert not (START_FROM_SCRATCH and RESUME_DATASET), "Cannot start from scratch and resume dataset at the same time."
 

@@ -13,4 +13,4 @@ echo ""
 # -N means: don't execute a remote command, just forward the port
 # -v means: verbose (optional, remove if you want less output)
 
-ssh -L 8080:localhost:8080 -N vicos-flexo
+ssh -L 8080:localhost:8080 -N vicos-zapp
