@@ -1,9 +1,10 @@
 #!/bin/bash
 # SSH Tunnel Setup Script
 # This creates an SSH tunnel to forward local port 8080 to the policy server on flexo
+server_name="vicos-zapp"
 
-echo "Setting up SSH tunnel to flexo cluster..."
-echo "   Local port 8080 -> flexo:8080"
+echo "Setting up SSH tunnel to $server_name cluster..."
+echo "   Local port 8080 -> $server_name:8080"
 echo ""
 echo "Press Ctrl+C to close the tunnel when done"
 echo ""
@@ -13,4 +14,4 @@ echo ""
 # -N means: don't execute a remote command, just forward the port
 # -v means: verbose (optional, remove if you want less output)
 
-ssh -L 8080:localhost:8080 -N vicos-flexo
+ssh -L 8080:localhost:8080 -N $server_name

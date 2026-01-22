@@ -46,7 +46,8 @@ WORKSPACE_DIR="$(dirname "$SCRIPT_DIR")"
 # Dataset Configuration
 # Replace with your Hugging Face username and dataset name
 HF_USER="${HF_USER:-edgarcancinoe}"
-DATASET_NAME="${DATASET_NAME:-soarm101_pick_cubes_place_box}"
+# DATASET_NAME="${DATASET_NAME:-soarm101_pick_cubes_place_box}"
+DATASET_NAME="${DATASET_NAME:-soarm101_pick_cubes_place_box_v2}"
 DATASET_REPO_ID="${HF_USER}/${DATASET_NAME}"
 
 # Training Hyperparameters
@@ -55,15 +56,15 @@ DATASET_REPO_ID="${HF_USER}/${DATASET_NAME}"
 BATCH_SIZE="${BATCH_SIZE:-64}"
 
 # Number of training steps
-STEPS="${STEPS:-1}"
+STEPS="${STEPS:-20000}"
 
 # Output Configuration
 # Directory where training logs and checkpoints will be saved
 TIMESTAMP=$(date +%Y%m%d_%H%M%S)
-OUTPUT_DIR="${OUTPUT_DIR:-outputs/train/smolvla_${TIMESTAMP}}"
+OUTPUT_DIR="${OUTPUT_DIR:-${WORKSPACE_DIR}/outputs/train/${DATASET_NAME}_smolvla_${TIMESTAMP}}"
 
 # Job name for logging and Weights & Biases
-JOB_NAME="${JOB_NAME:-smolvla_finetuning_${TIMESTAMP}}"
+JOB_NAME="${JOB_NAME:-${DATASET_NAME}_smolvla_finetuning_${TIMESTAMP}}"
 
 # Device Configuration
 # Options: cuda (NVIDIA GPU), mps (Apple Silicon), cpu (no GPU)
@@ -100,7 +101,7 @@ POLICY_REPO_ID="${POLICY_REPO_ID:-${HF_USER}/smolvla_finetuned}"
 # Save checkpoint every N steps
 SAVE_FREQ="${SAVE_FREQ:-5000}"
 
-POLICY_PUSH_TO_HUB="${POLICY_PUSH_TO_HUB:-false}"
+POLICY_PUSH_TO_HUB="${POLICY_PUSH_TO_HUB:-true}"
 
 # Evaluation frequency
 # EVAL_FREQ="${EVAL_FREQ:-500}"
