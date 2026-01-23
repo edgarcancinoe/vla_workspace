@@ -15,16 +15,16 @@ from lerobot.scripts.lerobot_record import record_loop
 from lerobot.processor import make_default_processors
 
 
-NUM_EPISODES = 100
+NUM_EPISODES = 80
 FPS = 30
-EPISODE_TIME_SEC = 60
-RESET_TIME_SEC = 10
-TASK_DESCRIPTION = "Pick all cubes and place them inside the white container."
+EPISODE_TIME_SEC = 30
+RESET_TIME_SEC = 12
+TASK_DESCRIPTION = "Pick up orange cube and place inside box."
 
 DATA_DIR = Path("/Users/edgarcancino/Documents/Academic/EMAI Thesis/vla_workspace/outputs/datasets/SO101-1")
 
 HF_USER = "edgarcancinoe"
-HF_REPO_ID = "soarm101_pick_cubes_place_box" 
+HF_REPO_ID = "soarm101_pickup_orange" 
 
 START_FROM_SCRATCH = False
 RESUME_DATASET = True
