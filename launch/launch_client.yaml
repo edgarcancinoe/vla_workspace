@@ -1,0 +1,46 @@
+# PURPOSE:
+# This file configures the robot client for asynchronous inference using the LeRobot framework.
+# It is responsible for:
+# 1. Interfacing with the physical robot hardware (follower arm, cameras).
+# 2. Connecting to the remote Policy Server to request actions based on observations.
+# 3. executing the received actions on the robot.
+#
+# Configuration includes:
+# - Policy settings (model path, type)
+# - Server connection details
+# - Robot hardware specifications (ports, camera indices)
+
+# Configuration for lerobot.async_inference.robot_client
+policy_type: smolvla
+pretrained_name_or_path: /home/jose/vla_workspace/launch/outputs/train/smolvla_20260121_122931/checkpoints/020000/pretrained_model
+actions_per_chunk: 50
+server_address: 127.0.0.1:8080
+policy_device: cuda
+client_device: cpu
+fps: 30
+use_rerun: true
+task: "Pick up the blue cube and place it inside the white container"
+# Map robot camera names to what the policy expects
+rename_map:
+  observation.images.top: observation.images.camera2
+  observation.images.lateral: observation.images.camera1 
+
+
+robot:
+  id: my_awesome_follower_arm
+  type: so100_follower
+  # port is now in robot_config.yaml
+  calibration_dir: /Users/edgarcancino/Documents/Academic/EMAI Thesis/vla_workspace/.cache/calibration
+  cameras:
+    camera1:  # Will be renamed to camera2 by rename_map
+      type: opencv
+      index_or_path: 0
+      width: 640  # Standard webcam resolution
+      height: 480
+      fps: 30
+    camera2:  # Will be renamed to camera1 by rename_map
+      type: opencv
+      index_or_path: 1
+      width: 640  # Standard webcam resolution
+      height: 480
+      fps: 30
