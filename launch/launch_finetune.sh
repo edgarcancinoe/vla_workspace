@@ -38,73 +38,94 @@ mkdir -p "$HF_LEROBOT_HOME"
 # ============================================================================
 # CONFIGURATION - Adjust these variables to your setup
 # ============================================================================
+HF_USER="${HF_USER:-edgarcancinoe}"
+# Dataset to use -----------------------------------
+DATASET_NAME_STR="soarm101_pickup_orange"
+# --------------------------------------------------
 
-# Workspace path detection
+# Base model ---------------------------------------
+# BASE_POLICY_PATH="lerobot/smolvla_base"
+BASE_POLICY_PATH="chamborgir/smolvla_pickplace_20k"
+# --------------------------------------------------
+
+# Policy name to use when saving -------------------
+# POLICY_NAME="smolvla_finetuned_orange"
+POLICY_NAME="smolvla_finetuned_pkandplc20k"
+# --------------------------------------------------
+
+# Workspace path detection -------------------------
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 WORKSPACE_DIR="$(dirname "$SCRIPT_DIR")"
+# --------------------------------------------------
 
-# Dataset Configuration
-# Replace with your Hugging Face username and dataset name
-HF_USER="${HF_USER:-edgarcancinoe}"
-# DATASET_NAME="${DATASET_NAME:-soarm101_pick_cubes_place_box}"
-DATASET_NAME="${DATASET_NAME:-soarm101_pick_cubes_place_box_v2}"
+# Dataset Configuration ----------------------------
+DATASET_NAME="${DATASET_NAME:-$DATASET_NAME_STR}"
 DATASET_REPO_ID="${HF_USER}/${DATASET_NAME}"
+# --------------------------------------------------
+
+# Model Configuration ------------------------------
+# Path to the base model
 
 # Training Hyperparameters
-# Batch size: number of samples processed in parallel before gradient update
-# Reduce this if you have low GPU memory (try 32, 16, or 8)
 BATCH_SIZE="${BATCH_SIZE:-64}"
-
-# Number of training steps
 STEPS="${STEPS:-20000}"
+LOG_FREQ="${LOG_FREQ:-100}"
+EVAL_FREQ="${EVAL_FREQ:--1}"
 
-# Output Configuration
-# Directory where training logs and checkpoints will be saved
+DEVICE="${DEVICE:-cuda}"
+CUDA_DEVICE="${CUDA_DEVICE:-0}"
+NUM_WORKERS="${NUM_WORKERS:-4}"
+# Learning rate
+# LR="${LR:-1e-4}"
+
+# Gradient accumulation steps (effective batch size = BATCH_SIZE * GRAD_ACCUM)
+# GRAD_ACCUM="${GRAD_ACCUM:-1}
+
+SAVE_FREQ="${SAVE_FREQ:-5000}"
+
+# Evaluation frequency
+# EVAL_FREQ="${EVAL_FREQ:-500}"
+
+
+# ============================================================================
+# OUTPUT & STORAGE CONFIGURATION
+# ============================================================================
+# 1. IDENTIFIERS & LOGGING
 TIMESTAMP=$(date +%Y%m%d_%H%M%S)
-OUTPUT_DIR="${OUTPUT_DIR:-${WORKSPACE_DIR}/outputs/train/${DATASET_NAME}_smolvla_${TIMESTAMP}}"
 
 # Job name for logging and Weights & Biases
-JOB_NAME="${JOB_NAME:-${DATASET_NAME}_smolvla_finetuning_${TIMESTAMP}}"
+JOB_NAME="${JOB_NAME:-${POLICY_NAME}_${TIMESTAMP}}"
+
+# 2. LOCAL OUTPUT (Checkpoints & Logs)
+# Directory where training logs and checkpoints will be saved LOCALLY
+# To save in local directory
+if [ -z "$OUTPUT_DIR" ]; then
+    OUTPUT_DIR="${WORKSPACE_DIR}/outputs/train/${POLICY_NAME}_${TIMESTAMP}"
+fi
+
+# Resume configuration
+RESUME="${RESUME:-false}"
+
+# 3. HUGGING FACE HUB OUTPUT
+# Set to 'true' to push model to Hugging Face Hub, 'false' to keep local only
+POLICY_PUSH_TO_HUB="${POLICY_PUSH_TO_HUB:-true}"
+
+# HuggingFace Hub repository ID to push the trained model to
+# Format: your_hf_username/model_name
+# CHANGE THIS if you want a specific repo name on the Hub
+POLICY_REPO_ID="${POLICY_REPO_ID:-${HF_USER}/${POLICY_NAME}}"
 
 # Device Configuration
 # Options: cuda (NVIDIA GPU), mps (Apple Silicon), cpu (no GPU)
-DEVICE="${DEVICE:-cuda}"
 
 # CUDA Device Selection
 # Specify which GPU to use (0, 1, 2, etc.). Leave empty to use all available GPUs.
-CUDA_DEVICE="${CUDA_DEVICE:-0}"
 
 # Weights & Biases Configuration
 # Set to true to enable W&B logging (requires: wandb login)
 # Set to false to disable W&B
 WANDB_ENABLE="${WANDB_ENABLE:-true}"
 
-# Model Configuration
-# Path to the base model
-POLICY_PATH="${POLICY_PATH:-lerobot/smolvla_base}"
-
-# HuggingFace Hub repository to push the trained model to
-# Format: your_hf_username/model_name
-POLICY_REPO_ID="${POLICY_REPO_ID:-${HF_USER}/smolvla_finetuned}"
-
-# ============================================================================
-# OPTIONAL: Additional Training Arguments
-# ============================================================================
-# Uncomment and modify these if you need more control
-
-# Learning rate
-# LR="${LR:-1e-4}"
-
-# Gradient accumulation steps (effective batch size = BATCH_SIZE * GRAD_ACCUM)
-# GRAD_ACCUM="${GRAD_ACCUM:-1}"
-
-# Save checkpoint every N steps
-SAVE_FREQ="${SAVE_FREQ:-5000}"
-
-POLICY_PUSH_TO_HUB="${POLICY_PUSH_TO_HUB:-true}"
-
-# Evaluation frequency
-# EVAL_FREQ="${EVAL_FREQ:-500}"
 
 # ============================================================================
 # DEVICE SETUP
@@ -168,7 +189,7 @@ echo "  Job Name:       ${JOB_NAME}"
 echo "  Device:         ${DEVICE}"
 echo "  CUDA_VISIBLE_DEVICES: ${CUDA_VISIBLE_DEVICES}"
 echo "  W&B Enabled:    ${WANDB_ENABLE}"
-echo "  Policy Path:    ${POLICY_PATH}"
+echo "  Base Policy:    ${BASE_POLICY_PATH}"
 echo "  Policy Repo ID: ${POLICY_REPO_ID}"
 echo "  Push to Hub:    ${POLICY_PUSH_TO_HUB}"
 echo ""
@@ -207,18 +228,22 @@ echo ""
 # ============================================================================
 
 python -m lerobot.scripts.lerobot_train \
-  --policy.path="${POLICY_PATH}" \
+  --policy.path="${BASE_POLICY_PATH}" \
   --policy.repo_id="${POLICY_REPO_ID}" \
   --policy.push_to_hub="${POLICY_PUSH_TO_HUB}" \
   --dataset.repo_id="${DATASET_REPO_ID}" \
   --rename_map='{"observation.images.lateral": "observation.images.camera1", "observation.images.top": "observation.images.camera2"}' \
   --batch_size="${BATCH_SIZE}" \
   --steps="${STEPS}" \
+  --log_freq="${LOG_FREQ}" \
+  --eval_freq="${EVAL_FREQ}" \
   --save_freq="${SAVE_FREQ}" \
   --output_dir="${OUTPUT_DIR}" \
   --job_name="${JOB_NAME}" \
   --policy.device="${DEVICE}" \
-  --wandb.enable="${WANDB_ENABLE}"
+  --wandb.enable="${WANDB_ENABLE}" \
+  --num_workers=${NUM_WORKERS} \
+  --resume="${RESUME}"
 
 # Capture exit code
 EXIT_CODE=$?
