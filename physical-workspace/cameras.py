@@ -4,7 +4,7 @@ from lerobot.cameras.opencv.camera_opencv import OpenCVCamera
 from lerobot.cameras.configs import ColorMode, Cv2Rotation
 
 # Define the cameras you want to use (e.g., indices 0 and 1)
-CAMERA_INDICES = [0, 1] 
+CAMERA_INDICES = [1, 2] 
 res = (640, 480)
 cameras = []
 
@@ -27,7 +27,8 @@ try:
 
     print("Press 'q' to quit.")
 
-    while True:
+    count = 0
+    while count < 100:
         for i, cam in enumerate(cameras):
             # Read frame (returns RGB)
             frame = cam.async_read()
@@ -38,8 +39,9 @@ try:
                 
                 # Show the frame
                 window_name = f"Camera {CAMERA_INDICES[i]}"
-                cv2.imshow(window_name, frame_bgr)
+                # cv2.imshow(window_name, frame_bgr) # Commented out for headless run safety if needed
         
+        count += 1
         # Check for 'q' key to exit
         if cv2.waitKey(1) & 0xFF == ord('q'):
             break

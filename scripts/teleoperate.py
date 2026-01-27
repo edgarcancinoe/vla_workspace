@@ -1,21 +1,30 @@
+import sys
 import yaml
+import shutil
+import argparse
 import rerun as rr
 from pathlib import Path
-from lerobot.cameras.opencv.configuration_opencv import OpenCVCameraConfig
-from lerobot.robots.so100_follower.config_so100_follower import SO100FollowerConfig
-from lerobot.robots.so100_follower.so100_follower import SO100Follower
-from lerobot.teleoperators.so100_leader.config_so100_leader import SO100LeaderConfig
-from lerobot.teleoperators.so100_leader.so100_leader import SO100Leader
-from lerobot.utils.visualization_utils import init_rerun
 
 # Load config
 config_path = Path(__file__).parent.parent / "config" / "robot_config.yaml"
 with open(config_path, "r") as f:
     config_data = yaml.safe_load(f)
 
-# ... existing code ...
-import shutil
-import argparse
+# Configuration for Rectification from robot_config.yaml
+RECTIFY_TOP = config_data.get("rectification", {}).get("top", True)
+RECTIFY_WRIST = config_data.get("rectification", {}).get("wrist", True)
+
+# Add project root to path to find utils
+sys.path.append(str(Path(__file__).parent.parent))
+from utils import camera_calibration
+
+from lerobot.cameras.opencv.configuration_opencv import OpenCVCameraConfig
+from lerobot.robots.so100_follower.config_so100_follower import SO100FollowerConfig
+from lerobot.robots.so100_follower.so100_follower import SO100Follower
+from lerobot.teleoperators.so100_leader.config_so100_leader import SO100LeaderConfig
+from lerobot.teleoperators.so100_leader.so100_leader import SO100Leader
+from lerobot.utils.visualization_utils import init_rerun, log_rerun_data
+
 parser = argparse.ArgumentParser()
 parser.add_argument("--calibrate", action="store_true", help="Force recalibration of the robot and leader arm")
 args = parser.parse_args()
@@ -36,8 +45,8 @@ print(f"Follower Port: {follower_port}")
 print(f"Leader Port: {leader_port}")
 
 camera_config = {
-    "camera1": OpenCVCameraConfig(index_or_path=0, width=640, height=360, fps=30),
-    "camera2": OpenCVCameraConfig(index_or_path=1, width=640, height=480, fps=30)
+    name: OpenCVCameraConfig(index_or_path=idx, width=640, height=480, fps=30)
+    for name, idx in config_data.get("cameras", {}).items()
 }
 
 robot_config = SO100FollowerConfig(
@@ -61,18 +70,34 @@ print("Connecting devices...")
 robot.connect(calibrate=args.calibrate)
 teleop_device.connect(calibrate=args.calibrate)
 
-init_rerun(session_name="teleoperate")
+init_rerun(session_name="teleoperate_debug")
 
 print("Connected! Teleoperating...")
 
 step = 0
-print_interval = 30  # Print positions every 30 steps (~1 second at 30 FPS)
+print_interval = 100  # Print positions every 30 steps (~1 second at 30 FPS)
 
 try:
     while True:
         observation = robot.get_observation()
+        
+        # Debug: print observation keys on first frame
+        if step == 0:
+            print(f"DEBUG: Observation keys: {list(observation.keys())}")
+        
         action = teleop_device.get_action()
         robot.send_action(action)
+        
+        # Rectify images based on configuration
+        if RECTIFY_TOP and "top" in observation:
+            observation["top"] = camera_calibration.rectify_image(
+                observation["top"], "top"
+            )
+            
+        if RECTIFY_WRIST and "wrist" in observation:
+            observation["wrist"] = camera_calibration.rectify_image(
+                observation["wrist"], "wrist"
+            )
         
         # Print positions periodically
         if step % print_interval == 0:
@@ -84,10 +109,7 @@ try:
             print("}")
         
         rr.set_time_sequence("step", step)
-        for cam_name in camera_config.keys():
-            key = f"observation.images.{cam_name}"
-            if key in observation:
-                rr.log(key, rr.Image(observation[key]))
+        log_rerun_data(observation=observation, action=action)
         
         step += 1
 except KeyboardInterrupt:

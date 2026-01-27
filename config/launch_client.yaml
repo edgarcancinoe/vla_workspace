@@ -12,16 +12,18 @@
 
 # Configuration for lerobot.async_inference.robot_client
 policy_type: smolvla
-pretrained_name_or_path: /home/jose/vla_workspace/launch/outputs/train/smolvla_20260121_122931/checkpoints/020000/pretrained_model
-actions_per_chunk: 100
+pretrained_name_or_path: edgarcancinoe/smolvla_finetuned_orange
+actions_per_chunk: 30
+chunk_size_threshold: 0.25
+
 server_address: 127.0.0.1:8080
 policy_device: cuda
 client_device: cpu
 fps: 30
 use_rerun: true
-task: "Pick up the orange cube and place it inside the white container."
-
-# Map robot camera names to what the policy expects
+# task: "Pick up the orange cube and place it inside the white container."
+task: "Pick up orange cube and place inside box."
+# Map robot camera names to what the policy expects. In my setup camera 1 is top and camera 0 is lateral
 rename_map:
   observation.images.top: observation.images.camera2
   observation.images.lateral: observation.images.camera1 
@@ -35,13 +37,13 @@ robot:
   cameras:
     camera1:  # Will be renamed to camera2 by rename_map
       type: opencv
-      index_or_path: 0
+      index_or_path: 1
       width: 640  # Standard webcam resolution
       height: 480
       fps: 30
     camera2:  # Will be renamed to camera1 by rename_map
       type: opencv
-      index_or_path: 1
+      index_or_path: 0
       width: 640  # Standard webcam resolution
       height: 480
       fps: 30

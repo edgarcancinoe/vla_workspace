@@ -12,24 +12,81 @@ from lerobot.utils.control_utils import init_keyboard_listener
 from lerobot.utils.utils import log_say
 from lerobot.utils.visualization_utils import init_rerun
 from lerobot.scripts.lerobot_record import record_loop
+import sys
 from lerobot.processor import make_default_processors
 
+# Add project root to path to find utils
+sys.path.append(str(Path(__file__).parent.parent))
 
-NUM_EPISODES = 80
+# Load config
+config_path = Path(__file__).parent.parent / "config" / "robot_config.yaml"
+with open(config_path, "r") as f:
+    config_data = yaml.safe_load(f)
+
+# Configuration for Rectification from robot_config.yaml
+RECTIFY_TOP = config_data.get("rectification", {}).get("top", True)
+RECTIFY_WRIST = config_data.get("rectification", {}).get("wrist", True)
+
+NUM_EPISODES = 60
 FPS = 30
 EPISODE_TIME_SEC = 30
 RESET_TIME_SEC = 12
-TASK_DESCRIPTION = "Pick up orange cube and place inside box."
+TASK_DESCRIPTION = "Pick up orange cube and place inside white box."
 
-DATA_DIR = Path("/Users/edgarcancino/Documents/Academic/EMAI Thesis/vla_workspace/outputs/datasets/SO101-1")
+# Point to new merged dataset
+DATA_DIR = Path("/Users/edgarcancino/Documents/Academic/EMAI Thesis/vla_workspace/outputs/datasets/soarm101_pickplace_local")
 
 HF_USER = "edgarcancinoe"
-HF_REPO_ID = "soarm101_pickup_orange" 
+HF_REPO_ID = "soarm101_pickplace_top_wrist" 
 
 START_FROM_SCRATCH = False
 RESUME_DATASET = True
 
 assert not (START_FROM_SCRATCH and RESUME_DATASET), "Cannot start from scratch and resume dataset at the same time."
+
+class RectifiedDataset:
+    """Wrapper to rectify images before adding to dataset."""
+    def __init__(self, dataset):
+        self.dataset = dataset
+        
+    def add_frame(self, frame):
+        # Rectify images in frame
+        for key in list(frame.keys()):
+            if "observation.images" in key:
+                 # Extract camera name (e.g. 'observation.images.top' -> 'top')
+                 cam_name = key.split(".")[-1]
+                 # Rectify
+                 frame[key] = camera_calibration.rectify_image(frame[key], cam_name)
+        self.dataset.add_frame(frame)
+        
+    def __getattr__(self, name):
+        return getattr(self.dataset, name)
+
+
+
+from utils import camera_calibration
+
+def patch_robot_for_rectification(robot):
+    original_get_observation = robot.get_observation
+    
+    def patched_get_observation():
+        observation = original_get_observation()
+        
+        # Rectify based on configuration
+        if RECTIFY_TOP and "top" in observation:
+            observation["top"] = camera_calibration.rectify_image(
+                observation["top"], "top"
+            )
+            
+        if RECTIFY_WRIST and "wrist" in observation:
+            observation["wrist"] = camera_calibration.rectify_image(
+                observation["wrist"], "wrist"
+            )
+            
+        return observation
+        
+    robot.get_observation = patched_get_observation
+    print(f"Robot observation patched for rectification (Top={RECTIFY_TOP}, Wrist={RECTIFY_WRIST})")
 
 def main():
     # Manual delete
@@ -39,11 +96,6 @@ def main():
         TARGET_DIR = DATA_DIR
         if TARGET_DIR.exists():
             shutil.rmtree(TARGET_DIR)
-
-    # Load HW Config
-    config_path = Path(__file__).parent.parent / "config" / "robot_config.yaml"
-    with open(config_path, 'r') as f:
-        config_data = yaml.safe_load(f)
 
     FOLLOWER_PORT = config_data["robot"]["port"]
     LEADER_PORT = config_data["leader_port"]
@@ -62,7 +114,7 @@ def main():
         id="my_awesome_follower_arm",
         cameras={
             "top": OpenCVCameraConfig(index_or_path=0, width=640, height=480, fps=FPS),
-            "lateral": OpenCVCameraConfig(index_or_path=1, width=640, height=480, fps=FPS),
+            "wrist": OpenCVCameraConfig(index_or_path=1, width=640, height=480, fps=FPS),
         },
         port=FOLLOWER_PORT,
         calibration_dir=calibration_dir,
@@ -117,12 +169,19 @@ def main():
         )
         episode_idx = 0
 
+    # WRAP DATASET TO RECTIFY IMAGES
+    # dataset = RectifiedDataset(dataset) # Removed to avoid double rectification
+
     # Initialize the keyboard listener and rerun visualization
     _, events = init_keyboard_listener()
     init_rerun(session_name="recording")
 
     # Connect the robot and teleoperator
     robot.connect()
+    
+    # Patch robot for rectification (Handles both Rerun and Dataset)
+    patch_robot_for_rectification(robot)
+    
     teleop.connect()
 
     # Create the required processors

@@ -45,17 +45,49 @@ assert not (START_FROM_SCRATCH and RESUME_DATASET), "Cannot start from scratch a
 # MAIN SCRIPT
 # ============================================================================
 
+# Load config
+config_path = Path(__file__).parent.parent / "config" / "robot_config.yaml"
+with open(config_path, "r") as f:
+    config_data = yaml.safe_load(f)
+
+# Configuration for Rectification from robot_config.yaml
+RECTIFY_TOP = config_data.get("rectification", {}).get("top", True)
+RECTIFY_WRIST = config_data.get("rectification", {}).get("wrist", True)
+
+import sys
+# Add project root to path to find utils
+sys.path.append(str(Path(__file__).parent.parent))
+from utils import camera_calibration
+
+def patch_robot_for_rectification(robot):
+    original_get_observation = robot.get_observation
+    
+    def patched_get_observation():
+        observation = original_get_observation()
+        
+        # Rectify based on configuration
+        if RECTIFY_TOP and "top" in observation:
+            observation["top"] = camera_calibration.rectify_image(
+                observation["top"], "top"
+            )
+            
+        if RECTIFY_WRIST and "wrist" in observation:
+            observation["wrist"] = camera_calibration.rectify_image(
+                observation["wrist"], "wrist"
+            )
+            
+        return observation
+        
+    robot.get_observation = patched_get_observation
+    print(f"Robot observation patched for rectification (Top={RECTIFY_TOP}, Wrist={RECTIFY_WRIST})")
+
 def main():
+    # ... (skipping manual delete logic, it's fine)
     # Manual delete if starting from scratch
     if START_FROM_SCRATCH:
         import shutil
         if DATA_DIR.exists():
             shutil.rmtree(DATA_DIR)
-
-    # Load hardware config
-    config_path = Path(__file__).parent.parent / "config" / "robot_config.yaml"
-    with open(config_path, 'r') as f:
-        config_data = yaml.safe_load(f)
 
     FOLLOWER_PORT = config_data["robot"]["port"]
 
@@ -76,7 +108,7 @@ def main():
         id="my_awesome_follower_arm",
         cameras={
             "top": OpenCVCameraConfig(index_or_path=0, width=640, height=480, fps=FPS),
-            "lateral": OpenCVCameraConfig(index_or_path=1, width=640, height=480, fps=FPS),
+            "wrist": OpenCVCameraConfig(index_or_path=1, width=640, height=480, fps=FPS),
         },
         port=FOLLOWER_PORT,
         calibration_dir=calibration_dir,
@@ -135,6 +167,9 @@ def main():
 
     # Connect the robot
     robot.connect()
+    
+    # Patch robot for rectification
+    patch_robot_for_rectification(robot)
 
     if not robot.is_connected:
         raise ValueError("Robot is not connected!")
