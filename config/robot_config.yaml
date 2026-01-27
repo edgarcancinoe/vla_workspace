@@ -2,3 +2,11 @@ robot:
   port: /dev/cu.usbmodem5AAF2202301  # Follower port
 
 leader_port: /dev/cu.usbmodem5AAF2181531
+
+rectification:
+  top: true
+  wrist: false
+
+cameras:
+  top: 0
+  wrist: 1

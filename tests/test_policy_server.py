@@ -8,6 +8,9 @@ import torch
 from pathlib import Path
 
 # LeRobot Imports
+import sys
+sys.path.append("/Users/edgarcancino/Documents/Academic/EMAI Thesis/vla_workspace/scripts")
+import camera_calibration
 from lerobot.async_inference.robot_client import RobotClient, RobotClientConfig
 
 # =============================================================================
@@ -17,7 +20,7 @@ LAUNCH_CONFIG_PATH = Path("../config/launch_client.yaml")
 ROBOT_CONFIG_PATH = Path("../config/robot_config.yaml")
 
 # Model Configuration
-MODEL_PATH = "edgarcancinoe/smolvla_finetuned_pkandplc20k"  # Baseline model
+MODEL_PATH = "edgarcancinoe/smolvla_finetune"  # Baseline model
 POLICY_TYPE = "smolvla"
 
 # Denormalization Settings
@@ -63,18 +66,77 @@ class DebugRobotClient(RobotClient):
         self.received_action_chunks = 0
     
     def control_loop_observation(self, task: str, verbose: bool = False):
-        """Override to debug observation sending."""
-        self.observation_count += 1
-        
-        if self.observation_count % 30 == 1:  # Print every 30 observations (~1 second)
-            print(f"\n[OBS #{self.observation_count}] Capturing and sending observation to policy server...")
-        
-        result = super().control_loop_observation(task, verbose)
-        
-        if self.observation_count % 30 == 1:
-            print(f"[OBS #{self.observation_count}] Observation sent successfully")
-        
-        return result
+        """Override to debug observation sending and fix Rerun color visualization."""
+        try:
+            # 1. Capture observation (Raw Observation from Robot)
+            # This logic mimics RobotClient.control_loop_observation but fixes the Rerun logging
+            
+            # Helper to access parent methods we can't easily super() call granularly
+            # We will basically reimplement the coordination logic to inject our logging.
+            
+            import time
+            import rerun as rr
+            import numpy as np
+            import torch
+            from lerobot.async_inference.robot_client import TimedObservation
+            
+            # --- START COPY FROM PARENT ---
+            start_time = time.perf_counter()
+
+            raw_observation = self.robot.get_observation()
+            
+            # --- APPLY RECTIFICATION ---
+            # Undistort images before any processing/sending
+            for key, value in raw_observation.items():
+                if isinstance(value, np.ndarray) and value.ndim == 3: # Image
+                    # key matches camera name in config (e.g. 'camera1', 'camera2')
+                    raw_observation[key] = camera_calibration.rectify_image(value, key)
+            
+            raw_observation["task"] = task
+
+            with self.latest_action_lock:
+                latest_action = self.latest_action
+
+            observation = TimedObservation(
+                timestamp=time.time(),
+                observation=raw_observation,
+                timestep=max(latest_action, 0),
+            )
+            
+            obs_capture_time = time.perf_counter() - start_time
+            
+            # Must-go logic
+            with self.action_queue_lock:
+                observation.must_go = self.must_go.is_set() and self.action_queue.empty()
+                current_queue_size = self.action_queue.qsize()
+
+            self.send_observation(observation)
+            
+            if observation.must_go:
+                self.must_go.clear()
+
+            # --- DEBUG LOGGING ---
+            self.observation_count += 1
+            if self.observation_count % 30 == 1:
+                print(f"[OBS #{self.observation_count}] Sent observation (Queue: {current_queue_size})")
+
+            # --- RERUN LOGGING (FIXED) ---
+            if self.config.use_rerun:
+                rr.set_time_nanos("log_time", int(observation.get_timestamp() * 1e9))
+                
+                for key, value in raw_observation.items():
+                    if isinstance(value, np.ndarray) and value.ndim == 3: # Likely an image
+                        # FIXED: Do NOT swap channels. OpenCVCamera returns RGB, Rerun expects RGB.
+                        # Original RobotClient does cv2.cvtColor(value, cv2.COLOR_BGR2RGB) which caused the Blue Tint.
+                        rr.log(f"camera/{key}", rr.Image(value))
+                    elif isinstance(value, (float, int)) or (isinstance(value, torch.Tensor) and value.numel() == 1):
+                        rr.log(f"state/{key}", rr.Scalars(value))
+                        
+            return raw_observation
+            
+        except Exception as e:
+            self.logger.error(f"Error in debug observation sender: {e}")
+
     
     def control_loop_action(self, verbose: bool = False):
         """Override to apply denormalization BEFORE sending to robot."""
