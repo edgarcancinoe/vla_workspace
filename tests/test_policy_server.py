@@ -9,18 +9,26 @@ from pathlib import Path
 
 # LeRobot Imports
 import sys
-sys.path.append("/Users/edgarcancino/Documents/Academic/EMAI Thesis/vla_workspace/scripts")
-import camera_calibration
+from pathlib import Path
+
+# Add workspace root to sys.path to allow importing from scripts/utils
+WORKSPACE_ROOT = Path(__file__).parent.parent
+sys.path.append(str(WORKSPACE_ROOT))
+
+# Now we can import from scripts/utils
+from utils import camera_calibration
+
 from lerobot.async_inference.robot_client import RobotClient, RobotClientConfig
 
 # =============================================================================
 # CONFIGURATION
 # =============================================================================
-LAUNCH_CONFIG_PATH = Path("../config/launch_client.yaml")
-ROBOT_CONFIG_PATH = Path("../config/robot_config.yaml")
+# Use WORKSPACE_ROOT from imports section for robust paths
+LAUNCH_CONFIG_PATH = WORKSPACE_ROOT / "config" / "launch_client.yaml"
+ROBOT_CONFIG_PATH = WORKSPACE_ROOT / "config" / "robot_config.yaml"
 
 # Model Configuration
-MODEL_PATH = "edgarcancinoe/smolvla_finetune"  # Baseline model
+MODEL_PATH = "/home/jose/vla_workspace/outputs/train/smolvla_finetuned_orange_20260127_202513/checkpoints/010000/pretrained_model"  # Baseline model
 POLICY_TYPE = "smolvla"
 
 # Denormalization Settings
@@ -36,6 +44,38 @@ ACTION_RANGES = {
     "wrist_roll.pos": (-100, 100),
     "gripper.pos": (0, 100),  # Gripper uses RANGE_0_100
 }
+
+# Load Rectification Flags and Dynamic Camera Mapping
+CAMERA_NAME_MAPPING = {}
+try:
+    with open(ROBOT_CONFIG_PATH, "r") as f:
+        _robot_config_data = yaml.safe_load(f)
+    print(f"Loaded Robot Config for Rectification: {_robot_config_data.get('rectification')}")
+    RECTIFY_TOP = _robot_config_data.get("rectification", {}).get("top", True)
+    RECTIFY_WRIST = _robot_config_data.get("rectification", {}).get("wrist", False)
+
+    # Build Map: cameraX -> index -> name (top/wrist)
+    # 1. Get index->name from robot config
+    _idx_to_name = {v: k for k, v in _robot_config_data.get('cameras', {}).items()}
+    
+    # 2. Get cameraX->index from launch config
+    with open(LAUNCH_CONFIG_PATH, "r") as f:
+        _launch_config_data = yaml.safe_load(f)
+        
+    if 'robot' in _launch_config_data and 'cameras' in _launch_config_data['robot']:
+        for _cam_key, _cam_conf in _launch_config_data['robot']['cameras'].items():
+            _idx = _cam_conf.get('index_or_path')
+            if _idx in _idx_to_name:
+                CAMERA_NAME_MAPPING[_cam_key] = _idx_to_name[_idx]
+                
+    print(f"Dynamic Camera Mapping: {CAMERA_NAME_MAPPING}")
+
+except Exception as e:
+    print(f"WARNING: Could not load config/mapping from {ROBOT_CONFIG_PATH}: {e}")
+    RECTIFY_TOP = True
+    RECTIFY_WRIST = True
+    # Fallback to defaults if detection fails
+    CAMERA_NAME_MAPPING = {"camera1": "wrist", "camera2": "top"}
 
 # =============================================================================
 # HELPER FUNCTIONS
@@ -87,10 +127,23 @@ class DebugRobotClient(RobotClient):
             
             # --- APPLY RECTIFICATION ---
             # Undistort images before any processing/sending
+            # MAPPING: Derived dynamically from configs
+            # e.g. {"camera1": "wrist", "camera2": "top"}
+            key_to_calib = CAMERA_NAME_MAPPING
+            
             for key, value in raw_observation.items():
                 if isinstance(value, np.ndarray) and value.ndim == 3: # Image
+                    calib_name = key_to_calib.get(key, key)
+                    
+                    # Apply flags
+                    if calib_name == "top" and not RECTIFY_TOP:
+                        continue
+                    if calib_name == "wrist" and not RECTIFY_WRIST:
+                        continue
+                        
                     # key matches camera name in config (e.g. 'camera1', 'camera2')
-                    raw_observation[key] = camera_calibration.rectify_image(value, key)
+                    # We pass 'calib_name' to ensure we use the correct matrix (wrist vs top)
+                    raw_observation[key] = camera_calibration.rectify_image(value, calib_name)
             
             raw_observation["task"] = task
 

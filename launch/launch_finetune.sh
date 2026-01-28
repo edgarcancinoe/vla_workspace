@@ -40,17 +40,17 @@ mkdir -p "$HF_LEROBOT_HOME"
 # ============================================================================
 HF_USER="${HF_USER:-edgarcancinoe}"
 # Dataset to use -----------------------------------
-DATASET_NAME_STR="soarm101_pickup_orange"
+DATASET_NAME_STR="soarm101_pickplace_top_wrist"
 # --------------------------------------------------
 
 # Base model ---------------------------------------
-# BASE_POLICY_PATH="lerobot/smolvla_base"
-BASE_POLICY_PATH="chamborgir/smolvla_pickplace_20k"
+BASE_POLICY_PATH="lerobot/smolvla_base"
+# BASE_POLICY_PATH="chamborgir/smolvla_pickplace_20k"
 # --------------------------------------------------
 
 # Policy name to use when saving -------------------
-# POLICY_NAME="smolvla_finetuned_orange"
-POLICY_NAME="smolvla_finetuned_pkandplc20k"
+POLICY_NAME="smolvla_finetuned_orange"
+# POLICY_NAME="smolvla_finetuned_pkandplc20k"
 # --------------------------------------------------
 
 # Workspace path detection -------------------------
@@ -232,7 +232,7 @@ python -m lerobot.scripts.lerobot_train \
   --policy.repo_id="${POLICY_REPO_ID}" \
   --policy.push_to_hub="${POLICY_PUSH_TO_HUB}" \
   --dataset.repo_id="${DATASET_REPO_ID}" \
-  --rename_map='{"observation.images.lateral": "observation.images.camera1", "observation.images.top": "observation.images.camera2"}' \
+  --rename_map='{"observation.images.wrist": "observation.images.camera1", "observation.images.top": "observation.images.camera2"}' \
   --batch_size="${BATCH_SIZE}" \
   --steps="${STEPS}" \
   --log_freq="${LOG_FREQ}" \
