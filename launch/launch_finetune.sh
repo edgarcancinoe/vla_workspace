@@ -233,6 +233,9 @@ python -m lerobot.scripts.lerobot_train \
   --policy.push_to_hub="${POLICY_PUSH_TO_HUB}" \
   --dataset.repo_id="${DATASET_REPO_ID}" \
   --rename_map='{"observation.images.wrist": "observation.images.camera1", "observation.images.top": "observation.images.camera2"}' \
+  --dataset.image_transforms.enable="true" \
+  --dataset.image_transforms.tfs.affine.kwargs.degrees="[-15, 15]" \
+  --dataset.image_transforms.tfs.affine.kwargs.translate="[0.1, 0.1]" \
   --batch_size="${BATCH_SIZE}" \
   --steps="${STEPS}" \
   --log_freq="${LOG_FREQ}" \

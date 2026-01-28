@@ -1,31 +1,162 @@
-# VLA Robot Control
+---
+license: apache-2.0
+task_categories:
+- robotics
+tags:
+- LeRobot
+configs:
+- config_name: default
+  data_files: data/*/*.parquet
+---
 
-This workspace uses `lerobot.async_inference` to control an SO-101 robot via a remote GPU.
+This dataset was created using [LeRobot](https://github.com/huggingface/lerobot).
 
-## Quick Start
+## Dataset Description
 
-### 1. The Tunnel (Local Mac)
-In a fresh terminal on Mac:
-```bash
-ssh -L 8080:localhost:8080 -p 30660 jose@proxy.vicos.si
+
+
+- **Homepage:** [More Information Needed]
+- **Paper:** [More Information Needed]
+- **License:** apache-2.0
+
+## Dataset Structure
+
+[meta/info.json](meta/info.json):
+```json
+{
+    "codebase_version": "v3.0",
+    "robot_type": "so100_follower",
+    "total_episodes": 60,
+    "total_frames": 48584,
+    "total_tasks": 1,
+    "chunks_size": 1000,
+    "data_files_size_in_mb": 100,
+    "video_files_size_in_mb": 200,
+    "fps": 30,
+    "splits": {
+        "train": "0:60"
+    },
+    "data_path": "data/chunk-{chunk_index:03d}/file-{file_index:03d}.parquet",
+    "video_path": "videos/{video_key}/chunk-{chunk_index:03d}/file-{file_index:03d}.mp4",
+    "features": {
+        "action": {
+            "dtype": "float32",
+            "shape": [
+                6
+            ],
+            "names": [
+                "shoulder_pan.pos",
+                "shoulder_lift.pos",
+                "elbow_flex.pos",
+                "wrist_flex.pos",
+                "wrist_roll.pos",
+                "gripper.pos"
+            ]
+        },
+        "observation.state": {
+            "dtype": "float32",
+            "shape": [
+                6
+            ],
+            "names": [
+                "shoulder_pan.pos",
+                "shoulder_lift.pos",
+                "elbow_flex.pos",
+                "wrist_flex.pos",
+                "wrist_roll.pos",
+                "gripper.pos"
+            ]
+        },
+        "observation.images.top": {
+            "dtype": "video",
+            "shape": [
+                480,
+                640,
+                3
+            ],
+            "names": [
+                "height",
+                "width",
+                "channels"
+            ],
+            "info": {
+                "video.height": 480,
+                "video.width": 640,
+                "video.codec": "av1",
+                "video.pix_fmt": "yuv420p",
+                "video.is_depth_map": false,
+                "video.fps": 30,
+                "video.channels": 3,
+                "has_audio": false
+            }
+        },
+        "observation.images.wrist": {
+            "dtype": "video",
+            "shape": [
+                480,
+                640,
+                3
+            ],
+            "names": [
+                "height",
+                "width",
+                "channels"
+            ],
+            "info": {
+                "video.height": 480,
+                "video.width": 640,
+                "video.codec": "av1",
+                "video.pix_fmt": "yuv420p",
+                "video.is_depth_map": false,
+                "video.fps": 30,
+                "video.channels": 3,
+                "has_audio": false
+            }
+        },
+        "timestamp": {
+            "dtype": "float32",
+            "shape": [
+                1
+            ],
+            "names": null
+        },
+        "frame_index": {
+            "dtype": "int64",
+            "shape": [
+                1
+            ],
+            "names": null
+        },
+        "episode_index": {
+            "dtype": "int64",
+            "shape": [
+                1
+            ],
+            "names": null
+        },
+        "index": {
+            "dtype": "int64",
+            "shape": [
+                1
+            ],
+            "names": null
+        },
+        "task_index": {
+            "dtype": "int64",
+            "shape": [
+                1
+            ],
+            "names": null
+        }
+    }
+}
 ```
 
-### 2. The Server (Remote GPU)
-In the remote shell (after SSH):
-```bash
-conda activate thesis
-python -m lerobot.async_inference.policy_server --config_path launch_server.yaml
-```
 
-### 3. The Client (Local Mac)
-In another local terminal:
-```bash
-conda activate thesis
-python -m lerobot.async_inference.robot_client --config_path launch_client.yaml
-```
+## Citation
 
-## Configuration
-Edit `launch_client.yaml` to change:
-- `pretrained_name_or_path`: Model to use (e.g. `lerobot/smolvla_base`)
-- `robot.port`: The USB port of your robot
-- `server_address`: Change if not using a tunnel (e.g. `10.x.x.x:8080`)
+**BibTeX:**
+
+```bibtex
+[More Information Needed]
+```
