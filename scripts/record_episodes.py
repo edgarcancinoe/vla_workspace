@@ -27,10 +27,10 @@ with open(config_path, "r") as f:
 RECTIFY_TOP = config_data.get("rectification", {}).get("top", True)
 RECTIFY_WRIST = config_data.get("rectification", {}).get("wrist", True)
 
-NUM_EPISODES = 30
+NUM_EPISODES = 115
 FPS = 30
 EPISODE_TIME_SEC = 30
-RESET_TIME_SEC = 12
+RESET_TIME_SEC = 9
 TASK_DESCRIPTION = "Pick up orange cube and place inside white box."
 
 # Point to new merged dataset
