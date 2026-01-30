@@ -10,9 +10,13 @@ config_path = Path(__file__).parent.parent / "config" / "robot_config.yaml"
 with open(config_path, "r") as f:
     config_data = yaml.safe_load(f)
 
+
 # Configuration for Rectification from robot_config.yaml
 RECTIFY_TOP = config_data.get("rectification", {}).get("top", True)
 RECTIFY_WRIST = config_data.get("rectification", {}).get("wrist", True)
+
+# Wrist Roll Offset
+WRIST_ROLL_OFFSET = config_data.get("robot", {}).get("wrist_roll_offset", 0.0)
 
 # Add project root to path to find utils
 sys.path.append(str(Path(__file__).parent.parent))
@@ -75,7 +79,7 @@ init_rerun(session_name="teleoperate_debug")
 print("Connected! Teleoperating...")
 
 step = 0
-print_interval = 100  # Print positions every 30 steps (~1 second at 30 FPS)
+print_interval = 10000  # Print positions every 30 steps (~1 second at 30 FPS)
 
 try:
     while True:
@@ -86,6 +90,16 @@ try:
             print(f"DEBUG: Observation keys: {list(observation.keys())}")
         
         action = teleop_device.get_action()
+        
+        # Apply wrist roll offset and clamp
+        if "wrist_roll.pos" in action:
+            original_val = action["wrist_roll.pos"]
+            new_val = original_val + WRIST_ROLL_OFFSET
+            # Clamp to range [-100, 100]
+            new_val = max(min(new_val, 100.0), -100.0)
+            action["wrist_roll.pos"] = new_val
+            # Optional debug print if needed, but keeping it clean
+            
         robot.send_action(action)
         
         # Rectify images based on configuration

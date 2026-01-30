@@ -27,22 +27,107 @@ with open(config_path, "r") as f:
 RECTIFY_TOP = config_data.get("rectification", {}).get("top", True)
 RECTIFY_WRIST = config_data.get("rectification", {}).get("wrist", True)
 
-NUM_EPISODES = 60
+NUM_EPISODES = 30
 FPS = 30
 EPISODE_TIME_SEC = 30
 RESET_TIME_SEC = 12
 TASK_DESCRIPTION = "Pick up orange cube and place inside white box."
 
 # Point to new merged dataset
-DATA_DIR = Path("/Users/edgarcancino/Documents/Academic/EMAI Thesis/vla_workspace/outputs/datasets/soarm101_pickplace_local")
 
 HF_USER = "edgarcancinoe"
-HF_REPO_ID = "soarm101_pickplace_top_wrist" 
+HF_REPO_ID = "soarm101_pickplace_cubes" 
+
+DATA_DIR = Path(f"~/Documents/Academic/EMAI Thesis/vla_workspace/outputs/datasets/{HF_REPO_ID}").expanduser()
 
 START_FROM_SCRATCH = False
 RESUME_DATASET = True
 
 assert not (START_FROM_SCRATCH and RESUME_DATASET), "Cannot start from scratch and resume dataset at the same time."
+
+import json
+from pathlib import Path
+import pandas as pd
+
+
+def _read_all_parquets(pq_dir: Path) -> pd.DataFrame:
+    files = sorted(pq_dir.rglob("*.parquet"))
+    if not files:
+        raise FileNotFoundError(f"No parquet files found under {pq_dir}")
+    return pd.concat([pd.read_parquet(f) for f in files], ignore_index=True)
+
+
+def validate_lerobot_dataset_on_disk(root: Path) -> None:
+    """
+    Hard-fails if the on-disk dataset is inconsistent.
+    This prevents pushing a broken dataset to the Hub.
+    """
+    root = Path(root)
+    meta = root / "meta"
+    info_path = meta / "info.json"
+    episodes_dir = meta / "episodes"
+
+    # 1) Required files/dirs exist
+    if not info_path.exists():
+        raise RuntimeError(f"Missing required file: {info_path}")
+    if not episodes_dir.exists():
+        raise RuntimeError(f"Missing required dir: {episodes_dir}")
+
+    # 2) Episodes parquet exists and has episode_index
+    df_ep = _read_all_parquets(episodes_dir)
+    if "episode_index" not in df_ep.columns:
+        raise RuntimeError("meta/episodes parquet missing required column 'episode_index'")
+
+    # 3) Episode indices are sane
+    unique_eps = sorted(df_ep["episode_index"].dropna().unique().tolist())
+    if not unique_eps:
+        raise RuntimeError("No episodes found in meta/episodes (episode_index empty)")
+
+    # must be integers (or int-like)
+    try:
+        unique_eps_int = [int(x) for x in unique_eps]
+    except Exception:
+        raise RuntimeError(f"episode_index contains non-int-like values: {unique_eps[:10]}")
+
+    # must be contiguous from 0..N-1 (LeRobot generally assumes this)
+    n = len(unique_eps_int)
+    expected = list(range(n))
+    if unique_eps_int != expected:
+        raise RuntimeError(
+            "Non-contiguous or non-zero-based episode_index.\n"
+            f"Expected {expected[:10]}... but got {unique_eps_int[:10]}...\n"
+            "Fix: do not manually rewrite episode_index; let LeRobot manage it."
+        )
+
+    # 4) info.json must agree with metadata
+    with open(info_path, "r") as f:
+        info = json.load(f)
+
+    total_episodes = info.get("total_episodes", None)
+    if total_episodes is None:
+        raise RuntimeError("info.json missing key 'total_episodes'")
+    if int(total_episodes) != n:
+        raise RuntimeError(
+            f"info.json total_episodes={total_episodes} but meta/episodes has {n} episodes"
+        )
+
+    # 5) Sanity: rows >> episodes (otherwise someone did row-index episode hack)
+    rows = len(df_ep)
+    if rows != n:
+        raise RuntimeError(
+            f"meta/episodes should have exactly 1 row per episode. "
+            f"Got rows={rows} but unique episode_index={n}."
+        )
+    print(f"[OK] Dataset on disk looks sane: episodes={n}, rows={rows}")
+
+
+def safe_push(dataset: "LeRobotDataset", root: Path) -> None:
+    """
+    Validate first; only then push.
+    """
+    validate_lerobot_dataset_on_disk(root)
+    dataset.push_to_hub()
+    print("[OK] push_to_hub completed")
 
 class RectifiedDataset:
     """Wrapper to rectify images before adding to dataset."""
@@ -176,6 +261,7 @@ def main():
     _, events = init_keyboard_listener()
     init_rerun(session_name="recording")
 
+
     # Connect the robot and teleoperator
     robot.connect()
     
@@ -183,6 +269,23 @@ def main():
     patch_robot_for_rectification(robot)
     
     teleop.connect()
+    
+    # --- Patch Teleop for Wrist Roll Offset ---
+    WRIST_ROLL_OFFSET = config_data.get("robot", {}).get("wrist_roll_offset", 0.0)
+    print(f"Applying Wrist Roll Offset: {WRIST_ROLL_OFFSET}")
+
+    original_get_action = teleop.get_action
+    
+    def patched_get_action():
+        action = original_get_action()
+        if "wrist_roll.pos" in action:
+            new_val = action["wrist_roll.pos"] + WRIST_ROLL_OFFSET
+            # Clamp to range [-100, 100] (assuming standard LeRobot range)
+            action["wrist_roll.pos"] = max(min(new_val, 100.0), -100.0)
+        return action
+
+    teleop.get_action = patched_get_action
+    # ----------------------------------------
 
     # Create the required processors
     teleop_action_processor, robot_action_processor, robot_observation_processor = make_default_processors()
@@ -236,7 +339,7 @@ def main():
     robot.disconnect()
     teleop.disconnect()
     dataset.finalize()
-    dataset.push_to_hub()
+    safe_push(dataset, DATA_DIR)
 
 if __name__ == "__main__":
     main()

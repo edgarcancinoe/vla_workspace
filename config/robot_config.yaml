@@ -1,10 +1,11 @@
 robot:
   port: /dev/cu.usbmodem5AAF2202301  # Follower port
+  wrist_roll_offset: 44.0 # Applied to follower action (subtracted in code = added offset)
 
 leader_port: /dev/cu.usbmodem5AAF2181531
 
 rectification:
-  top: true
+  top: false
   wrist: false
 
 cameras:

@@ -13,7 +13,7 @@
 # Configuration for lerobot.async_inference.robot_client
 policy_type: smolvla
 pretrained_name_or_path: edgarcancinoe/smolvla_finetuned_orange
-actions_per_chunk: 50
+actions_per_chunk: 30
 # chunk_size_threshold: 0.25
 
 server_address: 127.0.0.1:8080

@@ -28,7 +28,7 @@ LAUNCH_CONFIG_PATH = WORKSPACE_ROOT / "config" / "launch_client.yaml"
 ROBOT_CONFIG_PATH = WORKSPACE_ROOT / "config" / "robot_config.yaml"
 
 # Model Configuration
-MODEL_PATH = "/home/jose/vla_workspace/outputs/train/smolvla_finetuned_orange_20260127_202513/checkpoints/010000/pretrained_model"  # Baseline model
+MODEL_PATH = "edgarcancinoe/smolvla_finetuned_orange"  # Baseline model
 POLICY_TYPE = "smolvla"
 
 # Denormalization Settings
