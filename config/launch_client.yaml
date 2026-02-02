@@ -13,7 +13,7 @@
 # Configuration for lerobot.async_inference.robot_client
 policy_type: smolvla
 pretrained_name_or_path: edgarcancinoe/smolvla_finetuned_orange
-actions_per_chunk: 30
+actions_per_chunk: 25
 # chunk_size_threshold: 0.25
 
 server_address: 127.0.0.1:8080
@@ -35,13 +35,15 @@ robot:
   # port is now in robot_config.yaml
   calibration_dir: /Users/edgarcancino/Documents/Academic/EMAI Thesis/vla_workspace/.cache/calibration
   cameras:
-    camera1:  # Will be renamed to camera2 by rename_map
+    # camera1:
+    image: 
       type: opencv
       index_or_path: 1
       width: 640  # Standard webcam resolution
       height: 480
       fps: 30
-    camera2:  # Will be renamed to camera1 by rename_map
+    # camera2:
+    image2:
       type: opencv
       index_or_path: 0
       width: 640  # Standard webcam resolution

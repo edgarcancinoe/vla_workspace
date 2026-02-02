@@ -28,8 +28,8 @@ LAUNCH_CONFIG_PATH = WORKSPACE_ROOT / "config" / "launch_client.yaml"
 ROBOT_CONFIG_PATH = WORKSPACE_ROOT / "config" / "robot_config.yaml"
 
 # Model Configuration
-MODEL_PATH = "edgarcancinoe/smolvla_finetuned_orange"  # Baseline model
-POLICY_TYPE = "smolvla"
+MODEL_PATH = "edgarcancinoe/xvla_finetuned_orange"  # Baseline model
+POLICY_TYPE = "xvla"
 
 # Denormalization Settings
 ENABLE_DENORMALIZATION = False    # True for baseline model, False for fine-tuned

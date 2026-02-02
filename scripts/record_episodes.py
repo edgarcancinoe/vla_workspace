@@ -27,7 +27,7 @@ with open(config_path, "r") as f:
 RECTIFY_TOP = config_data.get("rectification", {}).get("top", True)
 RECTIFY_WRIST = config_data.get("rectification", {}).get("wrist", True)
 
-NUM_EPISODES = 115
+NUM_EPISODES = 240
 FPS = 30
 EPISODE_TIME_SEC = 30
 RESET_TIME_SEC = 9
