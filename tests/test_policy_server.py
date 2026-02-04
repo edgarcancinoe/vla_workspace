@@ -27,9 +27,6 @@ from lerobot.async_inference.robot_client import RobotClient, RobotClientConfig
 LAUNCH_CONFIG_PATH = WORKSPACE_ROOT / "config" / "launch_client.yaml"
 ROBOT_CONFIG_PATH = WORKSPACE_ROOT / "config" / "robot_config.yaml"
 
-# Model Configuration
-MODEL_PATH = "edgarcancinoe/xvla_finetuned_orange"  # Baseline model
-POLICY_TYPE = "xvla"
 
 # Denormalization Settings
 ENABLE_DENORMALIZATION = False    # True for baseline model, False for fine-tuned
@@ -314,6 +311,35 @@ def main():
     with open(LAUNCH_CONFIG_PATH, 'r') as f:
         launch_cfg_dict = yaml.safe_load(f)
 
+    # 1.5 Dynamic Camera mapping based on Policy Type
+    policy_type = launch_cfg_dict.get("policy_type", "smolvla")
+    print(f"   Detected Policy Type: {policy_type}")
+
+    if "robot" in launch_cfg_dict and "cameras" in launch_cfg_dict["robot"]:
+        original_cameras = launch_cfg_dict["robot"]["cameras"]
+        new_cameras = {}
+        
+        for cam_key, cam_conf in original_cameras.items():
+            if isinstance(cam_conf, dict): # Ensure it's a dict (handle empty/None from YAML)
+                idx = cam_conf.get("index_or_path")
+                
+                # Key Mapping Logic
+                new_key = cam_key # Default to original
+                
+                if policy_type == "smolvla":
+                        if idx == 1: new_key = "camera1"
+                        elif idx == 0: new_key = "camera2"
+                elif policy_type == "xvla":
+                        if idx == 1: new_key = "image"
+                        elif idx == 0: new_key = "image2"
+                
+                if new_key != cam_key:
+                    print(f"   [Config] Remapping camera index {idx}: '{cam_key}' -> '{new_key}'")
+                
+                new_cameras[new_key] = cam_conf
+            
+        launch_cfg_dict["robot"]["cameras"] = new_cameras
+
     # 2. Patch with Robot Config (Ports)
     if ROBOT_CONFIG_PATH.exists():
         with open(ROBOT_CONFIG_PATH, 'r') as f:
@@ -330,11 +356,6 @@ def main():
             
     import draccus.parsers.decoding as draccus_decoding
     cfg = draccus_decoding.decode(RobotClientConfig, launch_cfg_dict)
-    
-    # FORCE BASELINE MODEL
-    cfg.pretrained_name_or_path = MODEL_PATH
-    cfg.policy_type = POLICY_TYPE
-    print(f"   Forcing Baseline Model: {cfg.pretrained_name_or_path}")
         
     print("Configuration Loaded:")
     print(format(cfg))
