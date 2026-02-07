@@ -27,16 +27,15 @@ with open(config_path, "r") as f:
 RECTIFY_TOP = config_data.get("rectification", {}).get("top", True)
 RECTIFY_WRIST = config_data.get("rectification", {}).get("wrist", True)
 
-NUM_EPISODES = 240
+NUM_EPISODES = 50
 FPS = 30
 EPISODE_TIME_SEC = 30
 RESET_TIME_SEC = 9
 TASK_DESCRIPTION = "Pick up orange cube and place inside white box."
 
 # Point to new merged dataset
-
 HF_USER = "edgarcancinoe"
-HF_REPO_ID = "soarm101_pickplace_cubes" 
+HF_REPO_ID = "soarm101_pickplace_front" 
 
 DATA_DIR = Path(f"~/Documents/Academic/EMAI Thesis/vla_workspace/outputs/datasets/{HF_REPO_ID}").expanduser()
 
