@@ -1,6 +1,13 @@
 robot:
   port: /dev/cu.usbmodem5AAF2202301  # Follower port
   wrist_roll_offset: 44.0 # Applied to follower action (subtracted in code = added offset)
+  home_pose:
+    shoulder_pan.pos: 0.0
+    shoulder_lift.pos: -80.0
+    elbow_flex.pos: 100.0
+    wrist_flex.pos: 30.0
+    wrist_roll.pos: 40.0
+    gripper.pos: 0.0
 
 leader_port: /dev/cu.usbmodem5AAF2181531
 
