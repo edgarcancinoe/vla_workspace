@@ -40,17 +40,27 @@ mkdir -p "$HF_LEROBOT_HOME"
 # ============================================================================
 HF_USER="${HF_USER:-edgarcancinoe}"
 # Dataset to use -----------------------------------
-DATASET_NAME_STR="soarm101_pickplace_top_wrist"
+DATASET_NAME_STR="soarm101_pickplace_orange_050e_fw_open"
 # --------------------------------------------------
 
 # Base model ---------------------------------------
-BASE_POLICY_PATH="lerobot/smolvla_base"
+BASE_USER="lerobot"
+BASE_NAME="xvla-base"
+BASE_POLICY_PATH="${BASE_USER}/${BASE_NAME}"
 # BASE_POLICY_PATH="chamborgir/smolvla_pickplace_20k"
 # --------------------------------------------------
 
+# Image Augmentation
+ENABLE_AUGMENTATION="${ENABLE_AUGMENTATION:-true}"
+AUGMENTATION_DEGREES="${AUGMENTATION_DEGREES:-[-2.5, 2.5]}"
+AUGMENTATION_TRANSLATE="${AUGMENTATION_TRANSLATE:-[0.025, 0.025]}"
+
 # Policy name to use when saving -------------------
-POLICY_NAME="smolvla_finetuned_orange"
-# POLICY_NAME="smolvla_finetuned_pkandplc20k"
+POLICY_NAME="${BASE_NAME}_finetuned_${DATASET_NAME_STR}"
+# Append _aug suffix if augmentation is enabled
+if [ "${ENABLE_AUGMENTATION}" = "true" ]; then
+    POLICY_NAME="${POLICY_NAME}_aug"
+fi
 # --------------------------------------------------
 
 # Workspace path detection -------------------------
@@ -67,25 +77,27 @@ DATASET_REPO_ID="${HF_USER}/${DATASET_NAME}"
 # Path to the base model
 
 # Training Hyperparameters
-BATCH_SIZE="${BATCH_SIZE:-64}"
-STEPS="${STEPS:-20000}"
+BATCH_SIZE="${BATCH_SIZE:-8}"
+STEPS="${STEPS:-60000}"
 LOG_FREQ="${LOG_FREQ:-100}"
 EVAL_FREQ="${EVAL_FREQ:--1}"
 
 DEVICE="${DEVICE:-cuda}"
 CUDA_DEVICE="${CUDA_DEVICE:-0}"
 NUM_WORKERS="${NUM_WORKERS:-4}"
+
+POLICY_NUM_IMAGE_VIEWS="${POLICY_NUM_IMAGE_VIEWS:-2}"
+
 # Learning rate
 # LR="${LR:-1e-4}"
 
 # Gradient accumulation steps (effective batch size = BATCH_SIZE * GRAD_ACCUM)
-# GRAD_ACCUM="${GRAD_ACCUM:-1}
+# GRAD_ACCUM="${GRAD_ACCUM:-1}"
 
-SAVE_FREQ="${SAVE_FREQ:-5000}"
+SAVE_FREQ="${SAVE_FREQ:-30000}"
 
 # Evaluation frequency
 # EVAL_FREQ="${EVAL_FREQ:-500}"
-
 
 # ============================================================================
 # OUTPUT & STORAGE CONFIGURATION
@@ -232,10 +244,9 @@ python -m lerobot.scripts.lerobot_train \
   --policy.repo_id="${POLICY_REPO_ID}" \
   --policy.push_to_hub="${POLICY_PUSH_TO_HUB}" \
   --dataset.repo_id="${DATASET_REPO_ID}" \
-  --rename_map='{"observation.images.wrist": "observation.images.camera1", "observation.images.top": "observation.images.camera2"}' \
-  --dataset.image_transforms.enable="true" \
-  --dataset.image_transforms.tfs.affine.kwargs.degrees="[-15, 15]" \
-  --dataset.image_transforms.tfs.affine.kwargs.translate="[0.1, 0.1]" \
+  --rename_map='{"observation.images.wrist": "observation.images.image", "observation.images.top": "observation.images.image2"}' \
+  --dataset.image_transforms.enable="${ENABLE_AUGMENTATION}" \
+  --dataset.image_transforms.tfs='{"affine": {"type": "RandomAffine", "kwargs": {"degrees": '"${AUGMENTATION_DEGREES}"', "translate": '"${AUGMENTATION_TRANSLATE}"'}}}' \
   --batch_size="${BATCH_SIZE}" \
   --steps="${STEPS}" \
   --log_freq="${LOG_FREQ}" \
@@ -246,7 +257,15 @@ python -m lerobot.scripts.lerobot_train \
   --policy.device="${DEVICE}" \
   --wandb.enable="${WANDB_ENABLE}" \
   --num_workers=${NUM_WORKERS} \
-  --resume="${RESUME}"
+  --resume="${RESUME}" \
+  --policy.dtype=bfloat16 \
+  --policy.action_mode=auto \
+  --policy.freeze_vision_encoder=false \
+  --policy.freeze_language_encoder=false \
+  --policy.train_policy_transformer=true \
+  --policy.train_soft_prompts=true \
+  --policy.num_image_views="${POLICY_NUM_IMAGE_VIEWS}"
+  
 
 # Capture exit code
 EXIT_CODE=$?

@@ -1,5 +1,9 @@
 # Custom
-lerobot_src
+lerobot_src/
+data/
+data_backup/
+visualizations/
+tasks/
 
 # Logs
 logs/
