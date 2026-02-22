@@ -22,18 +22,17 @@ from lerobot.scripts.lerobot_record import record_loop
 # Option 1: Use HuggingFace hub model
 # POLICY_PATH = "lerobot/smolvla_base"
 # POLICY_PATH = "edgarcancinoe/xvla_finetuned_orange"
-POLICY_PATH = "edgarcancinoe/smolvla_finetuned_orange"
-
+POLICY_PATH = "edgarcancinoe/xvla-base_finetuned_soarm101_pickplace_orange_240e_fw_closed"
 # POLICY_TYPE = "smolvla"  # Options: "act", "smolvla", "xvla"
 POLICY_TYPE = "xvla"
-POLICY_TYPE = "smolvla"
+# POLICY_TYPE = "smolvla"
 
 # Device configuration
 DEVICE = "mps"  # Options: "cuda", "mps", "cpu"
 
 # Evaluation dataset configuration
 HF_USER = "edgarcancinoe"
-EVAL_DATASET_NAME = "eval_soarm101_pick_cubes_v2"  # Prefix with 'eval_' to distinguish from training data
+EVAL_DATASET_NAME = "eval_" + POLICY_PATH.split("/")[-1] 
 DATA_DIR = Path("/Users/edgarcancino/Documents/Academic/EMAI Thesis/vla_workspace/outputs/datasets") / EVAL_DATASET_NAME
 
 # Episode configuration
@@ -47,11 +46,12 @@ DEFAULT_CHUNK_SIZE = 30
 DEFAULT_N_ACTION_STEPS = 30
 
 
-POLICY_DELAY = .5
+POLICY_DELAY = 0
 DEFAULT_MAX_ACTION_TOKENS = None
 
 # XVLA
-NUM_IMAGE_VIEWS = 2
+NUM_IMAGE_VIEWS = 3
+NUM_EMPTY_CAMERAS = 1
 ACTION_MODE = "auto"
 NUM_XVLA_OBS_STEPS = 1
 
@@ -69,6 +69,7 @@ STARTING_POSITION = {
 STARTING_POSITION_DURATION_S = 5
 START_FROM_SCRATCH = False
 RESUME_DATASET = False
+OVERWRITE_DATASET = True  # Set True to delete and recreate the dataset on every run
 
 # Define camera name mapping
 CAMERA_MAPPING = {
@@ -125,9 +126,9 @@ def _motor_base_name(action_key: str) -> str:
     # "shoulder_pan.pos" -> "shoulder_pan"
     return action_key.split(".", 1)[0]
 
-def move_to_start(robot, duration_s: float = 3.0, fps: int = 30):
+def move_to_start(robot, target_pos, duration_s: float = 3.0, fps: int = 30):
     """
-    Moves robot to STARTING_POSITION over duration_s seconds.
+    Moves robot to target_pos (e.g. STARTING_POSITION) over duration_s seconds.
 
     Key fixes:
     - Reads present position with motor base-names (no ".pos" mismatch).
@@ -142,13 +143,13 @@ def move_to_start(robot, duration_s: float = 3.0, fps: int = 30):
     steps = max(1, int(round(duration_s * fps)))
 
     print(f"Moving to Starting Position over {duration_s:.2f}s @ {fps} FPS -> {steps} steps")
-    print(f"Target: {STARTING_POSITION}")
+    print(f"Target: {target_pos}")
 
     # --- read current state robustly ---
     start_values = {}
     if hasattr(robot, "follower_arm"):
         curr_read = robot.follower_arm.read("Present_Position")  # usually {motor_name: value}
-        for k in STARTING_POSITION.keys():
+        for k in target_pos.keys():
             base = _motor_base_name(k)
             if base in curr_read:
                 start_values[k] = float(curr_read[base])
@@ -156,10 +157,10 @@ def move_to_start(robot, duration_s: float = 3.0, fps: int = 30):
                 start_values[k] = float(curr_read[k])
             else:
                 # fall back to target if unknown
-                start_values[k] = float(STARTING_POSITION[k])
+                start_values[k] = float(target_pos[k])
     else:
         # no read available; fall back
-        start_values = {k: float(v) for k, v in STARTING_POSITION.items()}
+        start_values = {k: float(v) for k, v in target_pos.items()}
 
     t0 = time.perf_counter()
     next_tick = t0
@@ -168,7 +169,7 @@ def move_to_start(robot, duration_s: float = 3.0, fps: int = 30):
         alpha = i / steps
 
         interpolated_action = {}
-        for key, target_val in STARTING_POSITION.items():
+        for key, target_val in target_pos.items():
             sv = start_values.get(key, float(target_val))
             tv = float(target_val)
             interpolated_action[key] = sv + (tv - sv) * alpha
@@ -179,10 +180,10 @@ def move_to_start(robot, duration_s: float = 3.0, fps: int = 30):
         precise_sleep(max(0.0, next_tick - time.perf_counter()))
 
     # Final command (exact target)
-    robot.send_action({k: float(v) for k, v in STARTING_POSITION.items()})
+    robot.send_action({k: float(v) for k, v in target_pos.items()})
     print("Reached Starting Position.")
 
-    robot.send_action({k: float(v) for k, v in STARTING_POSITION.items()})
+    robot.send_action({k: float(v) for k, v in target_pos.items()})
     print("Reached Starting Position.")
 
 def patch_policy_with_delay(policy, delay_s: float):
@@ -234,7 +235,7 @@ def main():
                     help="SmolVLA: max_action_tokens (if supported by checkpoint)")
     parser.add_argument("--n-obs-steps", type=int, default=NUM_XVLA_OBS_STEPS,
                     help="XVLA: Number of observation steps (n_obs_steps)")
-    parser.add_argument("--empty-cameras", type=int, default=0,
+    parser.add_argument("--empty-cameras", type=int, default=NUM_EMPTY_CAMERAS,
                     help="XVLA: Number of empty camera views to add")
     parser.add_argument("--num-image-views", type=int, default=NUM_IMAGE_VIEWS,
                     help="XVLA: Total number of image views")
@@ -251,8 +252,8 @@ def main():
     n_action_steps = args.n_action_steps
     max_action_tokens = args.max_action_tokens
 
-    # Handle overwrite
-    if args.overwrite and DATA_DIR.exists():
+    # Handle overwrite (config var OR CLI flag)
+    if (OVERWRITE_DATASET or args.overwrite) and DATA_DIR.exists():
         import shutil
         print(f"Overwriting dataset at {DATA_DIR}")
         shutil.rmtree(DATA_DIR)
@@ -286,8 +287,8 @@ def main():
     robot = SO100Follower(robot_config)
 
     # Load the trained policy
-    log_say(f"Loading policy from {policy_path}")
-    log_say(f"Policy type: {POLICY_TYPE}, Device: {DEVICE}")
+    print(f"Loading policy from {policy_path}")
+    print(f"Policy type: {POLICY_TYPE}, Device: {DEVICE}")
     
     # Load policy based on type
     if POLICY_TYPE == "act":
@@ -312,6 +313,8 @@ def main():
             policy.config.empty_cameras = args.empty_cameras
         if args.num_image_views is not None:
             policy.config.num_image_views = args.num_image_views
+        if args.empty_cameras is not None:
+            policy.config.empty_cameras = args.empty_cameras
         if args.action_mode is not None:
             policy.config.action_mode = args.action_mode
         
@@ -346,7 +349,7 @@ def main():
             features=dataset_features,
             robot_type=robot.name,
             use_videos=True,
-            image_writer_threads=4,
+            image_writer_threads=0,
             root=DATA_DIR,
         )
         episode_idx = 0
@@ -380,12 +383,15 @@ def main():
     if not robot.is_connected:
         raise ValueError("Robot is not connected!")
 
+    # Get home pose from config, fallback to default
+    home_pose = config_data.get("robot", {}).get("home_pose", STARTING_POSITION)
+
     log_say("Starting inference evaluation loop...")
 
     while episode_idx < NUM_EPISODES and not events["stop_recording"]:
         # Move to start position before episode
         log_say("Moving to start position...")
-        move_to_start(robot, duration_s=STARTING_POSITION_DURATION_S, fps=FPS)
+        move_to_start(robot, home_pose, duration_s=STARTING_POSITION_DURATION_S, fps=FPS)
         
         log_say(f"Running inference, recording eval episode {episode_idx + 1} of {NUM_EPISODES}")
 
