@@ -303,6 +303,13 @@ def main():
             repo_id=OUT_DATASET_ID,
             repo_type="dataset",
         )
+        try:
+            version = info_dict.get("codebase_version", "v3.0")
+            api.create_tag(repo_id=OUT_DATASET_ID, tag=version, repo_type="dataset")
+            print(f"Successfully tagged dataset with version {version}!")
+        except Exception as e:
+            print(f"Warning: Could not tag dataset version: {e}")
+            
         print(f"Successfully pushed {OUT_DATASET_ID} to the hub!")
 
 

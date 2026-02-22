@@ -1,0 +1,14 @@
+{
+	"folders": [
+		{
+			"path": ".."
+		},
+		{
+			"path": "../../repos/lerobot"
+		},
+		{
+			"path": "../../repos/X-VLA"
+		}
+	],
+	"settings": {}
+}
