@@ -24,8 +24,8 @@ from lerobot.model.kinematics import RobotKinematics
 from lerobot.policies.xvla.utils import mat_to_rotate6d
 
 # --- Configuration ---
-DATASET_ID = "edgarcancinoe/soarm101_pickplace_orange_240e_fw_closed"
-OUT_DATASET_ID = "edgarcancinoe/soarm101_pickplace_6d_240e_fw_closed"
+DATASET_ID = "edgarcancinoe/soarm101_pickplace_orange_050e_fw_open"
+OUT_DATASET_ID = "edgarcancinoe/soarm101_pickplace_6d"
 URDF_PATH = "/Users/edgarcancino/Documents/Academic/EMAI Thesis/repos/SO-ARM100/Simulation/SO101/so101_new_calib.urdf" 
 JOINT_NAMES = ['shoulder_pan', 'shoulder_lift', 'elbow_flex', 'wrist_flex', 'wrist_roll', 'gripper']
 PUSH_TO_HUB = "--push" in sys.argv  # Pushes dataset to huggingface hub
@@ -111,27 +111,27 @@ def main():
         obs_state_arr = np.array(eef_states, dtype=np.float32).flatten()
         obs_state_fixed = pa.FixedSizeListArray.from_arrays(obs_state_arr, 10)
         data_to_write["observation.state"] = obs_state_fixed
-        schema_fields.append(pa.field("observation.state", pa.fixed_size_list(pa.float32(), 10)))
+        schema_fields.append(pa.field("observation.state", pa.list_(pa.float32(), 10)))
 
         # 2. Action (10D EEF)
         if has_action:
             action_arr = np.array(eef_actions, dtype=np.float32).flatten()
             action_fixed = pa.FixedSizeListArray.from_arrays(action_arr, 10)
             data_to_write["action"] = action_fixed
-            schema_fields.append(pa.field("action", pa.fixed_size_list(pa.float32(), 10)))
+            schema_fields.append(pa.field("action", pa.list_(pa.float32(), 10)))
 
         # 3. Observation Joint Positions (6D)
         joint_pos_arr = np.array(df["observation.state"].tolist(), dtype=np.float32).flatten()
         joint_pos_fixed = pa.FixedSizeListArray.from_arrays(joint_pos_arr, 6)
         data_to_write["observation.joint_positions"] = joint_pos_fixed
-        schema_fields.append(pa.field("observation.joint_positions", pa.fixed_size_list(pa.float32(), 6)))
+        schema_fields.append(pa.field("observation.joint_positions", pa.list_(pa.float32(), 6)))
 
         # 4. Action Joints (6D)
         if has_action:
             action_joints_arr = np.array(df["action"].tolist(), dtype=np.float32).flatten()
             action_joints_fixed = pa.FixedSizeListArray.from_arrays(action_joints_arr, 6)
             data_to_write["action_joints"] = action_joints_fixed
-            schema_fields.append(pa.field("action_joints", pa.fixed_size_list(pa.float32(), 6)))
+            schema_fields.append(pa.field("action_joints", pa.list_(pa.float32(), 6)))
 
         # 5. Scalar Columns (preserve types from original)
         for col in ["timestamp", "frame_index", "episode_index", "index", "task_index"]:
