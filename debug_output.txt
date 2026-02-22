@@ -1,0 +1,248 @@
+Activating vla conda environment...
+Restricting CUDA visibility to device: 0
+============================================================================
+SmolVLA Finetuning Launch Script
+============================================================================
+
+✓ lerobot package found
+
+Configuration:
+  Dataset:        edgarcancinoe/soarm101_pickplace_orange_050e_fw_open
+  Batch Size:     8
+  Steps:          60000
+  Save Freq:      30000
+  Output Dir:     /home/jose/vla_workspace/outputs/train/xvla-base_finetuned_soarm101_pickplace_orange_050e_fw_open_aug_20260219_185119
+  Job Name:       xvla-base_finetuned_soarm101_pickplace_orange_050e_fw_open_aug_20260219_185119
+  Device:         cuda
+  CUDA_VISIBLE_DEVICES: 0
+  W&B Enabled:    true
+  Base Policy:    lerobot/xvla-base
+  Policy Repo ID: edgarcancinoe/xvla-base_finetuned_soarm101_pickplace_orange_050e_fw_open_aug
+  Push to Hub:    true
+
+✓ Logged in to W&B
+
+============================================================================
+Starting training...
+============================================================================
+
+WARNING:accelerate.utils.other:Detected kernel version 5.4.0, which is below the recommended minimum of 5.5.0; this can cause the process to hang. It is recommended to upgrade the kernel to the minimum version or higher.
+INFO 2026-02-19 18:51:41 ot_train.py:201 {'batch_size': 8,
+ 'checkpoint_path': None,
+ 'dataset': {'episodes': None,
+             'image_transforms': {'enable': True,
+                                  'max_num_transforms': 3,
+                                  'random_order': False,
+                                  'tfs': {'affine': {'kwargs': {'degrees': [-2.5,
+                                                                            2.5],
+                                                                'translate': [0.025,
+                                                                              0.025]},
+                                                     'type': 'RandomAffine',
+                                                     'weight': 1.0}}},
+             'repo_id': 'edgarcancinoe/soarm101_pickplace_orange_050e_fw_open',
+             'revision': None,
+             'root': None,
+             'streaming': False,
+             'use_imagenet_stats': True,
+             'video_backend': 'torchcodec'},
+ 'env': None,
+ 'eval': {'batch_size': 50, 'n_episodes': 50, 'use_async_envs': False},
+ 'eval_freq': -1,
+ 'job_name': 'xvla-base_finetuned_soarm101_pickplace_orange_050e_fw_open_aug_20260219_185119',
+ 'log_freq': 100,
+ 'num_workers': 4,
+ 'optimizer': {'betas': [0.9, 0.95],
+               'eps': 1e-08,
+               'grad_clip_norm': 10.0,
+               'lr': 0.0001,
+               'soft_prompt_lr_scale': 1.0,
+               'soft_prompt_warmup_lr_scale': None,
+               'type': 'xvla-adamw',
+               'weight_decay': 0.0001},
+ 'output_dir': '/home/jose/vla_workspace/outputs/train/xvla-base_finetuned_soarm101_pickplace_orange_050e_fw_open_aug_20260219_185119',
+ 'peft': None,
+ 'policy': {'action_mode': 'auto',
+            'chunk_size': 30,
+            'depth': 24,
+            'device': 'cuda',
+            'dim_time': 32,
+            'domain_feature_key': None,
+            'domain_id': 0,
+            'dtype': 'bfloat16',
+            'empty_cameras': 1,
+            'florence_config': {'bos_token_id': 0,
+                                'eos_token_id': 2,
+                                'ignore_index': -100,
+                                'is_encoder_decoder': True,
+                                'model_type': 'florence2',
+                                'pad_token_id': 1,
+                                'projection_dim': 1024,
+                                'text_config': {'activation_dropout': 0.1,
+                                                'activation_function': 'gelu',
+                                                'add_bias_logits': False,
+                                                'add_final_layer_norm': False,
+                                                'attention_dropout': 0.1,
+                                                'bos_token_id': 0,
+                                                'classif_dropout': 0.1,
+                                                'classifier_dropout': 0.0,
+                                                'd_model': 1024,
+                                                'decoder_attention_heads': 16,
+                                                'decoder_ffn_dim': 4096,
+                                                'decoder_layerdrop': 0.0,
+                                                'decoder_layers': 12,
+                                                'decoder_start_token_id': 2,
+                                                'dropout': 0.1,
+                                                'early_stopping': True,
+                                                'encoder_attention_heads': 16,
+                                                'encoder_ffn_dim': 4096,
+                                                'encoder_layerdrop': 0.0,
+                                                'encoder_layers': 12,
+                                                'eos_token_id': 2,
+                                                'forced_bos_token_id': 0,
+                                                'forced_eos_token_id': 2,
+                                                'gradient_checkpointing': False,
+                                                'init_std': 0.02,
+                                                'is_encoder_decoder': True,
+                                                'label2id': {'LABEL_0': 0,
+                                                             'LABEL_1': 1,
+                                                             'LABEL_2': 2},
+                                                'max_position_embeddings': 4096,
+                                                'no_repeat_ngram_size': 3,
+                                                'normalize_before': False,
+                                                'num_beams': 3,
+                                                'num_hidden_layers': 12,
+                                                'pad_token_id': 1,
+                                                'scale_embedding': False,
+                                                'vocab_size': 51289},
+                                'torch_dtype': 'float32',
+                                'vision_config': {'depths': [1, 1, 9, 1],
+                                                  'dim_embed': [256,
+                                                                512,
+                                                                1024,
+                                                                2048],
+                                                  'drop_path_rate': 0.1,
+                                                  'enable_checkpoint': False,
+                                                  'image_feature_source': ['spatial_avg_pool',
+                                                                           'temporal_avg_pool'],
+                                                  'image_pos_embed': {'max_pos_embeddings': 50,
+                                                                      'type': 'learned_abs_2d'},
+                                                  'model_type': 'davit',
+                                                  'num_groups': [8, 16, 32, 64],
+                                                  'num_heads': [8, 16, 32, 64],
+                                                  'patch_padding': [3, 1, 1, 1],
+                                                  'patch_prenorm': [False,
+                                                                    True,
+                                                                    True,
+                                                                    True],
+                                                  'patch_size': [7, 3, 3, 3],
+                                                  'patch_stride': [4, 2, 2, 2],
+                                                  'projection_dim': 1024,
+                                                  'visual_temporal_embedding': {'max_temporal_embeddings': 100,
+                                                                                'type': 'COSINE'},
+                                                  'window_size': 12},
+                                'vocab_size': 51289},
+            'freeze_language_encoder': False,
+            'freeze_vision_encoder': False,
+            'hidden_size': 1024,
+            'input_features': {'observation.images.empty_camera_0': {'shape': [3,
+                                                                               224,
+                                                                               224],
+                                                                     'type': <FeatureType.VISUAL: 'VISUAL'>},
+                               'observation.images.image': {'shape': [3,
+                                                                      256,
+                                                                      256],
+                                                            'type': <FeatureType.VISUAL: 'VISUAL'>},
+                               'observation.images.image2': {'shape': [3,
+                                                                       256,
+                                                                       256],
+                                                             'type': <FeatureType.VISUAL: 'VISUAL'>},
+                               'observation.state': {'shape': [8],
+                                                     'type': <FeatureType.STATE: 'STATE'>}},
+            'len_soft_prompts': 32,
+            'license': None,
+            'max_action_dim': 20,
+            'max_len_seq': 512,
+            'max_state_dim': 20,
+            'mlp_ratio': 4.0,
+            'n_action_steps': 30,
+            'n_obs_steps': 1,
+            'normalization_mapping': {'ACTION': <NormalizationMode.MEAN_STD: 'MEAN_STD'>,
+                                      'STATE': <NormalizationMode.IDENTITY: 'IDENTITY'>,
+                                      'VISUAL': <NormalizationMode.IDENTITY: 'IDENTITY'>},
+            'num_denoising_steps': 10,
+            'num_domains': 30,
+            'num_heads': 16,
+            'num_image_views': 2,
+            'optimizer_betas': [0.9, 0.95],
+            'optimizer_eps': 1e-08,
+            'optimizer_grad_clip_norm': 10.0,
+            'optimizer_lr': 0.0001,
+            'optimizer_soft_prompt_lr_scale': 1.0,
+            'optimizer_soft_prompt_warmup_lr_scale': None,
+            'optimizer_weight_decay': 0.0001,
+            'output_features': {'action': {'shape': [20],
+                                           'type': <FeatureType.ACTION: 'ACTION'>}},
+            'pad_language_to': 'max_length',
+            'pretrained_path': 'lerobot/xvla-base',
+            'private': None,
+            'push_to_hub': True,
+            'repo_id': 'edgarcancinoe/xvla-base_finetuned_soarm101_pickplace_orange_050e_fw_open_aug',
+            'resize_imgs_with_padding': [224, 224],
+            'scheduler_decay_lr': 2.5e-06,
+            'scheduler_decay_steps': 30000,
+            'scheduler_warmup_steps': 1000,
+            'tags': None,
+            'tokenizer_max_length': 1024,
+            'tokenizer_name': 'facebook/bart-large',
+            'tokenizer_padding_side': 'right',
+            'train_policy_transformer': True,
+            'train_soft_prompts': True,
+            'type': 'xvla',
+            'use_amp': False,
+            'use_hetero_proj': False,
+            'use_peft': False,
+            'use_proprio': True},
+ 'rabc_epsilon': 1e-06,
+ 'rabc_head_mode': 'sparse',
+ 'rabc_kappa': 0.01,
+ 'rabc_progress_path': None,
+ 'rename_map': {'observation.images.top': 'observation.images.image2',
+                'observation.images.wrist': 'observation.images.image'},
+ 'resume': False,
+ 'save_checkpoint': True,
+ 'save_freq': 30000,
+ 'scheduler': {'decay_lr': 2.5e-06,
+               'num_decay_steps': 30000,
+               'num_warmup_steps': 1000,
+               'peak_lr': 0.0001,
+               'type': 'cosine_decay_with_warmup'},
+ 'seed': 1000,
+ 'steps': 60000,
+ 'tolerance_s': 0.0001,
+ 'use_policy_training_preset': True,
+ 'use_rabc': False,
+ 'wandb': {'disable_artifact': False,
+           'enable': True,
+           'entity': None,
+           'mode': None,
+           'notes': None,
+           'project': 'lerobot',
+           'run_id': None}}
+INFO 2026-02-19 18:51:44 db_utils.py:102 Logs will be synced with wandb.
+INFO 2026-02-19 18:51:44 db_utils.py:103 Track this run --> https://wandb.ai/edgarcancinoe-university-of-ljubljana/lerobot/runs/zv2550g8
+INFO 2026-02-19 18:51:44 ot_train.py:221 Creating dataset
+
+================================================================================
+[CRITICAL DEBUG] LOADING CUSTOM AUGMENTATION PIPELINE
+[CRITICAL DEBUG] Workspace root: /home/jose/vla_workspace
+================================================================================
+[CRITICAL DEBUG] Params: rotation=2.5, translation=0.025, mode=reflect
+[CRITICAL DEBUG] CUSTOM AUGMENTATION PIPELINE INITIALIZED SUCCESSFULLY
+================================================================================
+
+INFO 2026-02-19 18:51:44 ot_train.py:239 Creating policy
+[DEBUG] Validating features. Image keys found: ['observation.images.image', 'observation.images.image2', 'observation.images.empty_camera_0'], Empty cameras: 1
+Florence2ForConditionalGeneration has generative capabilities, as `prepare_inputs_for_generation` is explicitly defined. However, it doesn't directly inherit from `GenerationMixin`. From 👉v4.50👈 onwards, `PreTrainedModel` will NOT inherit from `GenerationMixin`, and this model will lose the ability to call `generate` and other related functions.
+  - If you're using `trust_remote_code=True`, you can get rid of this warning by loading the model with an auto class. See https://huggingface.co/docs/transformers/en/model_doc/auto#auto-classes
+  - If you are the owner of the model architecture code, please modify your model class such that it inherits from `GenerationMixin` (after `PreTrainedModel`, otherwise you'll get an exception).
+  - If you are not the owner of the model architecture class, please contact the model code owner to update it.

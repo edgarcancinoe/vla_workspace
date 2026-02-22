@@ -46,6 +46,15 @@ DATASET_NAME_STR="soarm101_pickplace_orange_050e_fw_open"
 # Base model ---------------------------------------
 BASE_USER="lerobot"
 BASE_NAME="xvla-base"
+OPTIMIZER_LR=1e-4
+
+# Policy Configuration
+ACTION_MODE="${ACTION_MODE:-auto}"    # Options: "auto", "ee6d" (or specific to your robot)
+DOMAIN_ID="${DOMAIN_ID:-0}"           # Domain ID for your task/robot
+EMPTY_CAMERAS="${EMPTY_CAMERAS:-1}"   # Number of empty camera slots (if needed)
+POLICY_NUM_IMAGE_VIEWS="${POLICY_NUM_IMAGE_VIEWS:-2}"
+
+# Model paths
 BASE_POLICY_PATH="${BASE_USER}/${BASE_NAME}"
 # BASE_POLICY_PATH="chamborgir/smolvla_pickplace_20k"
 # --------------------------------------------------
@@ -86,7 +95,6 @@ DEVICE="${DEVICE:-cuda}"
 CUDA_DEVICE="${CUDA_DEVICE:-0}"
 NUM_WORKERS="${NUM_WORKERS:-4}"
 
-POLICY_NUM_IMAGE_VIEWS="${POLICY_NUM_IMAGE_VIEWS:-2}"
 
 # Learning rate
 # LR="${LR:-1e-4}"
@@ -244,7 +252,7 @@ python -m lerobot.scripts.lerobot_train \
   --policy.repo_id="${POLICY_REPO_ID}" \
   --policy.push_to_hub="${POLICY_PUSH_TO_HUB}" \
   --dataset.repo_id="${DATASET_REPO_ID}" \
-  --rename_map='{"observation.images.wrist": "observation.images.image", "observation.images.top": "observation.images.image2"}' \
+  --rename_map='{"observation.images.top": "observation.images.image", "observation.images.wrist": "observation.images.image2"}' \
   --dataset.image_transforms.enable="${ENABLE_AUGMENTATION}" \
   --dataset.image_transforms.tfs='{"affine": {"type": "RandomAffine", "kwargs": {"degrees": '"${AUGMENTATION_DEGREES}"', "translate": '"${AUGMENTATION_TRANSLATE}"'}}}' \
   --batch_size="${BATCH_SIZE}" \
@@ -259,7 +267,9 @@ python -m lerobot.scripts.lerobot_train \
   --num_workers=${NUM_WORKERS} \
   --resume="${RESUME}" \
   --policy.dtype=bfloat16 \
-  --policy.action_mode=auto \
+  --policy.action_mode="${ACTION_MODE}" \
+  --policy.domain_id="${DOMAIN_ID}" \
+  --policy.empty_cameras="${EMPTY_CAMERAS}" \
   --policy.freeze_vision_encoder=false \
   --policy.freeze_language_encoder=false \
   --policy.train_policy_transformer=true \
