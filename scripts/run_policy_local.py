@@ -13,7 +13,26 @@ from lerobot.utils.utils import log_say
 from lerobot.utils.visualization_utils import init_rerun
 from lerobot.scripts.lerobot_record import record_loop
 
+# ============================================================================
+# MAIN SCRIPT
+# ============================================================================
 
+# Load config
+config_path = Path(__file__).parent.parent / "config" / "robot_config.yaml"
+with open(config_path, "r") as f:
+    config_data = yaml.safe_load(f)
+
+# Configuration for Rectification from robot_config.yaml
+RECTIFY_TOP = config_data.get("rectification", {}).get("top", True)
+RECTIFY_WRIST = config_data.get("rectification", {}).get("wrist", True)
+
+import sys
+# Add project root to path to find utils
+sys.path.append(str(Path(__file__).parent.parent))
+from utils import camera_calibration
+
+# Wrist Roll Offset (loaded from config)
+WRIST_ROLL_OFFSET = config_data.get("robot", {}).get("wrist_roll_offset", 0.0)
 # ============================================================================
 # CONFIGURATION - UPDATE THESE VALUES FOR YOUR SETUP
 # ============================================================================
@@ -21,8 +40,11 @@ from lerobot.scripts.lerobot_record import record_loop
 # Policy configuration
 # Option 1: Use HuggingFace hub model
 # POLICY_PATH = "lerobot/smolvla_base"
-# POLICY_PATH = "edgarcancinoe/xvla_finetuned_orange"
-POLICY_PATH = "edgarcancinoe/xvla-base_finetuned_soarm101_pickplace_orange_240e_fw_closed"
+POLICY_PATH = "edgarcancinoe/xvla-base_finetuned_soarm101_pickplace_orange_050e_fw_open"
+# POLICY_PATH = "edgarcancinoe/xvla-base_finetuned_soarm101_pickplace_orange_240e_fw_closed"
+
+# POLICY_PATH = "edgarcancinoe/xvla-base_finetuned_soarm101_pickplace_6d"
+
 # POLICY_TYPE = "smolvla"  # Options: "act", "smolvla", "xvla"
 POLICY_TYPE = "xvla"
 # POLICY_TYPE = "smolvla"
@@ -79,23 +101,6 @@ CAMERA_MAPPING = {
     
 assert not (START_FROM_SCRATCH and RESUME_DATASET), "Cannot start from scratch and resume dataset at the same time."
 
-# ============================================================================
-# MAIN SCRIPT
-# ============================================================================
-
-# Load config
-config_path = Path(__file__).parent.parent / "config" / "robot_config.yaml"
-with open(config_path, "r") as f:
-    config_data = yaml.safe_load(f)
-
-# Configuration for Rectification from robot_config.yaml
-RECTIFY_TOP = config_data.get("rectification", {}).get("top", True)
-RECTIFY_WRIST = config_data.get("rectification", {}).get("wrist", True)
-
-import sys
-# Add project root to path to find utils
-sys.path.append(str(Path(__file__).parent.parent))
-from utils import camera_calibration
 
 def patch_robot_for_rectification(robot):
     original_get_observation = robot.get_observation
@@ -172,6 +177,9 @@ def move_to_start(robot, target_pos, duration_s: float = 3.0, fps: int = 30):
         for key, target_val in target_pos.items():
             sv = start_values.get(key, float(target_val))
             tv = float(target_val)
+            # Add offset for the rest position too
+            if key == "wrist_roll.pos":
+                tv = max(min(tv + WRIST_ROLL_OFFSET, 100.0), -100.0)
             interpolated_action[key] = sv + (tv - sv) * alpha
 
         robot.send_action(interpolated_action)
@@ -180,11 +188,37 @@ def move_to_start(robot, target_pos, duration_s: float = 3.0, fps: int = 30):
         precise_sleep(max(0.0, next_tick - time.perf_counter()))
 
     # Final command (exact target)
-    robot.send_action({k: float(v) for k, v in target_pos.items()})
+    final_pos = {}
+    for k, v in target_pos.items():
+        if k == "wrist_roll.pos":
+            final_pos[k] = float(max(min(v + WRIST_ROLL_OFFSET, 100.0), -100.0))
+        else:
+            final_pos[k] = float(v)
+            
+    robot.send_action(final_pos)
     print("Reached Starting Position.")
 
-    robot.send_action({k: float(v) for k, v in target_pos.items()})
-    print("Reached Starting Position.")
+def patch_robot_action_with_offset(robot):
+    """
+    Wraps robot.send_action to inject the wrist roll offset before execution on the hardware.
+    """
+    if WRIST_ROLL_OFFSET == 0:
+        return
+
+    original_send_action = robot.send_action
+
+    def patched_send_action(action, **kwargs):
+        # We need to make sure we don't mutate the dictionary inside `policy.action_queue`
+        # as it might cause problems with Rerun visualization or other downstream processes,
+        # so we create a new dict for the hardware.
+        if "wrist_roll.pos" in action:
+            new_val = action["wrist_roll.pos"] + WRIST_ROLL_OFFSET
+            action["wrist_roll.pos"] = max(min(new_val, 100.0), -100.0)
+        
+        return original_send_action(action, **kwargs)
+
+    robot.send_action = patched_send_action
+    print(f"Robot 'send_action' patched with Wrist Roll Offset: {WRIST_ROLL_OFFSET}")
 
 def patch_policy_with_delay(policy, delay_s: float):
     """
@@ -271,7 +305,7 @@ def main():
     }
 
     robot_config = SO100FollowerConfig(
-        id="my_awesome_follower_arm",
+        id="arm_follower",
         cameras=cameras_config,
         port=FOLLOWER_PORT,
         calibration_dir=calibration_dir,
@@ -375,6 +409,7 @@ def main():
     
     # Patch robot for rectification
     patch_robot_for_rectification(robot)
+    patch_robot_action_with_offset(robot)
 
     # Patch policy with delay if requested
     if args.action_delay > 0:

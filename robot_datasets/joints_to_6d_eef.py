@@ -23,9 +23,18 @@ from lerobot.datasets.lerobot_dataset import LeRobotDataset
 from lerobot.model.kinematics import RobotKinematics
 from lerobot.policies.xvla.utils import mat_to_rotate6d
 
+WORKSPACE_ROOT = str(Path(__file__).resolve().parent.parent)
+if WORKSPACE_ROOT not in sys.path:
+    sys.path.insert(0, WORKSPACE_ROOT)
+from robot_control.so101_control import SO101Control
+
 # --- Configuration ---
-DATASET_ID = "edgarcancinoe/soarm101_pickplace_orange_050e_fw_open"
-OUT_DATASET_ID = "edgarcancinoe/soarm101_pickplace_6d"
+# DATASET_ID = "edgarcancinoe/soarm101_pickplace_orange_050e_fw_open"
+# OUT_DATASET_ID = "edgarcancinoe/soarm101_pickplace_6d"
+
+DATASET_ID = "edgarcancinoe/soarm101_pickplace_orange_240e_fw_closed"
+OUT_DATASET_ID = "edgarcancinoe/soarm101_pickplace_6d_240e_fw_closed"
+
 URDF_PATH = "/Users/edgarcancino/Documents/Academic/EMAI Thesis/repos/SO-ARM100/Simulation/SO101/so101_new_calib.urdf" 
 JOINT_NAMES = ['shoulder_pan', 'shoulder_lift', 'elbow_flex', 'wrist_flex', 'wrist_roll', 'gripper']
 PUSH_TO_HUB = "--push" in sys.argv  # Pushes dataset to huggingface hub
@@ -49,6 +58,7 @@ def main():
         target_frame_name="gripper_frame_link",
         joint_names=joint_names,
     )
+    so101 = SO101Control(urdf_path=URDF_PATH)
 
     # Prepare for output
     new_dir = Path.home() / ".cache" / "lerobot" / OUT_DATASET_ID
@@ -85,7 +95,8 @@ def main():
             state = df.iloc[i]["observation.state"] # Array of joints in degrees (for SOARM101)
             
             # Calculate for observation.state
-            T_matrix = kinematics.forward_kinematics(state)
+            state_deg = np.rad2deg(so101.motor_to_rad(state))
+            T_matrix = kinematics.forward_kinematics(state_deg)
             pos = T_matrix[:3, 3]
             r6d = mat_to_rotate6d(T_matrix[:3, :3])
             gripper = [state[-1]]
@@ -94,7 +105,8 @@ def main():
             # Calculate for action if present
             if has_action:
                 action = df.iloc[i]["action"]
-                T_matrix_act = kinematics.forward_kinematics(action)
+                action_deg = np.rad2deg(so101.motor_to_rad(action))
+                T_matrix_act = kinematics.forward_kinematics(action_deg)
                 pos_act = T_matrix_act[:3, 3]
                 r6d_act = mat_to_rotate6d(T_matrix_act[:3, :3])
                 gripper_act = [action[-1]]

@@ -3,7 +3,13 @@ import yaml
 import shutil
 import argparse
 import rerun as rr
+import numpy as np
 from pathlib import Path
+
+# Add project root to path to find utils and robot_control
+sys.path.append(str(Path(__file__).parent.parent))
+from robot_control.so101_control import SO101Control
+from utils import camera_calibration
 
 # Load config
 config_path = Path(__file__).parent.parent / "config" / "robot_config.yaml"
@@ -15,12 +21,14 @@ with open(config_path, "r") as f:
 RECTIFY_TOP = config_data.get("rectification", {}).get("top", True)
 RECTIFY_WRIST = config_data.get("rectification", {}).get("wrist", True)
 
-# Wrist Roll Offset
-WRIST_ROLL_OFFSET = config_data.get("robot", {}).get("wrist_roll_offset", 0.0)
+# Wrist Roll Offset (in Degrees from config)
+WRIST_ROLL_OFFSET_DEG = config_data.get("robot", {}).get("wrist_roll_offset", 0.0)
 
-# Add project root to path to find utils
-sys.path.append(str(Path(__file__).parent.parent))
-from utils import camera_calibration
+# Pre-calculate Wrist Roll Offset in Motor Units
+# 1.0 degree = (100 / limit_deg) motor units
+limit_deg = np.rad2deg(SO101Control.URDF_LIMITS_RAD['wrist_roll'])
+WRIST_ROLL_OFFSET_MOTOR = (WRIST_ROLL_OFFSET_DEG / limit_deg) * 100.0
+
 
 from lerobot.cameras.opencv.configuration_opencv import OpenCVCameraConfig
 from lerobot.robots.so100_follower.config_so100_follower import SO100FollowerConfig
@@ -34,7 +42,9 @@ parser.add_argument("--calibrate", action="store_true", help="Force recalibratio
 args = parser.parse_args()
 
 follower_port = config_data["robot"]["port"]
-leader_port = config_data["leader_port"]
+# New structure: leader: {port: ..., name: ...}
+leader_dict = config_data.get("leader", {})
+leader_port = leader_dict.get("port", config_data.get("leader_port"))
 
 # Define shared calibration directory
 calibration_dir = Path(__file__).parent.parent / ".cache" / "calibration"
@@ -53,21 +63,29 @@ camera_config = {
     for name, idx in config_data.get("cameras", {}).items()
 }
 
+# Get IDs from config
+FOLLOWER_ID = config_data["robot"].get("name")
+LEADER_ID = leader_dict.get("name")
+
 robot_config = SO100FollowerConfig(
     port=follower_port,
-    id="my_awesome_follower_arm",
+    id=FOLLOWER_ID,
     cameras=camera_config,
     calibration_dir=calibration_dir
 )
 
 teleop_config = SO100LeaderConfig(
     port=leader_port,
-    id="my_awesome_leader_arm",
+    id=LEADER_ID,
     calibration_dir=calibration_dir
 )
 
 robot = SO100Follower(robot_config)
 teleop_device = SO100Leader(teleop_config)
+
+# Kinematics Control for Degree Conversion
+URDF_PATH = "/Users/edgarcancino/Documents/Academic/EMAI Thesis/repos/SO-ARM100/Simulation/SO101/so101_new_calib.urdf"
+control = SO101Control(urdf_path=URDF_PATH, wrist_roll_offset=WRIST_ROLL_OFFSET_DEG)
 
 print("Connecting devices...")
 # Pass calibrate flag to connection methods
@@ -79,7 +97,7 @@ init_rerun(session_name="teleoperate_debug")
 print("Connected! Teleoperating...")
 
 step = 0
-print_interval = 10000  # Print positions every 30 steps (~1 second at 30 FPS)
+print_interval = 10  # Print positions every 30 steps (~1 second at 30 FPS)
 
 try:
     while True:
@@ -91,14 +109,11 @@ try:
         
         action = teleop_device.get_action()
         
-        # Apply wrist roll offset and clamp
+        # Apply wrist roll offset (using pre-calculated Motor Unit shift)
         if "wrist_roll.pos" in action:
-            original_val = action["wrist_roll.pos"]
-            new_val = original_val + WRIST_ROLL_OFFSET
+            new_val = action["wrist_roll.pos"] + WRIST_ROLL_OFFSET_MOTOR
             # Clamp to range [-100, 100]
-            new_val = max(min(new_val, 100.0), -100.0)
-            action["wrist_roll.pos"] = new_val
-            # Optional debug print if needed, but keeping it clean
+            action["wrist_roll.pos"] = max(min(new_val, 100.0), -100.0)
             
         robot.send_action(action)
         
@@ -115,12 +130,16 @@ try:
         
         # Print positions periodically
         if step % print_interval == 0:
-            position_dict = {key: f"{val:.4f}" for key, val in action.items() if key.endswith('.pos')}
-            print("\nCurrent Positions:")
-            print("performed_action = {")
-            for key, val in position_dict.items():
-                print(f'    "{key}": {val},')
-            print("}")
+            # Prepare motor values
+            motor_vals = [action[f"{n}.pos"] for n in SO101Control.JOINT_NAMES]
+            deg_vals = control.motor_to_deg(motor_vals)
+            
+            print(f"\n--- Step {step} ---")
+            print("Joint Positions (Motor Units | Degrees):")
+            for i, n in enumerate(SO101Control.JOINT_NAMES):
+                m_val = action[f"{n}.pos"]
+                d_val = deg_vals[i]
+                print(f"  {n:15s}: {m_val:8.4f} units | {d_val:8.2f}°")
         
         rr.set_time_sequence("step", step)
         log_rerun_data(observation=observation, action=action)
