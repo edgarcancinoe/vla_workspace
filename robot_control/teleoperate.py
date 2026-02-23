@@ -146,6 +146,7 @@ try:
         log_rerun_data(observation=observation, action=action)
         
         step += 1
+            
 except KeyboardInterrupt:
     print("\nStopping...")
     robot.disconnect()

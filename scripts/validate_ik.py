@@ -21,13 +21,9 @@ WORKSPACE_ROOT = str(Path(__file__).resolve().parent.parent)
 if WORKSPACE_ROOT not in sys.path:
     sys.path.insert(0, WORKSPACE_ROOT)
 
-import pinocchio as pin
-from pinocchio.visualize import MeshcatVisualizer
-import meshcat.geometry as g
-import meshcat.transformations as tf
-
 from lerobot.utils.robot_utils import precise_sleep
 from robot_control.so101_control import SO101Control
+from robot_sim.so101_meshcat import SO101Meshcat
 
 # ── Configuration ──────────────────────────────────────────────────────────────
 PORT              = None # Loaded from config
@@ -38,10 +34,10 @@ WRIST_ROLL_OFFSET_DEG = 0.0
 
 # Pattern scale (meters)
 SCALE           = 0.05   # half-size for square/cross; amplitude for figure-8
-N_WAYPOINTS     = 15     # waypoints per segment
+N_WAYPOINTS     = 16     # waypoints per segment
 N_FIG8          = 200    # total waypoints for figure-8 curve
 DT_S            = 0.05   # 20 Hz
-HOME_DURATION_S = 4.0
+HOME_DURATION_S = 3.0
 MAX_STEP        = 4.0
 
 
@@ -146,41 +142,22 @@ robot = None
 
 
 # ══════════════════════════════════════════════════════════════════════════════
-# Meshcat helpers
+# Meshcat / PyBullet helpers
 # ══════════════════════════════════════════════════════════════════════════════
 
 viz    = None
-viewer = None
 
 def meshcat_display(motor_vals):
     if viz: viz.display(kinematics.motor_to_rad(motor_vals))
 
 def add_sphere(name, xyz, color_hex, radius=0.002):
-    if not viewer: return
-    viewer[name].set_object(g.Sphere(radius), g.MeshLambertMaterial(color=color_hex))
-    viewer[name].set_transform(tf.translation_matrix(xyz))
+    if viz: viz.add_sphere(name, xyz, color_hex, radius)
 
 def add_line(name, p1, p2, color_hex=0xffa500, thickness=0.002):
-    if not viewer: return
-    diff = p2 - p1
-    L    = np.linalg.norm(diff)
-    if L < 1e-6: return
-    z    = np.array([0., 0., 1.])
-    axis = np.cross(z, diff / L)
-    ang  = np.arccos(np.clip(np.dot(z, diff / L), -1, 1))
-    R    = tf.rotation_matrix(ang, axis) if np.linalg.norm(axis) > 1e-6 else np.eye(4)
-    viewer[name].set_object(
-        g.Cylinder(L, thickness),
-        g.MeshLambertMaterial(color=color_hex)
-    )
-    viewer[name].set_transform(tf.translation_matrix((p1 + p2) / 2) @ R)
+    if viz: viz.add_line(name, p1, p2, color_hex, thickness)
 
 def visualize_path(waypoints, color_hex):
-    """Draw the target path as connected line segments in Meshcat."""
-    for i in range(len(waypoints) - 1):
-        add_line(f"pattern/seg_{i}", waypoints[i], waypoints[i + 1], color_hex)
-    # Mark start point
-    add_sphere("pattern/start", waypoints[0], 0xffffff, radius=0.012)
+    if viz: viz.visualize_path(waypoints, color_hex)
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -188,7 +165,7 @@ def visualize_path(waypoints, color_hex):
 # ══════════════════════════════════════════════════════════════════════════════
 
 def main():
-    global robot, viz, viewer, WRIST_ROLL_OFFSET_DEG, kinematics
+    global robot, viz, WRIST_ROLL_OFFSET_DEG, kinematics
 
     parser = argparse.ArgumentParser(description="SO101 motion patterns")
     exec_mode = parser.add_mutually_exclusive_group(required=True)
@@ -199,20 +176,13 @@ def main():
     parser.add_argument("--scale", type=float, default=SCALE,
                         help=f"Pattern scale in metres (default: {SCALE})")
     parser.add_argument("--no-viz", action="store_true",
-                        help="Disable Meshcat (real mode only)")
+                        help="Disable Meshcat visualization (real mode only)")
     args = parser.parse_args()
 
-    # ── Meshcat ────────────────────────────────────────────────────────────────
+    # ── Meshcat Visualization ─────────────────────────────────────────────────
     if not (args.real and args.no_viz):
-        model, cmod, vmod = pin.buildModelsFromUrdf(
-            URDF_PATH, package_dirs=str(Path(URDF_PATH).parent)
-        )
-        _viz = MeshcatVisualizer(model, cmod, vmod)
-        _viz.initViewer(open=True)
-        _viz.loadViewerModel()
-        viz    = _viz
-        viewer = _viz.viewer
-        print(f"Meshcat: {viz.viewer.url()}")
+        viz = SO101Meshcat(urdf_path=URDF_PATH)
+        print("Meshcat visualization started.")
 
     import yaml
     config_path = Path(__file__).parent.parent / "config" / "robot_config.yaml"
@@ -263,7 +233,7 @@ def main():
         time.sleep(1.0)
         current = kinematics.read_motor_real(robot)
     else:
-        current = kinematics.deg_to_motor(START_POSE_DEG)
+        current = kinematics.deg_to_motor(START_POSE_DEG, use_polarities=True)
         meshcat_display(current)
         time.sleep(1.0)
 
@@ -324,6 +294,9 @@ def main():
             time.sleep(0.5)
             robot.disconnect()
             print("Robot disconnected.")
+        if viz:
+            viz.disconnect()
+
 
 
 if __name__ == "__main__":

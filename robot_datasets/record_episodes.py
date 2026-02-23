@@ -270,15 +270,21 @@ def main():
     teleop.connect()
     
     # --- Patch Teleop for Wrist Roll Offset ---
-    WRIST_ROLL_OFFSET = config_data.get("robot", {}).get("wrist_roll_offset", 0.0)
-    print(f"Applying Wrist Roll Offset: {WRIST_ROLL_OFFSET}")
+    from robot_control.so101_control import SO101Control
+    import numpy as np
+    
+    WRIST_ROLL_OFFSET_DEG = config_data.get("robot", {}).get("wrist_roll_offset", 0.0)
+    limit_deg = np.rad2deg(SO101Control.URDF_LIMITS_RAD['wrist_roll'])
+    WRIST_ROLL_OFFSET_MOTOR = (WRIST_ROLL_OFFSET_DEG / limit_deg) * 100.0
+    
+    print(f"Applying Wrist Roll Offset: {WRIST_ROLL_OFFSET_DEG}° -> {WRIST_ROLL_OFFSET_MOTOR:.2f} motor units")
 
     original_get_action = teleop.get_action
     
     def patched_get_action():
         action = original_get_action()
         if "wrist_roll.pos" in action:
-            new_val = action["wrist_roll.pos"] + WRIST_ROLL_OFFSET
+            new_val = action["wrist_roll.pos"] + WRIST_ROLL_OFFSET_MOTOR
             # Clamp to range [-100, 100] (assuming standard LeRobot range)
             action["wrist_roll.pos"] = max(min(new_val, 100.0), -100.0)
         return action

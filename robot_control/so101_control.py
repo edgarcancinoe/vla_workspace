@@ -17,6 +17,7 @@ class SO101Control:
         'gripper':       1.74533,
     }
 
+    # Attends discrepancy between URDF and real robot (used for KINEMATICS)
     POLARITIES = {
         'shoulder_pan':   1.0,
         'shoulder_lift': -1.0,
@@ -40,31 +41,39 @@ class SO101Control:
         self.trail_counter = 0
 
     # ── Unit Conversions ──────────────────────────────────────────────────────
+    # Use polarities defaults to TRUE, as they are necessary to use the official URDF file for IK 
+    def motor_to_deg(self, motor_vals, use_polarities=True):
+        """Converts motor units [0-100] to degrees."""
+        motor_vals = np.asarray(motor_vals)
+        # Precompute limit constants in degrees
+        limits_deg = np.array([np.rad2deg(self.URDF_LIMITS_RAD[n]) for n in self.JOINT_NAMES])
+        
+        if use_polarities:
+            polarities = np.array([self.POLARITIES[n] for n in self.JOINT_NAMES])
+        else:
+            polarities = 1.0
+            
+        # Handle both 1D (6,) and 2D (N, 6) arrays
+        return (motor_vals / 100.0) * limits_deg * polarities
 
-    def motor_to_deg(self, motor_vals):
-        length = min(len(motor_vals), len(self.JOINT_NAMES))
-        out = np.zeros(length)
-        for i in range(length):
-            n = self.JOINT_NAMES[i]
-            out[i] = (motor_vals[i] / 100.0) * np.rad2deg(self.URDF_LIMITS_RAD[n]) * self.POLARITIES[n]
-        return out
+    def deg_to_motor(self, deg_vals, use_polarities=True):
+        """Converts degrees to motor units [0-100]."""
+        deg_vals = np.asarray(deg_vals)
+        limits_deg = np.array([np.rad2deg(self.URDF_LIMITS_RAD[n]) for n in self.JOINT_NAMES])
+        
+        if use_polarities:
+            polarities = np.array([self.POLARITIES[n] for n in self.JOINT_NAMES])
+        else:
+            polarities = 1.0
+            
+        val = (deg_vals / limits_deg) * 100.0 * polarities
+        return np.clip(val, -100.0, 100.0)
 
-    def deg_to_motor(self, deg_vals):
-        length = min(len(deg_vals), len(self.JOINT_NAMES))
-        out = np.zeros(length)
-        for i in range(length):
-            n = self.JOINT_NAMES[i]
-            limit_deg = np.rad2deg(self.URDF_LIMITS_RAD[n])
-            # Clip to [-100, 100] to prevent motor driver overload errors
-            val = (deg_vals[i] / limit_deg) * 100.0 * self.POLARITIES[n]
-            out[i] = np.clip(val, -100.0, 100.0)
-        return out
+    def motor_to_rad(self, motor_vals, use_polarities=True):
+        return np.deg2rad(self.motor_to_deg(motor_vals, use_polarities=use_polarities))
 
-    def motor_to_rad(self, motor_vals):
-        return np.deg2rad(self.motor_to_deg(motor_vals))
-
-    def rad_to_motor(self, rad_vals):
-        return self.deg_to_motor(np.rad2deg(rad_vals))
+    def rad_to_motor(self, rad_vals, use_polarities=True):
+        return self.deg_to_motor(np.rad2deg(rad_vals), use_polarities=use_polarities)
 
     # ── Forward & Inverse Kinematics ──────────────────────────────────────────
 
@@ -103,11 +112,11 @@ class SO101Control:
             vals[i] = float(obs.get(f"{n}.pos", 0.0))
         return vals
 
-    def read_deg_real(self, robot):
+    def read_deg_real(self, robot, ignore_offset=False):
         """Reads joints in degrees, applying wrist roll offset."""
         motor_vals = self.read_motor_real(robot)
         deg_vals = self.motor_to_deg(motor_vals)
-        if "wrist_roll" in self.JOINT_NAMES:
+        if not ignore_offset and "wrist_roll" in self.JOINT_NAMES:
             idx = self.JOINT_NAMES.index("wrist_roll")
             deg_vals[idx] -= self.wrist_roll_offset
         return deg_vals
@@ -116,10 +125,10 @@ class SO101Control:
         """Sends motor values to robot [0-100 range]."""
         robot.send_action({f"{n}.pos": float(vals[i]) for i, n in enumerate(self.JOINT_NAMES)})
 
-    def send_deg_real(self, robot, deg_vals):
+    def send_deg_real(self, robot, deg_vals, ignore_offset=False):
         """Sends joints in degrees, applying wrist roll offset."""
         cmd_deg = deg_vals.copy()
-        if "wrist_roll" in self.JOINT_NAMES:
+        if not ignore_offset and "wrist_roll" in self.JOINT_NAMES:
             idx = self.JOINT_NAMES.index("wrist_roll")
             cmd_deg[idx] += self.wrist_roll_offset
         motor_vals = self.deg_to_motor(cmd_deg)
@@ -172,11 +181,19 @@ class SO101Control:
 
     # ── Execution Loops (Hardware IO) ────────────────────────────────────────
 
-    def execute_joint_trajectory(self, robot, waypoints_deg, fps=30):
+    def execute_joint_trajectory(self, robot, waypoints_deg, fps=30, ignore_offset=False):
         """Sends a sequence of joint waypoints at a fixed rate."""
         next_tick = time.perf_counter()
         for deg in waypoints_deg:
-            self.send_deg_real(robot, deg)
+            self.send_deg_real(robot, deg, ignore_offset=ignore_offset)
+            next_tick += 1.0 / fps
+            precise_sleep(max(0.0, next_tick - time.perf_counter()))
+
+    def execute_motor_trajectory(self, robot, waypoints_motor, fps=30):
+        """Sends a sequence of motor units at a fixed rate."""
+        next_tick = time.perf_counter()
+        for motor in waypoints_motor:
+            self.send_motor_real(robot, motor)
             next_tick += 1.0 / fps
             precise_sleep(max(0.0, next_tick - time.perf_counter()))
 
@@ -215,16 +232,16 @@ class SO101Control:
 
     # ── High Level API ────────────────────────────────────────────────────────
 
-    def reset_to_home(self, robot, duration_s=3.0, fps=50):
+    def reset_to_home(self, robot, duration_s=3.0, fps=50, ignore_offset=False):
         """Moves robot to target defined in self.home_pose over duration_s seconds using Joint Interpolation."""
         print(f"Moving to home pose over {duration_s:.1f}s...")
         steps = max(1, int(round(duration_s * fps)))
         
-        start_deg = self.read_deg_real(robot)
+        start_deg = self.read_deg_real(robot, ignore_offset=ignore_offset)
         goal_deg = np.array([float(self.home_pose.get(f"{n}.pos", 0.0)) for n in self.JOINT_NAMES])
         
         waypoints = self.interpolate_joint(start_deg, goal_deg, steps)
-        self.execute_joint_trajectory(robot, waypoints, fps=fps)
+        self.execute_joint_trajectory(robot, waypoints, fps=fps, ignore_offset=ignore_offset)
         print("Home pose reached.")
 
     def move_to_xyz(self, robot, target_xyz, ref_pose, seed_motor, duration_s=3.0, viz=None, fps=20, max_step=4.0):
