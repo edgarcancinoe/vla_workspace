@@ -183,9 +183,6 @@ def visualize_path(waypoints, color_hex):
     add_sphere("pattern/start", waypoints[0], 0xffffff, radius=0.012)
 
 
-# Motion primitives are now part of the SO101Control class.
-
-
 # ══════════════════════════════════════════════════════════════════════════════
 # Main
 # ══════════════════════════════════════════════════════════════════════════════
@@ -295,7 +292,7 @@ def main():
 
     # ── Move to pattern start ──────────────────────────────────────────────────
     print(f"\nMoving to {args.pattern} start point...")
-    current = kinematics.move_to_xyz(waypoints[0], ref_pose, current, duration_s=3.0, robot=robot, viz=viz, dt=DT_S, max_step=MAX_STEP)
+    current = kinematics.move_to_xyz(robot, waypoints[0], ref_pose, current, duration_s=3.0, viz=viz, fps=1.0/DT_S, max_step=MAX_STEP)
     time.sleep(0.5)
 
     # ── Execute pattern (loop) ─────────────────────────────────────────────────
@@ -307,7 +304,7 @@ def main():
         while True:
             lap += 1
             print(f"--- Lap {lap} ---")
-            current = kinematics.execute_path(waypoints, ref_pose, current, robot=robot, viz=viz, dt=DT_S, max_step=MAX_STEP)
+            current = kinematics.execute_cartesian_trajectory(robot, waypoints, ref_pose, current, viz=viz, fps=1.0/DT_S, max_step=MAX_STEP)
             actual_xyz = kinematics.fk_xyz(current)
             err = np.linalg.norm(waypoints[-1] - actual_xyz)
             print(f"  Lap {lap} done. Final EE={actual_xyz.round(4)}  err={err*100:.2f}cm")
