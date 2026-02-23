@@ -251,15 +251,19 @@ def main():
         robot.connect()
         print("Robot connected.")
 
-    # ── Home ───────────────────────────────────────────────────────────────────
+    # ── Initial Starting Position (Joint 0s) ──────────────────────────────────
+    print("\nMoving to initial zero-state starting position...")
+    START_POSE_DEG = np.zeros(len(JOINT_NAMES))
+    
     if args.real:
-        kinematics.reset_to_home(robot, duration_s=HOME_DURATION_S, fps=1.0/DT_S)
+        start_deg = kinematics.read_deg_real(robot)
+        steps = max(1, int(round(HOME_DURATION_S * (1.0/DT_S))))
+        waypoints_joint = kinematics.interpolate_joint(start_deg, START_POSE_DEG, steps)
+        kinematics.execute_joint_trajectory(robot, waypoints_joint, fps=1.0/DT_S)
         time.sleep(1.0)
         current = kinematics.read_motor_real(robot)
     else:
-        # In simulation mode, we just start at the HOME_POSE degree targets converted to motor units
-        goal_deg = np.array([float(HOME_POSE.get(f"{n}.pos", 0.0)) for n in JOINT_NAMES])
-        current = kinematics.deg_to_motor(goal_deg)
+        current = kinematics.deg_to_motor(START_POSE_DEG)
         meshcat_display(current)
         time.sleep(1.0)
 
