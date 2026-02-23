@@ -195,7 +195,7 @@ def main():
 
     # Create robot configuration
     robot_config = SO100FollowerConfig(
-        id="my_awesome_follower_arm",
+        id=config_data.get("robot", {}).get("name", "my_awesome_follower_arm"),
         cameras={
             "top": OpenCVCameraConfig(index_or_path=0, width=640, height=480, fps=FPS),
             "wrist": OpenCVCameraConfig(index_or_path=1, width=640, height=480, fps=FPS),
@@ -205,7 +205,7 @@ def main():
     )
 
     teleop_config = SO100LeaderConfig(
-        id="my_awesome_leader_arm",
+        id=config_data.get("leader", {}).get("name", "my_awesome_leader_arm"),
         port=LEADER_PORT,
         calibration_dir=calibration_dir,
     )

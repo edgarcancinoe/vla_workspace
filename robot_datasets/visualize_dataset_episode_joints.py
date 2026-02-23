@@ -21,7 +21,6 @@ from robot_sim.so101_meshcat import SO101Meshcat
 
 # --- Configuration ---
 DATASET_ID = "edgarcancinoe/soarm101_pickplace_orange_050e_fw_open"
-URDF_PATH = "/Users/edgarcancino/Documents/Academic/EMAI Thesis/repos/SO-ARM100/Simulation/SO101/so101_new_calib.urdf" 
 VISUALIZE_EPISODE = 40
 # ---------------------
 
@@ -135,8 +134,12 @@ def main():
         robot_cfg = cfg.get("robot", {})
         wrist_roll_offset = float(robot_cfg.get("wrist_roll_offset", 0.0))
         home_pose = robot_cfg.get("home_pose")
+        urdf_path = robot_cfg.get("urdf_path")
 
-    kinematics = SO101Control(urdf_path=URDF_PATH, wrist_roll_offset=wrist_roll_offset, home_pose=home_pose)
+    if not urdf_path:
+        raise ValueError("Error: 'urdf_path' not found in config/robot_config.yaml. This is required for kinematics.")
+
+    kinematics = SO101Control(urdf_path=urdf_path, wrist_roll_offset=wrist_roll_offset, home_pose=home_pose)
     
     print(f"Loading dataset: {DATASET_ID} (This will download it if not present locally)")
     dataset = LeRobotDataset(DATASET_ID, download_videos=False)
@@ -194,7 +197,7 @@ def main():
     if args.real:
         run_real(q_deg_list, kinematics)
     else:
-        run_meshcat(q_rad_list, URDF_PATH, args.episode)
+        run_meshcat(q_rad_list, urdf_path, args.episode)
 
 if __name__ == "__main__":
     main()

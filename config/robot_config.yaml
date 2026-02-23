@@ -1,6 +1,7 @@
 robot:
   name: my_awesome_follower_arm
   port: /dev/cu.usbmodem5AAF2202301  # Follower port
+  urdf_path: "/Users/edgarcancino/Documents/Academic/EMAI Thesis/repos/SO-ARM100/Simulation/SO101/so101_new_calib.urdf"
   wrist_roll_offset: -90.0 # Degrees
   home_pose: # Degrees
     shoulder_pan.pos: 0.0

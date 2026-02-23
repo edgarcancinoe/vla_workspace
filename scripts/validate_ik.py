@@ -222,61 +222,61 @@ def main():
         print("Robot connected.")
 
     # ── Initial Starting Position (Joint 0s) ──────────────────────────────────
-    print("\nMoving to initial zero-state starting position...")
-    START_POSE_DEG = np.zeros(len(JOINT_NAMES))
-    
-    if args.real:
-        start_deg = kinematics.read_deg_real(robot)
-        steps = max(1, int(round(HOME_DURATION_S * (1.0/DT_S))))
-        waypoints_joint = kinematics.interpolate_joint(start_deg, START_POSE_DEG, steps)
-        kinematics.execute_joint_trajectory(robot, waypoints_joint, fps=1.0/DT_S)
-        time.sleep(1.0)
-        current = kinematics.read_motor_real(robot)
-    else:
-        current = kinematics.deg_to_motor(START_POSE_DEG, use_polarities=True)
-        meshcat_display(current)
-        time.sleep(1.0)
-
-    home_pose = kinematics.fk(current)
-    home_xyz  = home_pose[:3, 3].copy()
-    ref_pose  = home_pose.copy()
-    cx, cy, cz = home_xyz
-    print(f"Home FK XYZ: {home_xyz.round(4)}")
-
-    # ── Build pattern ──────────────────────────────────────────────────────────
-    gen      = PATTERN_GENERATORS[args.pattern]
-    # Pass scale; figure8 and square both accept it
-    rel_pts  = gen(scale=args.scale) if args.pattern != "figure8" else gen(scale=args.scale)
-    # Translate relative offsets to world coords centred on home
-    waypoints = rel_pts + np.array([cx, cy, cz])
-
-    print(f"\nPattern: {args.pattern.upper()}  |  {len(waypoints)} waypoints  |  scale={args.scale}m")
-
-    # ── IK sanity check on first & last waypoint ───────────────────────────────
-    for label, pt in [("start", waypoints[0]), ("end", waypoints[-1])]:
-        m = kinematics.ik_motor(pt, ref_pose, HOME_MOTOR)
-        if m is None:
-            print(f"  WARNING: IK failed for {label} waypoint {pt.round(4)}")
-        else:
-            err = np.linalg.norm(pt - kinematics.fk_xyz(m))
-            print(f"  IK {label}: err={err*100:.2f}cm")
-
-    # ── Visualise target path ──────────────────────────────────────────────────
-    visualize_path(waypoints, PATTERN_COLORS[args.pattern])
-    add_sphere("home_marker", home_xyz, 0xffffff, radius=0.015)
-    time.sleep(1.0)
-
-    # ── Move to pattern start ──────────────────────────────────────────────────
-    print(f"\nMoving to {args.pattern} start point...")
-    current = kinematics.move_to_xyz(robot, waypoints[0], ref_pose, current, duration_s=3.0, viz=viz, fps=1.0/DT_S, max_step=MAX_STEP)
-    time.sleep(0.5)
-
-    # ── Execute pattern (loop) ─────────────────────────────────────────────────
-    mode_str = "REAL ROBOT" if args.real else "SIMULATION"
-    print(f"\n[{mode_str}] Running {args.pattern}. Ctrl+C to stop.\n")
-
-    lap = 0
     try:
+        print("\nMoving to initial zero-state starting position...")
+        START_POSE_DEG = np.zeros(len(JOINT_NAMES))
+        
+        if args.real:
+            start_deg = kinematics.read_deg_real(robot)
+            steps = max(1, int(round(HOME_DURATION_S * (1.0/DT_S))))
+            waypoints_joint = kinematics.interpolate_joint(start_deg, START_POSE_DEG, steps)
+            kinematics.execute_joint_trajectory(robot, waypoints_joint, fps=1.0/DT_S)
+            time.sleep(1.0)
+            current = kinematics.read_motor_real(robot)
+        else:
+            current = kinematics.deg_to_motor(START_POSE_DEG, use_polarities=True)
+            meshcat_display(current)
+            time.sleep(1.0)
+
+        home_matrix = kinematics.fk(current)
+        home_xyz  = home_matrix[:3, 3].copy()
+        ref_pose  = home_matrix.copy()
+        cx, cy, cz = home_xyz
+        print(f"Home FK XYZ (zeros): {home_xyz.round(4)}")
+
+        # ── Build pattern ──────────────────────────────────────────────────────────
+        gen      = PATTERN_GENERATORS[args.pattern]
+        # Pass scale; figure8 and square both accept it
+        rel_pts  = gen(scale=args.scale) if args.pattern != "figure8" else gen(scale=args.scale)
+        # Translate relative offsets to world coords centred on home
+        waypoints = rel_pts + np.array([cx, cy, cz])
+
+        print(f"\nPattern: {args.pattern.upper()}  |  {len(waypoints)} waypoints  |  scale={args.scale}m")
+
+        # ── IK sanity check on first & last waypoint ───────────────────────────────
+        for label, pt in [("start", waypoints[0]), ("end", waypoints[-1])]:
+            m = kinematics.ik_motor(pt, ref_pose, HOME_MOTOR)
+            if m is None:
+                print(f"  WARNING: IK failed for {label} waypoint {pt.round(4)}")
+            else:
+                err = np.linalg.norm(pt - kinematics.fk_xyz(m))
+                print(f"  IK {label}: err={err*100:.2f}cm")
+
+        # ── Visualise target path ──────────────────────────────────────────────────
+        visualize_path(waypoints, PATTERN_COLORS[args.pattern])
+        add_sphere("home_marker", home_xyz, 0xffffff, radius=0.015)
+        time.sleep(1.0)
+
+        # ── Move to pattern start ──────────────────────────────────────────────────
+        print(f"\nMoving to {args.pattern} start point...")
+        current = kinematics.move_to_xyz(robot, waypoints[0], ref_pose, current, duration_s=3.0, viz=viz, fps=1.0/DT_S, max_step=MAX_STEP)
+        time.sleep(0.5)
+
+        # ── Execute pattern (loop) ─────────────────────────────────────────────────
+        mode_str = "REAL ROBOT" if args.real else "SIMULATION"
+        print(f"\n[{mode_str}] Running {args.pattern}. Ctrl+C to stop.\n")
+
+        lap = 0
         while True:
             lap += 1
             print(f"--- Lap {lap} ---")
@@ -286,12 +286,22 @@ def main():
             print(f"  Lap {lap} done. Final EE={actual_xyz.round(4)}  err={err*100:.2f}cm")
 
     except KeyboardInterrupt:
-        print("\nStopped.")
+        print("\n[Stopped by user]")
+    except Exception as e:
+        print(f"\n[Error] {e}")
+        import traceback
+        traceback.print_exc()
     finally:
-        if robot:
-            print("Returning to home...")
-            kinematics.reset_to_home(robot, duration_s=HOME_DURATION_S, fps=1.0/DT_S)
+        # We always want to return to the CONFIGURED home pose at the end 
+        # (not just the start position, but the one in robot_config.yaml)
+        print("\nReturning to configured home pose...")
+        try:
+            kinematics.reset_to_home(robot, duration_s=HOME_DURATION_S, fps=1.0/DT_S, viz=viz)
             time.sleep(0.5)
+        except Exception as homing_error:
+            print(f"Failed to return to home: {homing_error}")
+            
+        if robot:
             robot.disconnect()
             print("Robot disconnected.")
         if viz:

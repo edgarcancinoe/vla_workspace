@@ -21,21 +21,20 @@ import os
 import argparse
 import time
 
+# Add the workspace root to sys.path to allow imports from robot_control
 WORKSPACE_ROOT = str(Path(__file__).resolve().parent.parent)
 if WORKSPACE_ROOT not in sys.path:
     sys.path.insert(0, WORKSPACE_ROOT)
-
-LEROBOT_SRC = "/Users/edgarcancino/Documents/Academic/EMAI Thesis/repos/lerobot/src"
-if LEROBOT_SRC not in sys.path:
-    sys.path.insert(0, LEROBOT_SRC)
 
 from robot_control.so101_control import SO101Control
 from lerobot.utils.robot_utils import precise_sleep
 
 # --- Configuration ---
 DATASET_ID = "edgarcancinoe/soarm101_pickplace_6d"
-URDF_PATH = "/Users/edgarcancino/Documents/Academic/EMAI Thesis/repos/SO-ARM100/Simulation/SO101/so101_new_calib.urdf"
 VISUALIZE_EPISODE = 40
+# Interpolation parameters for moving to the first frame
+START_MOVE_DURATION = 3.0  # seconds
+START_MOVE_FPS = 10.0      # waypoints per second
 # ---------------------
 
 robot = None
@@ -78,11 +77,13 @@ def connect_robot():
             cfg = yaml.safe_load(f)
         wrist_roll_offset = float(cfg.get("robot", {}).get("wrist_roll_offset", 0.0))
         port = cfg.get("robot", {}).get("port")
+        robot_name = cfg.get("robot", {}).get("name", "arm_follower")
 
     if not port:
         raise ValueError("Error: 'port' not found in config/robot_config.yaml. Cannot connect to robot.")
 
-    robot_config = SO101FollowerConfig(id="arm_follower", port=port)
+    calibration_dir = Path(__file__).parent.parent / ".cache" / "calibration"
+    robot_config = SO101FollowerConfig(id=robot_name, port=port, calibration_dir=calibration_dir)
     print(f"=== Initializing Robot ===")
     print(robot_config)
     robot = SO101Follower(robot_config)
@@ -133,18 +134,41 @@ def send_to_real_robot(arm_rad, gripper_motor, kinematics, should_log=True):
 
 
 # ---------------------------------------------------------------------------
+# Debugging / Logging
+# ---------------------------------------------------------------------------
+
+def log_robot_state(frame_idx, joints_motor, kinematics, label="Robot State"):
+    """Prints detailed information about the robot state/command."""
+    joints_deg = kinematics.motor_to_deg(joints_motor)
+    joints_rad = kinematics.motor_to_rad(joints_motor)
+    xyz = kinematics.fk_xyz(joints_motor)
+    
+    print(f"\n--- {label} | Frame {frame_idx} ---")
+    print(f"EEF Position (XYZ) : {np.round(xyz, 4)}")
+    print(f"Joints Detail:")
+    header = f"{'Joint Name':15s} | {'Motor':>8s} | {'Degrees':>8s} | {'Radians':>8s}"
+    print(header)
+    print("-" * len(header))
+    for i, name in enumerate(kinematics.JOINT_NAMES):
+        m = joints_motor[i]
+        d = joints_deg[i]
+        r = joints_rad[i]
+        print(f"{name:15s} | {m:8.2f} | {d:8.2f} | {r:8.4f}")
+
+
+# ---------------------------------------------------------------------------
 # Build trajectory from dataset
 # ---------------------------------------------------------------------------
 
-def build_trajectory(parquet_files, episode_idx, kinematics):
+def build_trajectory(parquet_files, episode_idx, kinematics, is_real):
     """
     Returns:
-      joints_motor_list : list of np.array[6] motor values (direct from observation.joint_positions)
-      xyz_list          : list of np.array EEF positions (from observation.state)
+      joints_list : list of joint values (deg if is_real, else rad)
+      xyz_list    : list of np.array EEF positions (from observation.state)
     """
     import pyarrow.parquet as pq
 
-    joints_motor_list = []
+    joints_list = []
     xyz_list = []
 
     for parquet_path in parquet_files:
@@ -157,49 +181,74 @@ def build_trajectory(parquet_files, episode_idx, kinematics):
         episode_df = df[df["episode_index"] == episode_idx]
         if episode_df.empty:
             continue
+        
+        if "observation.joint_positions" in episode_df.columns:
+            q_motor_chunk = np.stack(episode_df["observation.joint_positions"].values)
+        elif "observation.state" in episode_df.columns and len(episode_df["observation.state"].iloc[0]) == 6:
+            # Fallback for datasets where observation.state contains the 6 joints
+            q_motor_chunk = np.stack(episode_df["observation.state"].values)
+        else:
+            continue
 
-        for i in range(len(episode_df)):
-            eef_state = episode_df.iloc[i]["observation.state"]
-            obs_joints = episode_df.iloc[i].get("observation.joint_positions")
+        # Dataset-specific wrist_roll fix (Apply to motor units directly)
+        q_motor_chunk[:, 4] *= -1
 
-            if len(eef_state) != 10:
-                print(f"  Warning: state length {len(eef_state)}, expected 10. Skipping frame.")
-                continue
+        if is_real:
+            # Need degrees for real robot
+            joints_chunk = kinematics.motor_to_deg(q_motor_chunk)
+        else:
+            # Need radians for Meshcat (ignore polarities for sim to match URDF axes)
+            joints_chunk = kinematics.motor_to_rad(q_motor_chunk, use_polarities=False)
+        
+        joints_list.extend(joints_chunk)
 
-            xyz_list.append(np.array(eef_state[0:3]))
+        # Recompute XYZ trajectory from joints to ensure it matches the current URDF/Kinematics
+        # For simulation, we must use use_polarities=False to match the visual arm's joint axes
+        xyz_chunk = kinematics.fk_xyz_chunk(q_motor_chunk, use_polarities=is_real)
+        xyz_list.extend(xyz_chunk)
 
-            if obs_joints is not None:
-                joints_motor_list.append(np.array(obs_joints))
-
-    return joints_motor_list, xyz_list
+    return joints_list, xyz_list
 
 
 # ---------------------------------------------------------------------------
 # Execution modes
 # ---------------------------------------------------------------------------
 
-def run_real(joints_motor_list, kinematics):
-    """Direct joint replay: send motor values from dataset straight to robot."""
-    if not joints_motor_list:
-        print("No observation.joint_positions found — cannot replay.")
+def run_real(joints_deg_list, kinematics):
+    """Direct joint replay: send joint degrees from dataset straight to robot."""
+    if not joints_deg_list:
+        print("No joint data found — cannot replay.")
         return
     print("Executing on real robot (direct joint replay)...")
     try:
-        for i, joints_motor in enumerate(joints_motor_list):
-            action = {f"{n}.pos": float(joints_motor[j]) for j, n in enumerate(kinematics.JOINT_NAMES)}
-            if i % 10 == 0:
-                print(f"\nFrame {i}: motor={np.round(joints_motor, 2)}")
-            robot.send_action(action)
-            precise_sleep(1.0 / 30.0)
-        print("Done. Disconnecting...")
+        # Move to start position first
+        print("Moving to home position...")
+        kinematics.reset_to_home(robot, duration_s=3.0, fps=30.0)
+        time.sleep(1.0)
+
+        print("Moving to start position...")
+        start_deg = kinematics.read_deg_real(robot, ignore_offset=True)
+        steps = int(START_MOVE_DURATION * START_MOVE_FPS)
+        waypoints_start = kinematics.interpolate_joint(start_deg, joints_deg_list[0], steps)
+        kinematics.execute_joint_trajectory(robot, waypoints_start, fps=30.0, ignore_offset=True)
+        time.sleep(1.0)
+
+        print("Executing dataset trajectory...")
+        kinematics.execute_joint_trajectory(robot, joints_deg_list, fps=30.0, ignore_offset=True)
+        
+        print("Done. Returning home and disconnecting...")
+        kinematics.reset_to_home(robot, duration_s=3.0, fps=30.0)
         robot.disconnect()
     except KeyboardInterrupt:
-        print("\n[SIGINT] Stopping early, disconnecting...")
+        print("\n[SIGINT] Stopping early, returning home and disconnecting...")
+        try:
+            kinematics.reset_to_home(robot, duration_s=2.0)
+        except: pass
         robot.disconnect()
         sys.exit(0)
 
 
-def run_meshcat(joints_motor_list, xyz_list, kinematics, episode_idx):
+def run_meshcat(joints_rad_list, xyz_list, kinematics, episode_idx):
     try:
         import pinocchio as pin
         from pinocchio.visualize import MeshcatVisualizer
@@ -253,15 +302,12 @@ def run_meshcat(joints_motor_list, xyz_list, kinematics, episode_idx):
     try:
         print(f"Playing back episode {episode_idx} (3 loops, direct joint replay)...")
         for _ in range(3):
-            for i, joints_motor in enumerate(joints_motor_list):
-                q_display = kinematics.motor_to_rad(joints_motor)  # motor -> rad, all 6 joints
+            for i, q_display in enumerate(joints_rad_list):
                 viz.display(q_display)
 
-                if i % 30 == 0:  # print roughly once a second
-                    print(f"\n--- Frame {i} ---")
-                    print(f"Motor (raw) : {np.round(joints_motor, 2)}")
-                    print(f"Joints (rad): {np.round(q_display, 4)}")
-                    print(f"Joints (deg): {np.round(np.rad2deg(q_display), 2)}")
+                if i % 100 == 0:  # print roughly once a second
+                    # Convert back to motor for logging consistency
+                    log_robot_state(i, kinematics.rad_to_motor(q_display, use_polarities=False), kinematics, label="Meshcat Visualization")
 
                 time.sleep(1.0 / 30.0)
             time.sleep(1.0)
@@ -284,7 +330,9 @@ def run_meshcat(joints_motor_list, xyz_list, kinematics, episode_idx):
 
 def main():
     parser = argparse.ArgumentParser(description="Visualize or Execute Episode")
-    parser.add_argument("--real", action="store_true", help="Execute on real robot instead of Meshcat")
+    exec_mode = parser.add_mutually_exclusive_group(required=True)
+    exec_mode.add_argument("--sim", action="store_true", help="Simulation (Meshcat) mode")
+    exec_mode.add_argument("--real", action="store_true", help="Real robot mode")
     parser.add_argument("--episode", type=int, default=VISUALIZE_EPISODE)
     args = parser.parse_args()
 
@@ -292,13 +340,20 @@ def main():
     config_path = Path(__file__).parent.parent / "config" / "robot_config.yaml"
     wrist_offset = 0.0
     home_pose = None
+    urdf_path = None
+    
     if config_path.exists():
         with open(config_path) as f:
             cfg = yaml.safe_load(f)
-        wrist_offset = float(cfg.get("robot", {}).get("wrist_roll_offset", 0.0))
-        home_pose = cfg.get("robot", {}).get("home_pose")
+        robot_cfg = cfg.get("robot", {})
+        wrist_offset = float(robot_cfg.get("wrist_roll_offset", 0.0))
+        home_pose = robot_cfg.get("home_pose")
+        urdf_path = robot_cfg.get("urdf_path")
 
-    kinematics = SO101Control(urdf_path=URDF_PATH, wrist_roll_offset=wrist_offset, home_pose=home_pose)
+    if not urdf_path:
+        raise ValueError("Error: 'urdf_path' not found in config/robot_config.yaml. This is required for kinematics.")
+
+    kinematics = SO101Control(urdf_path=urdf_path, wrist_roll_offset=wrist_offset, home_pose=home_pose)
 
     if args.real:
         connect_robot()
@@ -309,18 +364,18 @@ def main():
         raise FileNotFoundError(f"No parquet files found in {data_dir}")
 
     print(f"Building trajectory for episode {args.episode}...")
-    joints_motor_list, xyz_list = build_trajectory(parquet_files, args.episode, kinematics)
+    joints_list, xyz_list = build_trajectory(parquet_files, args.episode, kinematics, is_real=args.real)
 
-    if not joints_motor_list:
+    if not joints_list:
         print(f"Episode {args.episode} not found or has no observation.joint_positions data.")
         return
 
-    print(f"Loaded {len(joints_motor_list)} frames.")
+    print(f"Loaded {len(joints_list)} frames.")
 
     if args.real:
-        run_real(joints_motor_list, kinematics)
+        run_real(joints_list, kinematics)
     else:
-        run_meshcat(joints_motor_list, xyz_list, kinematics, args.episode)
+        run_meshcat(joints_list, xyz_list, kinematics, args.episode)
 
 
 if __name__ == "__main__":

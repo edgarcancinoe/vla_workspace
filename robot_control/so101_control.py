@@ -83,6 +83,11 @@ class SO101Control:
     def fk_xyz(self, motor_vals):
         return self.fk(motor_vals)[:3, 3]
 
+    def fk_xyz_chunk(self, motor_chunk, use_polarities=True):
+        """Returns (N, 3) XYZ positions for a (N, 6) chunk of motor values."""
+        degs = self.motor_to_deg(motor_chunk, use_polarities=use_polarities)
+        return np.array([self.kinematics.forward_kinematics(d)[:3, 3] for d in degs])
+
     def ik_motor(self, target_xyz, ref_pose_4x4, seed_motor):
         desired = ref_pose_4x4.copy()
         desired[:3, 3] = target_xyz
@@ -232,16 +237,38 @@ class SO101Control:
 
     # ── High Level API ────────────────────────────────────────────────────────
 
-    def reset_to_home(self, robot, duration_s=3.0, fps=50, ignore_offset=False):
+    def reset_to_home(self, robot, duration_s=3.0, fps=50, ignore_offset=False, viz=None):
         """Moves robot to target defined in self.home_pose over duration_s seconds using Joint Interpolation."""
         print(f"Moving to home pose over {duration_s:.1f}s...")
         steps = max(1, int(round(duration_s * fps)))
         
-        start_deg = self.read_deg_real(robot, ignore_offset=ignore_offset)
+        if robot:
+            start_deg = self.read_deg_real(robot, ignore_offset=ignore_offset)
+        else:
+            # If no robot, we might be in simulation. Use 0s or current viz state?
+            # For simplicity, if robot is None, we assume we want to home the viz from its current state.
+            # But SO101Control doesn't track current state besides robot/viz calls.
+            # We'll default to starting from zeros if no robot.
+            start_deg = np.zeros(len(self.JOINT_NAMES))
+            
         goal_deg = np.array([float(self.home_pose.get(f"{n}.pos", 0.0)) for n in self.JOINT_NAMES])
         
         waypoints = self.interpolate_joint(start_deg, goal_deg, steps)
-        self.execute_joint_trajectory(robot, waypoints, fps=fps, ignore_offset=ignore_offset)
+        
+        # Execute the trajectory using normalized motor units
+        next_tick = time.perf_counter()
+        for deg in waypoints:
+            cmd_deg = deg.copy()
+            if not ignore_offset and "wrist_roll" in self.JOINT_NAMES:
+                idx = self.JOINT_NAMES.index("wrist_roll")
+                cmd_deg[idx] += self.wrist_roll_offset
+            
+            motor_vals = self.deg_to_motor(cmd_deg)
+            self.send_and_display(motor_vals, robot, viz)
+            
+            next_tick += 1.0 / fps
+            precise_sleep(max(0.0, next_tick - time.perf_counter()))
+            
         print("Home pose reached.")
 
     def move_to_xyz(self, robot, target_xyz, ref_pose, seed_motor, duration_s=3.0, viz=None, fps=20, max_step=4.0):
