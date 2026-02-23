@@ -60,14 +60,14 @@ def main():
     
     try:
         robot.connect(calibrate=args.calibrate)
-        control = SO101Control(urdf_path=URDF_PATH, wrist_roll_offset=wrist_roll_offset)
+        control = SO101Control(urdf_path=URDF_PATH, wrist_roll_offset=wrist_roll_offset, home_pose=home_pose)
         
         # Apply safety limits if needed
         # control.configure_safety(robot)
 
         print("Starting 'Go Home' sequence...")
         print(f"Target Home Pose (Degrees): {home_pose}")
-        control.reset_to_home(robot, home_pose, duration_s=4.0)
+        control.reset_to_home(robot, duration_s=4.0)
         print("Sequence complete.")
         
     except KeyboardInterrupt:

@@ -85,7 +85,8 @@ teleop_device = SO100Leader(teleop_config)
 
 # Kinematics Control for Degree Conversion
 URDF_PATH = "/Users/edgarcancino/Documents/Academic/EMAI Thesis/repos/SO-ARM100/Simulation/SO101/so101_new_calib.urdf"
-control = SO101Control(urdf_path=URDF_PATH, wrist_roll_offset=WRIST_ROLL_OFFSET_DEG)
+home_pose = config_data.get("robot", {}).get("home_pose")
+control = SO101Control(urdf_path=URDF_PATH, wrist_roll_offset=WRIST_ROLL_OFFSET_DEG, home_pose=home_pose)
 
 print("Connecting devices...")
 # Pass calibrate flag to connection methods

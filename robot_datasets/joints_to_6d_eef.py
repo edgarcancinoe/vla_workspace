@@ -58,7 +58,17 @@ def main():
         target_frame_name="gripper_frame_link",
         joint_names=joint_names,
     )
-    so101 = SO101Control(urdf_path=URDF_PATH)
+    import yaml
+    config_path = Path(__file__).parent.parent / "config" / "robot_config.yaml"
+    wrist_offset = 0.0
+    home_pose = None
+    if config_path.exists():
+        with open(config_path) as f:
+            cfg = yaml.safe_load(f)
+        wrist_offset = float(cfg.get("robot", {}).get("wrist_roll_offset", 0.0))
+        home_pose = cfg.get("robot", {}).get("home_pose")
+
+    so101 = SO101Control(urdf_path=URDF_PATH, wrist_roll_offset=wrist_offset, home_pose=home_pose)
 
     # Prepare for output
     new_dir = Path.home() / ".cache" / "lerobot" / OUT_DATASET_ID

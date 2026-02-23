@@ -288,11 +288,17 @@ def main():
     parser.add_argument("--episode", type=int, default=VISUALIZE_EPISODE)
     args = parser.parse_args()
 
-    if not URDF_PATH:
-        print("Please set URDF_PATH at the top of the script.")
-        return
+    import yaml
+    config_path = Path(__file__).parent.parent / "config" / "robot_config.yaml"
+    wrist_offset = 0.0
+    home_pose = None
+    if config_path.exists():
+        with open(config_path) as f:
+            cfg = yaml.safe_load(f)
+        wrist_offset = float(cfg.get("robot", {}).get("wrist_roll_offset", 0.0))
+        home_pose = cfg.get("robot", {}).get("home_pose")
 
-    kinematics = SO101Control(urdf_path=URDF_PATH)
+    kinematics = SO101Control(urdf_path=URDF_PATH, wrist_roll_offset=wrist_offset, home_pose=home_pose)
 
     if args.real:
         connect_robot()

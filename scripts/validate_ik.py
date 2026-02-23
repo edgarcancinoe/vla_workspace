@@ -38,7 +38,7 @@ WRIST_ROLL_OFFSET_DEG = 0.0
 
 # Pattern scale (meters)
 SCALE           = 0.05   # half-size for square/cross; amplitude for figure-8
-N_WAYPOINTS     = 40     # waypoints per segment
+N_WAYPOINTS     = 15     # waypoints per segment
 N_FIG8          = 200    # total waypoints for figure-8 curve
 DT_S            = 0.05   # 20 Hz
 HOME_DURATION_S = 4.0
@@ -214,25 +214,32 @@ def main():
         viewer = _viz.viewer
         print(f"Meshcat: {viz.viewer.url()}")
 
+    import yaml
+    config_path = Path(__file__).parent.parent / "config" / "robot_config.yaml"
+    if config_path.exists():
+        with open(config_path) as f:
+            cfg = yaml.safe_load(f)
+        robot_cfg = cfg.get("robot", {})
+        WRIST_ROLL_OFFSET_DEG = float(robot_cfg.get("wrist_roll_offset", 0.0))
+        PORT = robot_cfg.get("port")
+        ROBOT_NAME = robot_cfg.get("name", "arm_follower")
+        HOME_POSE = robot_cfg.get("home_pose", {})
+    else:
+        WRIST_ROLL_OFFSET_DEG = 0.0
+        PORT = None
+        ROBOT_NAME = "arm_follower"
+        HOME_POSE = {f"{n}.pos": 0.0 for n in JOINT_NAMES}
+
     # ── Kinematics ─────────────────────────────────────────────────────────────
-    kinematics = SO101Control(urdf_path=URDF_PATH)
+    kinematics = SO101Control(urdf_path=URDF_PATH, wrist_roll_offset=WRIST_ROLL_OFFSET_DEG, home_pose=HOME_POSE)
+
+    HOME_MOTOR = np.zeros(6)
 
     # ── Real robot ─────────────────────────────────────────────────────────────
     if args.real:
-        import yaml
         from lerobot.robots.so101_follower.so101_follower import SO101Follower
         from lerobot.robots.so101_follower.config_so101_follower import SO101FollowerConfig
 
-        config_path = Path(__file__).parent.parent / "config" / "robot_config.yaml"
-        PORT = None # Initialize PORT
-        if config_path.exists():
-            with open(config_path) as f:
-                cfg = yaml.safe_load(f)
-            robot_cfg = cfg.get("robot", {})
-            WRIST_ROLL_OFFSET_DEG = float(robot_cfg.get("wrist_roll_offset", 0.0))
-            PORT = robot_cfg.get("port")
-            ROBOT_NAME = robot_cfg.get("name", "arm_follower")
-        
         if not PORT:
             raise ValueError("Error: 'port' not found in config/robot_config.yaml. Cannot connect to robot.")
 
@@ -240,24 +247,19 @@ def main():
         print(f"Wrist roll offset: {WRIST_ROLL_OFFSET_DEG}°")
         
         calibration_dir = Path(__file__).parent.parent / ".cache" / "calibration"
-        kinematics.wrist_roll_offset = WRIST_ROLL_OFFSET_DEG
-
         robot = SO101Follower(SO101FollowerConfig(id=ROBOT_NAME, port=PORT, calibration_dir=calibration_dir))
         robot.connect()
         print("Robot connected.")
 
     # ── Home ───────────────────────────────────────────────────────────────────
-    HOME_MOTOR = np.zeros(6)
-
     if args.real:
-        current = kinematics.read_motor_real(robot)
-        print(f"Current state: {current.round(2)}")
-        print(f"Moving to home over {HOME_DURATION_S}s...")
-        current = kinematics.move_to_motor(current, HOME_MOTOR, HOME_DURATION_S, robot=robot, viz=viz, dt=DT_S)
+        kinematics.reset_to_home(robot, duration_s=HOME_DURATION_S, fps=1.0/DT_S)
         time.sleep(1.0)
         current = kinematics.read_motor_real(robot)
     else:
-        current = HOME_MOTOR.copy()
+        # In simulation mode, we just start at the HOME_POSE degree targets converted to motor units
+        goal_deg = np.array([float(HOME_POSE.get(f"{n}.pos", 0.0)) for n in JOINT_NAMES])
+        current = kinematics.deg_to_motor(goal_deg)
         meshcat_display(current)
         time.sleep(1.0)
 
@@ -314,8 +316,7 @@ def main():
     finally:
         if robot:
             print("Returning to home...")
-            current = kinematics.read_motor_real(robot)
-            kinematics.move_to_motor(current, HOME_MOTOR, HOME_DURATION_S, robot=robot, viz=viz, dt=DT_S)
+            kinematics.reset_to_home(robot, duration_s=HOME_DURATION_S, fps=1.0/DT_S)
             time.sleep(0.5)
             robot.disconnect()
             print("Robot disconnected.")

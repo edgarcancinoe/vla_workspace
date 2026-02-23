@@ -26,11 +26,12 @@ class SO101Control:
         'gripper':        1.0,
     }
 
-    def __init__(self, urdf_path, target_frame_name="gripper_frame_link", active_joints=None, wrist_roll_offset=0.0):
+    def __init__(self, urdf_path, target_frame_name="gripper_frame_link", active_joints=None, wrist_roll_offset=0.0, home_pose=None):
         self.urdf_path = urdf_path
         self.target_frame_name = target_frame_name
         self.active_joints = active_joints if active_joints is not None else self.JOINT_NAMES
         self.wrist_roll_offset = wrist_roll_offset
+        self.home_pose = home_pose if home_pose is not None else {f"{n}.pos": 0.0 for n in self.JOINT_NAMES}
         self.kinematics = RobotKinematics(
             urdf_path=urdf_path,
             target_frame_name=target_frame_name,
@@ -214,13 +215,13 @@ class SO101Control:
 
     # ── High Level API ────────────────────────────────────────────────────────
 
-    def reset_to_home(self, robot, home_pose_deg_dict, duration_s=3.0, fps=50):
-        """Moves robot to home_pose over duration_s seconds using Joint Interpolation."""
+    def reset_to_home(self, robot, duration_s=3.0, fps=50):
+        """Moves robot to target defined in self.home_pose over duration_s seconds using Joint Interpolation."""
         print(f"Moving to home pose over {duration_s:.1f}s...")
         steps = max(1, int(round(duration_s * fps)))
         
         start_deg = self.read_deg_real(robot)
-        goal_deg = np.array([float(home_pose_deg_dict.get(f"{n}.pos", 0.0)) for n in self.JOINT_NAMES])
+        goal_deg = np.array([float(self.home_pose.get(f"{n}.pos", 0.0)) for n in self.JOINT_NAMES])
         
         waypoints = self.interpolate_joint(start_deg, goal_deg, steps)
         self.execute_joint_trajectory(robot, waypoints, fps=fps)
