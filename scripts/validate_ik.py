@@ -27,10 +27,10 @@ from robot_sim.so101_meshcat import SO101Meshcat
 
 # ── Configuration ──────────────────────────────────────────────────────────────
 PORT              = None # Loaded from config
-URDF_PATH         = "/Users/edgarcancino/Documents/Academic/EMAI Thesis/repos/SO-ARM100/Simulation/SO101/so101_new_calib.urdf"
+URDF_PATH         = None # Loaded from config
 JOINT_NAMES = SO101Control.JOINT_NAMES
 
-WRIST_ROLL_OFFSET_DEG = 0.0
+# Wrist Roll Offset is loaded from config in main
 
 # Pattern scale (meters)
 SCALE           = 0.05   # half-size for square/cross; amplitude for figure-8
@@ -165,7 +165,7 @@ def visualize_path(waypoints, color_hex):
 # ══════════════════════════════════════════════════════════════════════════════
 
 def main():
-    global robot, viz, WRIST_ROLL_OFFSET_DEG, kinematics
+    global robot, viz, WRIST_ROLL_OFFSET_DEG, kinematics, URDF_PATH, PORT, CALIBRATION_DIR
 
     parser = argparse.ArgumentParser(description="SO101 motion patterns")
     exec_mode = parser.add_mutually_exclusive_group(required=True)
@@ -179,26 +179,32 @@ def main():
                         help="Disable Meshcat visualization (real mode only)")
     args = parser.parse_args()
 
+    # ── Config Loading ─────────────────────────────────────────────────────────
+    import yaml
+    config_path = Path(__file__).parent.parent / "config" / "robot_config.yaml"
+    if not config_path.exists():
+        raise FileNotFoundError(f"Config file not found at {config_path}")
+
+    with open(config_path) as f:
+        cfg = yaml.safe_load(f)
+    robot_cfg = cfg.get("robot", {})
+    
+    URDF_PATH = robot_cfg.get("urdf_path")
+    if not URDF_PATH:
+        raise ValueError("Error: 'urdf_path' not found in config/robot_config.yaml.")
+    
+    WRIST_ROLL_OFFSET_DEG = float(robot_cfg.get("wrist_roll_offset", 0.0))
+    PORT = robot_cfg.get("port")
+    ROBOT_NAME = robot_cfg.get("name", "arm_follower")
+    HOME_POSE = robot_cfg.get("home_pose", {})
+    CALIBRATION_DIR = robot_cfg.get("calibration_dir")
+    if not CALIBRATION_DIR:
+        raise ValueError("Error: 'calibration_dir' not found in config/robot_config.yaml.")
+
     # ── Meshcat Visualization ─────────────────────────────────────────────────
     if not (args.real and args.no_viz):
         viz = SO101Meshcat(urdf_path=URDF_PATH)
         print("Meshcat visualization started.")
-
-    import yaml
-    config_path = Path(__file__).parent.parent / "config" / "robot_config.yaml"
-    if config_path.exists():
-        with open(config_path) as f:
-            cfg = yaml.safe_load(f)
-        robot_cfg = cfg.get("robot", {})
-        WRIST_ROLL_OFFSET_DEG = float(robot_cfg.get("wrist_roll_offset", 0.0))
-        PORT = robot_cfg.get("port")
-        ROBOT_NAME = robot_cfg.get("name", "arm_follower")
-        HOME_POSE = robot_cfg.get("home_pose", {})
-    else:
-        WRIST_ROLL_OFFSET_DEG = 0.0
-        PORT = None
-        ROBOT_NAME = "arm_follower"
-        HOME_POSE = {f"{n}.pos": 0.0 for n in JOINT_NAMES}
 
     # ── Kinematics ─────────────────────────────────────────────────────────────
     kinematics = SO101Control(urdf_path=URDF_PATH, wrist_roll_offset=WRIST_ROLL_OFFSET_DEG, home_pose=HOME_POSE)
@@ -216,7 +222,7 @@ def main():
         print(f"Robot Name: {ROBOT_NAME}")
         print(f"Wrist roll offset: {WRIST_ROLL_OFFSET_DEG}°")
         
-        calibration_dir = Path(__file__).parent.parent / ".cache" / "calibration"
+        calibration_dir = Path(CALIBRATION_DIR)
         robot = SO101Follower(SO101FollowerConfig(id=ROBOT_NAME, port=PORT, calibration_dir=calibration_dir))
         robot.connect()
         print("Robot connected.")
