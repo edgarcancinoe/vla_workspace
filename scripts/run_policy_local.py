@@ -56,8 +56,6 @@ FOLLOWER_PORT = config_data["robot"]["port"]
 ROBOT_NAME = config_data["robot"].get("name", "arm_follower")
 HOME_POSE = config_data["robot"].get("home_pose", {})
 CAMERA_CONFIG_MAP = config_data.get("cameras", {})
-RECTIFY_MAP = {name: info.get("rectify", False) for name, info in CAMERA_CONFIG_MAP.items()}
-CAMERAS = {name: OpenCVCameraConfig(index_or_path=info["id"], width=640, height=480, fps=FPS) for name, info in CAMERA_CONFIG_MAP.items()}
 
 # --- Policy ---
 POLICY_PATH = "edgarcancinoe/xvla-base_finetuned_soarm101_pickplace_orange_050e_fw_open"
@@ -116,6 +114,10 @@ EEF_STATE_NAMES = [
 ]
 _EEF_KEY_SET = {"x", "y", "z", "gripper"}
 
+# Build config objects
+RECTIFY_MAP = {name: info.get("rectify", False) for name, info in CAMERA_CONFIG_MAP.items()}
+CAMERAS = {name: OpenCVCameraConfig(index_or_path=info["id"], width=640, height=480, fps=FPS) for name, info in CAMERA_CONFIG_MAP.items()}
+
 validate_configuration()
 
 # UTIL
@@ -140,21 +142,20 @@ def set_custom_get_observation(robot, so101: SO101Control = None, include_eef_st
                 observation[cam_name] = camera_calibration.rectify_image(
                     observation[cam_name], cam_name
                 )
-        print(f"[x] Robot observation patched for dynamic rectification based on config: {RECTIFY_MAP}")
-
 
         # Inject EEF State if requested
         if include_eef_state:
-            motor_vals = np.array([obs.get(f"{joint}.pos", 0.0) for joint in so101.JOINT_NAMES])
+            motor_vals = np.array([observation.get(f"{joint}.pos", 0.0) for joint in so101.JOINT_NAMES])
             T = so101.fk(motor_vals)
             r6d = mat_to_rotate6d(T[:3, :3])
             eef = np.concatenate([T[:3, 3], r6d, [motor_vals[-1]]], dtype=np.float32)
             for i, name in enumerate(EEF_STATE_NAMES):
                 observation[f"{name}.pos"] = float(eef[i])
-            print(f"[x] Robot observation patched for EEF State: {EEF_STATE_NAMES}")
 
         return observation
-        
+    
+    print(f"[x] Robot observation patched for dynamic rectification based on config: {RECTIFY_MAP}")
+    print(f"[x] Robot observation patched for EEF State: {EEF_STATE_NAMES}") if include_eef_state else None
     robot.get_observation = patched_get_observation
 
 # > Custom send_action():
@@ -169,13 +170,13 @@ def set_custom_send_action(robot, so101: SO101Control = None):
             return base_action_func(action, **kwargs)
         
         # Case: actions are in eef space (xyz + 6D Orientation + Gripper)
-        xyz         = np.array([action["x"], action["y"], action["z"]], dtype=np.float64)
+        target_xyz  = np.array([action["x"], action["y"], action["z"]], dtype=np.float64)
         r6d         = np.array([action["rot6d_0"], action["rot6d_1"], action["rot6d_2"], action["rot6d_3"], action["rot6d_4"], action["rot6d_5"]], dtype=np.float64)
         gripper_val = float(action["gripper"]) 
 
-        # IK
+        # IK: solve for full 6D pose (position + orientation)
         current_motor = so101.read_motor_real(robot)
-        target_motor = so101.ik_motor(xyz, r6d, current_motor)
+        target_motor = so101.ik_motor_6d(target_xyz, r6d, current_motor)
 
         if target_motor is None:
             print(f"[ERROR] IK failed, skipping action and holding current pose")
@@ -188,6 +189,8 @@ def set_custom_send_action(robot, so101: SO101Control = None):
         motor_dict = {f"{n}.pos": float(target_motor[i]) for i, n in enumerate(so101.JOINT_NAMES)}
         
         return base_action_func(motor_dict, **kwargs)
+
+    robot.send_action = patched_send_action
 
 # > Custom select_action():
 #   1. Inject delay when action queue is empty. Used to reduce SOARM101 shaking between actions.
@@ -247,6 +250,7 @@ def get_policy(policy_type: str, path: str, device: str):
         policy.config.n_action_steps = N_ACTION_STEPS
         
     # smolvla specific
+    INCLUDE_EEF_STATE = False
     if policy_type == "smolvla":
         if MAX_ACTION_TOKENS:
             policy.config.max_action_tokens = MAX_ACTION_TOKENS
@@ -257,9 +261,11 @@ def get_policy(policy_type: str, path: str, device: str):
         policy.config.empty_cameras = NUM_EMPTY_CAMERAS
         policy.config.num_image_views = NUM_IMAGE_VIEWS
         policy.config.action_mode   = ACTION_MODE
+
+        INCLUDE_EEF_STATE = True
         
     policy.reset()
-    return policy
+    return policy, INCLUDE_EEF_STATE
 
 def get_dataset(features: dict, robot_type: str):
     """
@@ -292,7 +298,7 @@ def main():
     robot        = SO100Follower(robot_config)
     
     # Policy Object
-    policy = get_policy(POLICY_TYPE, POLICY_PATH, DEVICE)
+    policy, INCLUDE_EEF_STATE = get_policy(POLICY_TYPE, POLICY_PATH, DEVICE)
 
     # Configure the dataset features
     action_features  = hw_to_dataset_features(robot.action_features, "action")
@@ -319,7 +325,7 @@ def main():
     robot.connect()
     
     # Patch robot for observation and action
-    set_custom_get_observation(robot)
+    set_custom_get_observation(robot, so101=so101, include_eef_state=INCLUDE_EEF_STATE)
     set_custom_send_action(robot, so101=so101)
     set_custom_select_action(policy, POLICY_DELAY)
 

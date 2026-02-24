@@ -91,9 +91,9 @@ class SO101Control:
     def ik_motor(self, target_xyz, ref_pose_4x4, seed_motor):
         desired = ref_pose_4x4.copy()
         desired[:3, 3] = target_xyz
-        
+
         num_ik = len(self.active_joints)
-        
+
         result_deg = self.kinematics.inverse_kinematics(
             current_joint_pos=self.motor_to_deg(seed_motor)[:num_ik],
             desired_ee_pose=desired,
@@ -102,7 +102,62 @@ class SO101Control:
         )
         if np.any(np.isnan(result_deg)):
             return None
-            
+
+        full_result_deg = self.motor_to_deg(seed_motor)
+        full_result_deg[:num_ik] = result_deg
+        return self.deg_to_motor(full_result_deg)
+
+    @staticmethod
+    def rot6d_to_mat(r6d: np.ndarray) -> np.ndarray:
+        """Recovers a 3×3 rotation matrix from a 6D rotation representation.
+
+        The 6D vector stores the first two columns of the rotation matrix
+        (r6d[0:3] = col0, r6d[3:6] = col1), which may be slightly non-orthonormal
+        due to neural-network output noise.  A Gram-Schmidt step enforces
+        orthonormality before the third column is recovered via the cross product.
+        """
+        a1 = np.asarray(r6d[:3], dtype=np.float64)
+        a2 = np.asarray(r6d[3:6], dtype=np.float64)
+        b1 = a1 / np.linalg.norm(a1)
+        b2 = a2 - np.dot(b1, a2) * b1
+        b2 = b2 / np.linalg.norm(b2)
+        b3 = np.cross(b1, b2)
+        return np.column_stack([b1, b2, b3])
+
+    def ik_motor_6d(self, target_xyz, target_rot6d, seed_motor,
+                    orientation_weight: float = 0.5) -> np.ndarray | None:
+        """Solve IK for a full 6D EEF target (position + orientation).
+
+        Converts the rot6d prediction to a 4×4 target pose via Gram-Schmidt
+        orthonormalisation, then calls the IK solver with both position and
+        orientation costs active.
+
+        Args:
+            target_xyz:         (3,) position target in metres.
+            target_rot6d:       (6,) rotation target — first two columns of R.
+            seed_motor:         (6,) current motor positions used as IK seed.
+            orientation_weight: Weight for the orientation cost term relative to
+                                position_weight=1.0.  Set to 0.0 to recover
+                                position-only behaviour.  Default: 0.5.
+
+        Returns:
+            (6,) motor positions, or None if IK diverges / returns NaN.
+        """
+        R = self.rot6d_to_mat(target_rot6d)
+        desired = np.eye(4)
+        desired[:3, :3] = R
+        desired[:3, 3] = target_xyz
+
+        num_ik = len(self.active_joints)
+        result_deg = self.kinematics.inverse_kinematics(
+            current_joint_pos=self.motor_to_deg(seed_motor)[:num_ik],
+            desired_ee_pose=desired,
+            position_weight=1.0,
+            orientation_weight=orientation_weight,
+        )
+        if np.any(np.isnan(result_deg)):
+            return None
+
         full_result_deg = self.motor_to_deg(seed_motor)
         full_result_deg[:num_ik] = result_deg
         return self.deg_to_motor(full_result_deg)
