@@ -1,4 +1,4 @@
-lerobot[smolvla,feetech,async]
+lerobot[smolvla,feetech,async,kinematics]
 dynamixel_sdk
 # NOTE: grpcio packages must be installed separately after lerobot
 # Run: pip install 'grpcio>=1.60.0,<1.65.0' 'grpcio-tools>=1.60.0,<1.65.0'

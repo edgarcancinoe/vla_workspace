@@ -35,8 +35,10 @@ CAMERA_CALIBRATION = {
     "camera2": {"mtx": CAM0_MATRIX, "dist": CAM0_DIST_COEFFS},
     # Also aliases if needed
     "top": {"mtx": CAM1_MATRIX, "dist": CAM1_DIST_COEFFS}, 
+    "main": {"mtx": CAM1_MATRIX, "dist": CAM1_DIST_COEFFS}, 
     "lateral": {"mtx": CAM0_MATRIX, "dist": CAM0_DIST_COEFFS},
     "wrist": {"mtx": CAM0_MATRIX, "dist": CAM0_DIST_COEFFS},
+    "secondary": {"mtx": CAM0_MATRIX, "dist": CAM0_DIST_COEFFS},
 }
 
 def rectify_image(image, camera_name):

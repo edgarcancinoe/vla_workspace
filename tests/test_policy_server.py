@@ -94,7 +94,7 @@ def denormalize_actions(actions_dict, policy_range=(-1, 1)):
 # DEBUG CLIENT
 # =============================================================================
 class DebugRobotClient(RobotClient):
-    """RobotClient with detailed pipeline debugging."""
+    """RobotClient with pdetailed pipeline debugging."""
     
     def __init__(self, config: RobotClientConfig):
         super().__init__(config)

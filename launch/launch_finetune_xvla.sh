@@ -50,7 +50,6 @@ OPTIMIZER_LR=1e-4
 
 # Policy Configuration
 ACTION_MODE="${ACTION_MODE:-auto}"    # Options: "auto", "ee6d" (or specific to your robot)
-DOMAIN_ID="${DOMAIN_ID:-0}"           # Domain ID for your task/robot
 EMPTY_CAMERAS="${EMPTY_CAMERAS:-1}"   # Number of empty camera slots (if needed)
 POLICY_NUM_IMAGE_VIEWS="${POLICY_NUM_IMAGE_VIEWS:-2}"
 
@@ -268,7 +267,6 @@ python -m lerobot.scripts.lerobot_train \
   --resume="${RESUME}" \
   --policy.dtype=bfloat16 \
   --policy.action_mode="${ACTION_MODE}" \
-  --policy.domain_id="${DOMAIN_ID}" \
   --policy.empty_cameras="${EMPTY_CAMERAS}" \
   --policy.freeze_vision_encoder=false \
   --policy.freeze_language_encoder=false \
