@@ -61,7 +61,7 @@ RESET_TIME_SEC = 9
 TASK_DESCRIPTION = "Pick up orange cube and place inside white box."
 
 HF_USER = "edgarcancinoe"
-HF_REPO_ID = "soarm101_pickplace_front_eef"
+HF_REPO_ID = "soarm101_pickplace_10d"
 
 URDF_PATH = config_data.get("robot", {}).get("urdf_path")
 if not URDF_PATH:
@@ -232,15 +232,13 @@ def transform_dataset_to_eef(
             
             # If joints are 6D, compute FK. If already 10D, keep as is (idempotency).
             if len(state_joints) == 6:
-                state_deg = np.rad2deg(so101.motor_to_urdf_deg(state_joints))
+                state_deg = so101.motor_to_urdf_deg(state_joints)
                 T = so101.kinematics.forward_kinematics(state_deg)
                 eef_states.append(
                     np.concatenate([T[:3, 3], mat_to_rotate6d(T[:3, :3]), [state_joints[-1]]])
                 )
                 
             elif len(state_joints) == 10:
-                # Fallback: if we only have 10D state, we can't re-compute FK accurately without joints,
-                # but we can preserve the existing EEF state.
                 eef_states.append(state_joints)
             else:
                 print(f" Warning: frame {i} has unexpected state shape {len(state_joints)}, skipping.")
@@ -253,7 +251,7 @@ def transform_dataset_to_eef(
                     action_joints = df.iloc[i]["action"]
 
                 if len(action_joints) == 6:
-                    action_deg = np.rad2deg(so101.motor_to_rad(action_joints))
+                    action_deg = so101.motor_to_urdf_deg(action_joints)
                     T_act = so101.kinematics.forward_kinematics(action_deg)
                     eef_actions.append(
                         np.concatenate([T_act[:3, 3], mat_to_rotate6d(T_act[:3, :3]), [action_joints[-1]]])
@@ -277,17 +275,6 @@ def transform_dataset_to_eef(
             act_arr = np.array(eef_actions, dtype=np.float32).flatten()
             data_out["action"] = pa.FixedSizeListArray.from_arrays(act_arr, 10)
             schema_fields.append(pa.field("action", pa.list_(pa.float32(), 10)))
-
-        # Original 6D joint observation
-        joint_obs_arr = np.array(df["observation.state"].tolist(), dtype=np.float32).flatten()
-        data_out["observation.joint_positions"] = pa.FixedSizeListArray.from_arrays(joint_obs_arr, 6)
-        schema_fields.append(pa.field("observation.joint_positions", pa.list_(pa.float32(), 6)))
-
-        # Original 6D joint action
-        if has_action:
-            joint_act_arr = np.array(df["action"].tolist(), dtype=np.float32).flatten()
-            data_out["action_joints"] = pa.FixedSizeListArray.from_arrays(joint_act_arr, 6)
-            schema_fields.append(pa.field("action_joints", pa.list_(pa.float32(), 6)))
 
         # Scalar columns (timestamps, indices, etc.)
         for col in ["timestamp", "frame_index", "episode_index", "index", "task_index"]:
@@ -314,16 +301,12 @@ def transform_dataset_to_eef(
                 "observation.state" in info_dict["features"] 
                 and info_dict["features"]["observation.state"]["shape"] == [6]
             ):
-                info_dict["features"]["observation.joint_positions"] = (
-                    info_dict["features"]["observation.state"].copy()
-                )
                 info_dict["features"]["observation.state"]["shape"] = [10]
                 info_dict["features"]["observation.state"]["names"] = EEF_FEATURE_NAMES
             if (
                 "action" in info_dict["features"] 
                 and info_dict["features"]["action"]["shape"] == [6]
             ):
-                info_dict["features"]["action_joints"] = info_dict["features"]["action"].copy()
                 info_dict["features"]["action"]["shape"] = [10]
                 info_dict["features"]["action"]["names"] = EEF_FEATURE_NAMES
             for k in [
@@ -342,12 +325,10 @@ def transform_dataset_to_eef(
             feat_dict = json.load(f)
         if "observation.state" in feat_dict:
             if feat_dict["observation.state"]["shape"] == [6]:
-                feat_dict["observation.joint_positions"] = feat_dict["observation.state"].copy()
                 feat_dict["observation.state"]["shape"] = [10]
                 feat_dict["observation.state"]["names"] = EEF_FEATURE_NAMES
         if "action" in feat_dict:
             if feat_dict["action"]["shape"] == [6]:
-                feat_dict["action_joints"] = feat_dict["action"].copy()
                 feat_dict["action"]["shape"] = [10]
                 feat_dict["action"]["names"] = EEF_FEATURE_NAMES
         for k in [
@@ -365,13 +346,8 @@ def transform_dataset_to_eef(
         with open(stats_path) as f:
             stats_dict = json.load(f)
         if "observation.state" in stats_dict and global_eef_states:
-            # stats_dict["observation.state"]["min"] is a list. If len is 6, it's joint stats.
-            if len(stats_dict["observation.state"]["min"]) == 6:
-                stats_dict["observation.joint_positions"] = stats_dict["observation.state"].copy()
             stats_dict["observation.state"] = _compute_stats(global_eef_states)
         if "action" in stats_dict and global_eef_actions:
-            if len(stats_dict["action"]["min"]) == 6:
-                stats_dict["action_joints"] = stats_dict["action"].copy()
             stats_dict["action"] = _compute_stats(global_eef_actions)
         with open(stats_path, "w") as f:
             json.dump(stats_dict, f, indent=4)

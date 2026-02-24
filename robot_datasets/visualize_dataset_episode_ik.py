@@ -29,8 +29,10 @@ from robot_control.so101_control import SO101Control
 from lerobot.utils.robot_utils import precise_sleep
 
 # --- Configuration ---
-DATASET_ID = "edgarcancinoe/soarm101_pickplace_front_6d_test"
-VISUALIZE_EPISODE = 1
+DEFAULT_DATASET_ID = "edgarcancinoe/soarm101_pickplace_10d"
+
+
+VISUALIZE_EPISODE = 0
 # Interpolation parameters for moving to the first frame
 START_MOVE_DURATION = 3.0  # seconds
 START_MOVE_FPS = 10.0      # waypoints per second
@@ -165,6 +167,12 @@ def build_trajectory(parquet_files, episode_idx, kinematics, is_real):
     joints_list = []
     xyz_list = []
 
+    # Read the seed pose from the robot if running on real hardware
+    if is_real and robot:
+        seed_deg = read_robot_seed_deg(kinematics)[:5]  # arm joints only, no gripper
+    else:
+        seed_deg = np.array([float(kinematics.home_pose.get(f"{n}.pos", 0.0)) for n in kinematics.JOINT_NAMES[:5]])
+
     for parquet_path in parquet_files:
         table = pq.read_table(parquet_path)
         df = table.to_pandas()
@@ -176,32 +184,28 @@ def build_trajectory(parquet_files, episode_idx, kinematics, is_real):
         if episode_df.empty:
             continue
         
-        if "observation.joint_positions" in episode_df.columns:
-            q_motor_chunk = np.stack(episode_df["observation.joint_positions"].values)
-        elif "observation.state" in episode_df.columns and len(episode_df["observation.state"].iloc[0]) == 6:
-            # Fallback for datasets where observation.state contains the 6 joints
-            q_motor_chunk = np.stack(episode_df["observation.state"].values)
-        else:
-            continue
+        chunk_states = episode_df["observation.state"].values
 
-        if is_real:
-            # Need degrees for real robot
-            joints_chunk = kinematics.motor_to_deg(q_motor_chunk)
-        else:
-            # Need radians for Meshcat (ignore polarities for sim to match URDF axes)
-            joints_chunk = kinematics.motor_to_rad(q_motor_chunk)
-        
-        joints_list.extend(joints_chunk)
+        for state in chunk_states:
+            pos = state[:3]
+            rot6d = state[3:9]
+            gripper_motor = state[9]
 
-        # Recompute XYZ trajectory from joints to ensure it matches the current URDF/Kinematics
-        if is_real:
-            xyz_chunk = kinematics.fk_xyz_chunk(q_motor_chunk)
-        else:
-            # Manual FK for simulation
-            raw_degs = kinematics.motor_to_deg(q_motor_chunk)
-            xyz_chunk = np.array([kinematics.kinematics.forward_kinematics(d)[:3, 3] for d in raw_degs])
-        
-        xyz_list.extend(xyz_chunk)
+            xyz_list.append(pos)
+
+            seed_motor = kinematics.deg_to_motor(np.append(seed_deg, 0.0))
+            ik_result = kinematics.ik_motor_6d(pos, rot6d, seed_motor, orientation_weight=0.5)
+            if ik_result is None:
+                print(f"  [IK] Failed for frame, reusing previous seed.")
+                ik_result = seed_motor
+            ik_result[-1] = gripper_motor
+
+            if is_real:
+                joints_list.append(kinematics.motor_to_deg(ik_result))
+            else:
+                joints_list.append(kinematics.motor_to_rad(ik_result))
+
+            seed_deg = kinematics.motor_to_deg(ik_result)[:-1]
 
     return joints_list, xyz_list
 
@@ -217,21 +221,9 @@ def run_real(joints_deg_list, kinematics):
         return
     print("Executing on real robot (direct joint replay)...")
     try:
-        # Prepare home pose with offset (external call as requested)
-        home_deg_v = np.array([float(kinematics.home_pose.get(f"{n}.pos", 0.0)) for n in kinematics.JOINT_NAMES])
-        for i, n in enumerate(kinematics.JOINT_NAMES):
-            kinematics.home_pose[f"{n}.pos"] = float(home_deg_v[i])
-
         # Move to start position first
         print("Moving to home position...")
         kinematics.reset_to_home(robot, duration_s=3.0, fps=30.0)
-        time.sleep(1.0)
-
-        print("Moving to start position...")
-        start_deg = kinematics.read_deg_real(robot)
-        steps = int(START_MOVE_DURATION * START_MOVE_FPS)
-        waypoints_start = kinematics.interpolate_joint(start_deg, joints_deg_list[0], steps)
-        kinematics.execute_joint_trajectory(robot, waypoints_start, fps=30.0)
         time.sleep(1.0)
 
         print("Executing dataset trajectory...")
@@ -240,6 +232,7 @@ def run_real(joints_deg_list, kinematics):
         print("Done. Returning home and disconnecting...")
         kinematics.reset_to_home(robot, duration_s=3.0, fps=30.0)
         robot.disconnect()
+
     except KeyboardInterrupt:
         print("\n[SIGINT] Stopping early, returning home and disconnecting...")
         try:
@@ -335,7 +328,11 @@ def main():
     exec_mode.add_argument("--sim", action="store_true", help="Simulation (Meshcat) mode")
     exec_mode.add_argument("--real", action="store_true", help="Real robot mode")
     parser.add_argument("--episode", type=int, default=VISUALIZE_EPISODE)
+    parser.add_argument("--repo-id", type=str, default=DEFAULT_DATASET_ID, help="Hugging Face repository ID")
+    parser.add_argument("--force-download", action="store_true", help="Force re-downloading the dataset from Hugging Face")
     args = parser.parse_args()
+
+    repo_id = args.repo_id
 
     import yaml
     config_path = Path(__file__).parent.parent / "config" / "robot_config.yaml"
@@ -357,26 +354,42 @@ def main():
     if args.real:
         connect_robot()
 
-    # Try local output path first, then cache
-    local_data_dir = Path(__file__).parent.parent / "outputs" / "datasets" / DATASET_ID.split("/")[-1] / "data"
-    cache_data_dir = Path.home() / ".cache" / "lerobot" / DATASET_ID / "data"
+    from lerobot.utils.constants import HF_LEROBOT_HOME
+    cache_root = HF_LEROBOT_HOME
+    data_dir = cache_root / repo_id / "data"
     
-    if local_data_dir.exists():
+    if args.force_download:
+        print(f"Force re-downloading dataset {repo_id}...")
+        from lerobot.datasets.lerobot_dataset import LeRobotDataset
+        LeRobotDataset(repo_id) # Default root handling nests correctly
+    
+    # Try local output path first, then cache
+    local_data_dir = Path(__file__).parent.parent / "outputs" / "datasets" / repo_id.split("/")[-1] / "data"
+    
+    if (local_data_dir.exists() and not args.force_download) and (any(local_data_dir.rglob("*.parquet"))):
         data_dir = local_data_dir
         print(f"Using local dataset at: {data_dir}")
     else:
-        data_dir = cache_data_dir
+        # Auto-download if files are missing
+        if not data_dir.exists() or not any(data_dir.rglob("*.parquet")):
+            print(f"Dataset not found at {data_dir}. Attempting to download...")
+            from lerobot.datasets.lerobot_dataset import LeRobotDataset
+            try:
+                LeRobotDataset(repo_id)
+            except Exception as e:
+                print(f"Download check failed: {e}")
+        
         print(f"Using cached dataset at: {data_dir}")
 
     parquet_files = sorted(data_dir.rglob("*.parquet"))
     if not parquet_files:
         raise FileNotFoundError(f"No parquet files found in {data_dir}")
 
-    print(f"Building trajectory for episode {args.episode}...")
+    print(f"Building trajectory (via IK) for episode {args.episode}...")
     joints_list, xyz_list = build_trajectory(parquet_files, args.episode, kinematics, is_real=args.real)
 
     if not joints_list:
-        print(f"Episode {args.episode} not found or has no observation.joint_positions data.")
+        print(f"Episode {args.episode} not found or failed to compute IK from observation.state.")
         return
 
     print(f"Loaded {len(joints_list)} frames.")
