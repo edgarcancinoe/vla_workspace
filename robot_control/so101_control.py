@@ -17,21 +17,13 @@ class SO101Control:
         'gripper':       1.74533,
     }
 
-    # Attends discrepancy between URDF and real robot (used for KINEMATICS)
-    POLARITIES = {
-        'shoulder_pan':   1.0,
-        'shoulder_lift': -1.0,
-        'elbow_flex':     1.0,
-        'wrist_flex':     1.0,
-        'wrist_roll':     1.0,
-        'gripper':        1.0,
-    }
 
     def __init__(self, urdf_path, target_frame_name="gripper_frame_link", active_joints=None, wrist_roll_offset=0.0, home_pose=None):
         self.urdf_path = urdf_path
         self.target_frame_name = target_frame_name
         self.active_joints = active_joints if active_joints is not None else self.JOINT_NAMES
         self.wrist_roll_offset = wrist_roll_offset
+
         self.home_pose = home_pose if home_pose is not None else {f"{n}.pos": 0.0 for n in self.JOINT_NAMES}
         self.kinematics = RobotKinematics(
             urdf_path=urdf_path,
@@ -39,73 +31,128 @@ class SO101Control:
             joint_names=self.active_joints,
         )
         self.trail_counter = 0
-
-    # ── Unit Conversions ──────────────────────────────────────────────────────
-    # Use polarities defaults to TRUE, as they are necessary to use the official URDF file for IK 
-    def motor_to_deg(self, motor_vals, use_polarities=True):
-        """Converts motor units [0-100] to degrees."""
-        motor_vals = np.asarray(motor_vals)
-        # Precompute limit constants in degrees
-        limits_deg = np.array([np.rad2deg(self.URDF_LIMITS_RAD[n]) for n in self.JOINT_NAMES])
         
-        if use_polarities:
-            polarities = np.array([self.POLARITIES[n] for n in self.JOINT_NAMES])
+        # Pre-calculate wrist roll offset in motor units for efficiency
+        # 1.0 degree = (100 / limit_deg) motor units
+        if "wrist_roll" in self.JOINT_NAMES:
+            limit_deg = np.rad2deg(self.URDF_LIMITS_RAD['wrist_roll'])
+            self._wrist_roll_offset_motor = (self.wrist_roll_offset / limit_deg) * 100.0
         else:
-            polarities = 1.0
-            
-        # Handle both 1D (6,) and 2D (N, 6) arrays
-        return (motor_vals / 100.0) * limits_deg * polarities
+            self._wrist_roll_offset_motor = 0.0
 
-    def deg_to_motor(self, deg_vals, use_polarities=True):
-        """Converts degrees to motor units [0-100]."""
+    # ── Internal Helpers ─────────────────────────────────────────────────────
+
+    def apply_wrist_roll_offset(self, motor_vals):
+        """Applies the wrist roll offset to the motor values (in [0-100] range)."""
+        if "wrist_roll" in self.JOINT_NAMES:
+            idx = self.JOINT_NAMES.index("wrist_roll")
+            out = np.asarray(motor_vals).copy()
+            out[idx] = np.clip(out[idx] + self._wrist_roll_offset_motor, -100.0, 100.0)
+            return out
+        return motor_vals
+
+    def remove_wrist_roll_offset(self, motor_vals):
+        """Removes the wrist roll offset from the motor values (in [0-100] range)."""
+        if "wrist_roll" in self.JOINT_NAMES:
+            idx = self.JOINT_NAMES.index("wrist_roll")
+            out = np.asarray(motor_vals).copy()
+            out[idx] = np.clip(out[idx] - self._wrist_roll_offset_motor, -100.0, 100.0)
+            return out
+        return motor_vals
+
+    def apply_wrist_roll_offset_deg(self, deg_vals):
+        """Applies the wrist roll offset to the joint degrees."""
+        if "wrist_roll" in self.JOINT_NAMES:
+            idx = self.JOINT_NAMES.index("wrist_roll")
+            out = np.asarray(deg_vals).copy()
+            out[idx] += self.wrist_roll_offset
+            return out
+        return deg_vals
+
+    def remove_wrist_roll_offset_deg(self, deg_vals):
+        """Removes the wrist roll offset from the joint degrees."""
+        if "wrist_roll" in self.JOINT_NAMES:
+            idx = self.JOINT_NAMES.index("wrist_roll")
+            out = np.asarray(deg_vals).copy()
+            out[idx] -= self.wrist_roll_offset
+            return out
+        return deg_vals
+
+
+    # ── Unit Conversions (Unit level only, no polarities) ───────────────────
+    
+    def motor_to_deg(self, motor_vals):
+        """Raw proportional conversion: [0-100] -> [0-limit_deg]."""
+        motor_vals = np.asarray(motor_vals)
+        limits_deg = np.array([np.rad2deg(self.URDF_LIMITS_RAD[n]) for n in self.JOINT_NAMES])
+        return (motor_vals / 100.0) * limits_deg
+
+    def deg_to_motor(self, deg_vals):
+        """Raw proportional conversion: [0-limit_deg] -> [0-100]."""
         deg_vals = np.asarray(deg_vals)
         limits_deg = np.array([np.rad2deg(self.URDF_LIMITS_RAD[n]) for n in self.JOINT_NAMES])
-        
-        if use_polarities:
-            polarities = np.array([self.POLARITIES[n] for n in self.JOINT_NAMES])
-        else:
-            polarities = 1.0
-            
-        val = (deg_vals / limits_deg) * 100.0 * polarities
+        val = (deg_vals / limits_deg) * 100.0
         return np.clip(val, -100.0, 100.0)
 
-    def motor_to_rad(self, motor_vals, use_polarities=True):
-        return np.deg2rad(self.motor_to_deg(motor_vals, use_polarities=use_polarities))
+    # ── Semantic Transformations (The "Cleaner" API) ─────────────────────────
 
-    def rad_to_motor(self, rad_vals, use_polarities=True):
-        return self.deg_to_motor(np.rad2deg(rad_vals), use_polarities=use_polarities)
+    def motor_to_urdf_deg(self, motor_vals):
+        """Converts motor units to the degrees expected by the URDF model."""
+        return self.motor_to_deg(motor_vals)
+
+    def urdf_deg_to_motor(self, urdf_deg):
+        """Converts URDF degrees back to raw motor units."""
+        return self.deg_to_motor(urdf_deg)
+
+    def motor_to_rad(self, motor_vals):
+        """Helper for visualization and physics engines."""
+        degs = self.motor_to_deg(motor_vals)
+        return np.deg2rad(degs)
+
+    def rad_to_motor(self, rad_vals):
+        """Helper for visualization and physics engines."""
+        degs = np.rad2deg(rad_vals)
+        return self.deg_to_motor(degs)
 
     # ── Forward & Inverse Kinematics ──────────────────────────────────────────
 
     def fk(self, motor_vals):
-        return self.kinematics.forward_kinematics(self.motor_to_deg(motor_vals))
+        """Forward kinematics for the current motor units."""
+        return self.kinematics.forward_kinematics(self.motor_to_urdf_deg(motor_vals))
 
     def fk_xyz(self, motor_vals):
         return self.fk(motor_vals)[:3, 3]
 
-    def fk_xyz_chunk(self, motor_chunk, use_polarities=True):
-        """Returns (N, 3) XYZ positions for a (N, 6) chunk of motor values."""
-        degs = self.motor_to_deg(motor_chunk, use_polarities=use_polarities)
-        return np.array([self.kinematics.forward_kinematics(d)[:3, 3] for d in degs])
+    def fk_pose(self, motor_vals):
+        """Returns (xyz, euler_xyz_deg) for the given motor units."""
+        from scipy.spatial.transform import Rotation as R
+        ee_pose = self.fk(motor_vals)
+        pos = ee_pose[:3, 3]
+        euler = R.from_matrix(ee_pose[:3, :3]).as_euler('xyz', degrees=True)
+        return pos, euler
 
-    def ik_motor(self, target_xyz, ref_pose_4x4, seed_motor):
+    def fk_xyz_chunk(self, motor_chunk):
+        """Returns (N, 3) XYZ positions for a (N, 6) chunk of motor values."""
+        urdf_degs = np.array([self.motor_to_urdf_deg(m) for m in motor_chunk])
+        return np.array([self.kinematics.forward_kinematics(d)[:3, 3] for d in urdf_degs])
+
+    def ik_motor(self, target_xyz, ref_pose_4x4, seed_motor, orientation_weight=0.0):
         desired = ref_pose_4x4.copy()
         desired[:3, 3] = target_xyz
-
         num_ik = len(self.active_joints)
 
-        result_deg = self.kinematics.inverse_kinematics(
-            current_joint_pos=self.motor_to_deg(seed_motor)[:num_ik],
+        result_urdf_deg = self.kinematics.inverse_kinematics(
+            current_joint_pos=self.motor_to_urdf_deg(seed_motor)[:num_ik],
             desired_ee_pose=desired,
             position_weight=1.0,
-            orientation_weight=0.0,
+            orientation_weight=orientation_weight,
         )
-        if np.any(np.isnan(result_deg)):
+        if np.any(np.isnan(result_urdf_deg)):
             return None
 
-        full_result_deg = self.motor_to_deg(seed_motor)
-        full_result_deg[:num_ik] = result_deg
-        return self.deg_to_motor(full_result_deg)
+        full_urdf_deg = self.motor_to_urdf_deg(seed_motor)
+        full_urdf_deg[:num_ik] = result_urdf_deg
+        return self.urdf_deg_to_motor(full_urdf_deg)
 
     @staticmethod
     def rot6d_to_mat(r6d: np.ndarray) -> np.ndarray:
@@ -125,7 +172,7 @@ class SO101Control:
         return np.column_stack([b1, b2, b3])
 
     def ik_motor_6d(self, target_xyz, target_rot6d, seed_motor,
-                    orientation_weight: float = 0.5) -> np.ndarray | None:
+                    orientation_weight: float = 0.1) -> np.ndarray | None:
         """Solve IK for a full 6D EEF target (position + orientation).
 
         Converts the rot6d prediction to a 4×4 target pose via Gram-Schmidt
@@ -149,50 +196,47 @@ class SO101Control:
         desired[:3, 3] = target_xyz
 
         num_ik = len(self.active_joints)
-        result_deg = self.kinematics.inverse_kinematics(
-            current_joint_pos=self.motor_to_deg(seed_motor)[:num_ik],
+        result_urdf_deg = self.kinematics.inverse_kinematics(
+            current_joint_pos=self.motor_to_urdf_deg(seed_motor)[:num_ik],
             desired_ee_pose=desired,
             position_weight=1.0,
             orientation_weight=orientation_weight,
         )
-        if np.any(np.isnan(result_deg)):
+        if np.any(np.isnan(result_urdf_deg)):
             return None
 
-        full_result_deg = self.motor_to_deg(seed_motor)
-        full_result_deg[:num_ik] = result_deg
-        return self.deg_to_motor(full_result_deg)
+        full_urdf_deg = self.motor_to_urdf_deg(seed_motor)
+        full_urdf_deg[:num_ik] = result_urdf_deg
+        return self.urdf_deg_to_motor(full_urdf_deg)
 
     # ── Hardware IO Helpers ──────────────────────────────────────────────────
+
+    def extract_motor_vals(self, observation):
+        """Extracts motor values from an observation dictionary [0-100 range]."""
+        vals = np.zeros(len(self.JOINT_NAMES))
+        for i, n in enumerate(self.JOINT_NAMES):
+            vals[i] = float(observation.get(f"{n}.pos", 0.0))
+        return vals
 
     def read_motor_real(self, robot):
         """Reads motor values from robot [0-100 range]."""
         obs = robot.get_observation()
-        vals = np.zeros(len(self.JOINT_NAMES))
-        for i, n in enumerate(self.JOINT_NAMES):
-            vals[i] = float(obs.get(f"{n}.pos", 0.0))
-        return vals
+        return self.extract_motor_vals(obs)
 
-    def read_deg_real(self, robot, ignore_offset=False):
-        """Reads joints in degrees, applying wrist roll offset."""
+    def read_deg_real(self, robot):
+        """Reads joints in physical degrees."""
         motor_vals = self.read_motor_real(robot)
-        deg_vals = self.motor_to_deg(motor_vals)
-        if not ignore_offset and "wrist_roll" in self.JOINT_NAMES:
-            idx = self.JOINT_NAMES.index("wrist_roll")
-            deg_vals[idx] -= self.wrist_roll_offset
-        return deg_vals
+        return self.motor_to_deg(motor_vals)
 
     def send_motor_real(self, robot, vals):
         """Sends motor values to robot [0-100 range]."""
         robot.send_action({f"{n}.pos": float(vals[i]) for i, n in enumerate(self.JOINT_NAMES)})
 
-    def send_deg_real(self, robot, deg_vals, ignore_offset=False):
-        """Sends joints in degrees, applying wrist roll offset."""
-        cmd_deg = deg_vals.copy()
-        if not ignore_offset and "wrist_roll" in self.JOINT_NAMES:
-            idx = self.JOINT_NAMES.index("wrist_roll")
-            cmd_deg[idx] += self.wrist_roll_offset
-        motor_vals = self.deg_to_motor(cmd_deg)
-        self.send_motor_real(robot, motor_vals)
+    def send_deg_real(self, robot, deg_vals, viz=None):
+        """Sends joints in physical degrees."""
+        # Physical degrees go to physical motor units (raw conversion)
+        motor_vals = self.deg_to_motor(deg_vals)
+        self.send_and_display(motor_vals, robot, viz)
 
     def robot_sleep(self, dt, robot=None):
         if robot:
@@ -204,6 +248,7 @@ class SO101Control:
         if robot:
             self.send_motor_real(robot, motor_vals)
         if viz:
+            # IMPORTANT: viz expects radians for Meshcat to match real arm
             viz.display(self.motor_to_rad(motor_vals))
 
     def sync_state(self, current_motor, robot=None):
@@ -241,11 +286,11 @@ class SO101Control:
 
     # ── Execution Loops (Hardware IO) ────────────────────────────────────────
 
-    def execute_joint_trajectory(self, robot, waypoints_deg, fps=30, ignore_offset=False):
+    def execute_joint_trajectory(self, robot, waypoints_deg, fps=30):
         """Sends a sequence of joint waypoints at a fixed rate."""
         next_tick = time.perf_counter()
         for deg in waypoints_deg:
-            self.send_deg_real(robot, deg, ignore_offset=ignore_offset)
+            self.send_deg_real(robot, deg)
             next_tick += 1.0 / fps
             precise_sleep(max(0.0, next_tick - time.perf_counter()))
 
@@ -292,34 +337,23 @@ class SO101Control:
 
     # ── High Level API ────────────────────────────────────────────────────────
 
-    def reset_to_home(self, robot, duration_s=3.0, fps=50, ignore_offset=False, viz=None):
+    def reset_to_home(self, robot, duration_s=3.0, fps=50, viz=None):
         """Moves robot to target defined in self.home_pose over duration_s seconds using Joint Interpolation."""
         print(f"Moving to home pose over {duration_s:.1f}s...")
         steps = max(1, int(round(duration_s * fps)))
         
-        if robot:
-            start_deg = self.read_deg_real(robot, ignore_offset=ignore_offset)
-        else:
-            # If no robot, we might be in simulation. Use 0s or current viz state?
-            # For simplicity, if robot is None, we assume we want to home the viz from its current state.
-            # But SO101Control doesn't track current state besides robot/viz calls.
-            # We'll default to starting from zeros if no robot.
-            start_deg = np.zeros(len(self.JOINT_NAMES))
-            
+        # We start from current PHYSICAL state
+        start_deg = self.read_deg_real(robot) if robot else np.zeros(len(self.JOINT_NAMES))
+        
         goal_deg = np.array([float(self.home_pose.get(f"{n}.pos", 0.0)) for n in self.JOINT_NAMES])
         
         waypoints = self.interpolate_joint(start_deg, goal_deg, steps)
         
-        # Execute the trajectory using normalized motor units
+        # Execute the trajectory 
         next_tick = time.perf_counter()
         for deg in waypoints:
-            cmd_deg = deg.copy()
-            if not ignore_offset and "wrist_roll" in self.JOINT_NAMES:
-                idx = self.JOINT_NAMES.index("wrist_roll")
-                cmd_deg[idx] += self.wrist_roll_offset
-            
-            motor_vals = self.deg_to_motor(cmd_deg)
-            self.send_and_display(motor_vals, robot, viz)
+            # send_deg_real handles the semantic raw conversion
+            self.send_deg_real(robot, deg, viz=viz)
             
             next_tick += 1.0 / fps
             precise_sleep(max(0.0, next_tick - time.perf_counter()))

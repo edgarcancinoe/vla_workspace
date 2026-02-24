@@ -38,17 +38,26 @@ class SO101Meshcat:
         self.viewer[name].set_object(g.Sphere(radius), g.MeshLambertMaterial(color=color_hex))
         self.viewer[name].set_transform(tf.translation_matrix(xyz))
 
+    def add_axes(self, name, xyz, R, length=0.02):
+        """Draw RGB X/Y/Z orientation axes from xyz given a 3×3 rotation matrix."""
+        colors = [0xff2222, 0x22ff22, 0x2222ff]   # X=red  Y=green  Z=blue
+        for i, color in enumerate(colors):
+            tip = xyz + R[:, i] * length
+            self.add_line(f"{name}/ax_{i}", xyz, tip, color_hex=color, thickness=0.001)
+
     def add_line(self, name, p1, p2, color_hex=0xffa500, thickness=0.002):
         """Adds a debug line between two points."""
         if self.viewer is None: return
-        diff = p2 - p1
+        diff = np.asarray(p2, dtype=float) - np.asarray(p1, dtype=float)
         L = np.linalg.norm(diff)
         if L < 1e-6: return
-        z = np.array([0., 0., 1.])
-        axis = np.cross(z, diff / L)
-        ang = np.arccos(np.clip(np.dot(z, diff / L), -1, 1))
-        R = tf.rotation_matrix(ang, axis) if np.linalg.norm(axis) > 1e-6 else np.eye(4)
-        
+        # Meshcat's Cylinder local axis is Y — rotate Y to diff direction
+        y   = np.array([0., 1., 0.])
+        d   = diff / L
+        ax  = np.cross(y, d)
+        ang = np.arccos(np.clip(np.dot(y, d), -1.0, 1.0))
+        R   = tf.rotation_matrix(ang, ax) if np.linalg.norm(ax) > 1e-6 else np.eye(4)
+
         self.viewer[name].set_object(
             g.Cylinder(float(L), float(thickness)),
             g.MeshLambertMaterial(color=color_hex)

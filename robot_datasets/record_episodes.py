@@ -1,5 +1,8 @@
-import yaml
+import json
+import sys
 import argparse
+import pandas as pd
+import yaml
 from pathlib import Path
 from lerobot.cameras.opencv.configuration_opencv import OpenCVCameraConfig
 from lerobot.datasets.lerobot_dataset import LeRobotDataset
@@ -12,7 +15,6 @@ from lerobot.utils.control_utils import init_keyboard_listener
 from lerobot.utils.utils import log_say
 from lerobot.utils.visualization_utils import init_rerun
 from lerobot.scripts.lerobot_record import record_loop
-import sys
 from lerobot.processor import make_default_processors
 
 # Add project root to path to find utils
@@ -27,7 +29,7 @@ with open(config_path, "r") as f:
 CAMERA_CONFIG_MAP = config_data.get("cameras", {})
 RECTIFY_MAP = {name: info.get("rectify", False) for name, info in CAMERA_CONFIG_MAP.items()}
 
-NUM_EPISODES = 50
+NUM_EPISODES = 52
 FPS = 30
 EPISODE_TIME_SEC = 30
 RESET_TIME_SEC = 9
@@ -43,11 +45,6 @@ START_FROM_SCRATCH = False
 RESUME_DATASET = True
 
 assert not (START_FROM_SCRATCH and RESUME_DATASET), "Cannot start from scratch and resume dataset at the same time."
-
-import json
-from pathlib import Path
-import pandas as pd
-
 
 def _read_all_parquets(pq_dir: Path) -> pd.DataFrame:
     files = sorted(pq_dir.rglob("*.parquet"))
@@ -195,7 +192,12 @@ def main():
     robot_config = SO100FollowerConfig(
         id=config_data.get("robot", {}).get("name", "my_awesome_follower_arm"),
         cameras={
-            name: OpenCVCameraConfig(index_or_path=info["id"], width=640, height=480, fps=FPS)
+            name: OpenCVCameraConfig(
+                index_or_path=info["id"], 
+                width=info.get("width", 640), 
+                height=info.get("height", 480), 
+                fps=FPS
+            )
             for name, info in CAMERA_CONFIG_MAP.items()
         },
         port=FOLLOWER_PORT,
@@ -272,19 +274,21 @@ def main():
     import numpy as np
     
     WRIST_ROLL_OFFSET_DEG = config_data.get("robot", {}).get("wrist_roll_offset", 0.0)
-    limit_deg = np.rad2deg(SO101Control.URDF_LIMITS_RAD['wrist_roll'])
-    WRIST_ROLL_OFFSET_MOTOR = (WRIST_ROLL_OFFSET_DEG / limit_deg) * 100.0
+    URDF_PATH = config_data.get("robot", {}).get("urdf_path")
+    home_pose = config_data.get("robot", {}).get("home_pose")
+    control = SO101Control(urdf_path=URDF_PATH, wrist_roll_offset=WRIST_ROLL_OFFSET_DEG, home_pose=home_pose)
     
-    print(f"Applying Wrist Roll Offset: {WRIST_ROLL_OFFSET_DEG}° -> {WRIST_ROLL_OFFSET_MOTOR:.2f} motor units")
+    print(f"Applying Wrist Roll Offset: {WRIST_ROLL_OFFSET_DEG}° via so101 control helper")
 
     original_get_action = teleop.get_action
     
     def patched_get_action():
         action = original_get_action()
-        if "wrist_roll.pos" in action:
-            new_val = action["wrist_roll.pos"] + WRIST_ROLL_OFFSET_MOTOR
-            # Clamp to range [-100, 100] (assuming standard LeRobot range)
-            action["wrist_roll.pos"] = max(min(new_val, 100.0), -100.0)
+        # Apply wrist roll offset via control helper
+        motor_vals = np.array([action[f"{n}.pos"] for n in control.JOINT_NAMES])
+        motor_vals = control.apply_wrist_roll_offset(motor_vals)
+        for i, n in enumerate(control.JOINT_NAMES):
+            action[f"{n}.pos"] = float(motor_vals[i])
         return action
 
     teleop.get_action = patched_get_action

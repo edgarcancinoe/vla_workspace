@@ -29,7 +29,6 @@ from tqdm import tqdm
 from lerobot.cameras.opencv.configuration_opencv import OpenCVCameraConfig
 from lerobot.datasets.lerobot_dataset import LeRobotDataset
 from lerobot.datasets.utils import hw_to_dataset_features
-from lerobot.model.kinematics import RobotKinematics
 from lerobot.policies.xvla.utils import mat_to_rotate6d
 from lerobot.processor import make_default_processors
 from lerobot.robots.so100_follower.config_so100_follower import SO100FollowerConfig
@@ -55,25 +54,24 @@ with open(config_path, "r") as f:
 CAMERA_CONFIG_MAP = config_data.get("cameras", {})
 RECTIFY_MAP = {name: info.get("rectify", False) for name, info in CAMERA_CONFIG_MAP.items()}
 
-NUM_EPISODES = 50
+NUM_EPISODES = 2
 FPS = 30
 EPISODE_TIME_SEC = 30
 RESET_TIME_SEC = 9
 TASK_DESCRIPTION = "Pick up orange cube and place inside white box."
 
 HF_USER = "edgarcancinoe"
-HF_REPO_ID = "soarm101_pickplace_front_6d"
+HF_REPO_ID = "soarm101_pickplace_front_eef"
 
 URDF_PATH = config_data.get("robot", {}).get("urdf_path")
 if not URDF_PATH:
     raise ValueError("Error: 'urdf_path' not found in config/robot_config.yaml.")
-JOINT_NAMES = ["shoulder_pan", "shoulder_lift", "elbow_flex", "wrist_flex", "wrist_roll", "gripper"]
 EEF_FEATURE_NAMES = ["x", "y", "z", "rot6d_0", "rot6d_1", "rot6d_2", "rot6d_3", "rot6d_4", "rot6d_5", "gripper"]
 
 DATA_DIR = Path(__file__).parent.parent / "outputs" / "datasets" / HF_REPO_ID
 
-START_FROM_SCRATCH = False
-RESUME_DATASET = True
+START_FROM_SCRATCH = True
+RESUME_DATASET = False
 
 assert not (START_FROM_SCRATCH and RESUME_DATASET), (
     "Cannot start from scratch and resume dataset at the same time."
@@ -168,11 +166,12 @@ def patch_robot_for_rectification(robot) -> None:
 
 def _compute_stats(data_list: list) -> dict:
     arr = np.array(data_list, dtype=np.float32)
+    ddof = 1 if len(arr) > 1 else 0
     return {
         "min": arr.min(axis=0).tolist(),
         "max": arr.max(axis=0).tolist(),
         "mean": arr.mean(axis=0).tolist(),
-        "std": arr.std(axis=0, ddof=1).tolist(),
+        "std": arr.std(axis=0, ddof=ddof).tolist(),
         "count": [len(arr)],
         "q01": np.percentile(arr, 1, axis=0).tolist(),
         "q10": np.percentile(arr, 10, axis=0).tolist(),
@@ -185,7 +184,6 @@ def _compute_stats(data_list: list) -> dict:
 def transform_dataset_to_eef(
     root: Path,
     so101: SO101Control,
-    kinematics: RobotKinematics,
 ) -> None:
     """
     Rewrites every parquet under root/data in-place, replacing:
@@ -224,20 +222,46 @@ def transform_dataset_to_eef(
         has_action = "action" in df.columns
 
         for i in tqdm(range(total_frames), desc=parquet_path.name, leave=False):
-            state = df.iloc[i]["observation.state"]
-            state_deg = np.rad2deg(so101.motor_to_rad(state))
-            T = kinematics.forward_kinematics(state_deg)
-            eef_states.append(
-                np.concatenate([T[:3, 3], mat_to_rotate6d(T[:3, :3]), [state[-1]]])
-            )
+            # SOURCE SELECTION:
+            # If the dataset was already transformed, the original 6D joints are in 
+            # 'observation.joint_positions'. Otherwise, they are in 'observation.state'.
+            if "observation.joint_positions" in df.columns:
+                state_joints = df.iloc[i]["observation.joint_positions"]
+            else:
+                state_joints = df.iloc[i]["observation.state"]
+            
+            # If joints are 6D, compute FK. If already 10D, keep as is (idempotency).
+            if len(state_joints) == 6:
+                state_deg = np.rad2deg(so101.motor_to_urdf_deg(state_joints))
+                T = so101.kinematics.forward_kinematics(state_deg)
+                eef_states.append(
+                    np.concatenate([T[:3, 3], mat_to_rotate6d(T[:3, :3]), [state_joints[-1]]])
+                )
+                
+            elif len(state_joints) == 10:
+                # Fallback: if we only have 10D state, we can't re-compute FK accurately without joints,
+                # but we can preserve the existing EEF state.
+                eef_states.append(state_joints)
+            else:
+                print(f" Warning: frame {i} has unexpected state shape {len(state_joints)}, skipping.")
+                eef_states.append(state_joints)
 
             if has_action:
-                action = df.iloc[i]["action"]
-                action_deg = np.rad2deg(so101.motor_to_rad(action))
-                T_act = kinematics.forward_kinematics(action_deg)
-                eef_actions.append(
-                    np.concatenate([T_act[:3, 3], mat_to_rotate6d(T_act[:3, :3]), [action[-1]]])
-                )
+                if "action_joints" in df.columns:
+                    action_joints = df.iloc[i]["action_joints"]
+                else:
+                    action_joints = df.iloc[i]["action"]
+
+                if len(action_joints) == 6:
+                    action_deg = np.rad2deg(so101.motor_to_rad(action_joints))
+                    T_act = so101.kinematics.forward_kinematics(action_deg)
+                    eef_actions.append(
+                        np.concatenate([T_act[:3, 3], mat_to_rotate6d(T_act[:3, :3]), [action_joints[-1]]])
+                    )
+                elif len(action_joints) == 10:
+                    eef_actions.append(action_joints)
+                else:
+                    eef_actions.append(action_joints)
 
         # Build replacement table ----------------------------------------
         data_out: dict = {}
@@ -285,13 +309,20 @@ def transform_dataset_to_eef(
         with open(info_path) as f:
             info_dict = json.load(f)
         if "features" in info_dict:
-            if "observation.state" in info_dict["features"]:
+            # Only update if observation.state is still 6D
+            if (
+                "observation.state" in info_dict["features"] 
+                and info_dict["features"]["observation.state"]["shape"] == [6]
+            ):
                 info_dict["features"]["observation.joint_positions"] = (
                     info_dict["features"]["observation.state"].copy()
                 )
                 info_dict["features"]["observation.state"]["shape"] = [10]
                 info_dict["features"]["observation.state"]["names"] = EEF_FEATURE_NAMES
-            if "action" in info_dict["features"]:
+            if (
+                "action" in info_dict["features"] 
+                and info_dict["features"]["action"]["shape"] == [6]
+            ):
                 info_dict["features"]["action_joints"] = info_dict["features"]["action"].copy()
                 info_dict["features"]["action"]["shape"] = [10]
                 info_dict["features"]["action"]["names"] = EEF_FEATURE_NAMES
@@ -310,13 +341,15 @@ def transform_dataset_to_eef(
         with open(features_path) as f:
             feat_dict = json.load(f)
         if "observation.state" in feat_dict:
-            feat_dict["observation.joint_positions"] = feat_dict["observation.state"].copy()
-            feat_dict["observation.state"]["shape"] = [10]
-            feat_dict["observation.state"]["names"] = EEF_FEATURE_NAMES
+            if feat_dict["observation.state"]["shape"] == [6]:
+                feat_dict["observation.joint_positions"] = feat_dict["observation.state"].copy()
+                feat_dict["observation.state"]["shape"] = [10]
+                feat_dict["observation.state"]["names"] = EEF_FEATURE_NAMES
         if "action" in feat_dict:
-            feat_dict["action_joints"] = feat_dict["action"].copy()
-            feat_dict["action"]["shape"] = [10]
-            feat_dict["action"]["names"] = EEF_FEATURE_NAMES
+            if feat_dict["action"]["shape"] == [6]:
+                feat_dict["action_joints"] = feat_dict["action"].copy()
+                feat_dict["action"]["shape"] = [10]
+                feat_dict["action"]["names"] = EEF_FEATURE_NAMES
         for k in [
             "observation.robot_state.eef.mat",
             "observation.robot_state.eef.pos",
@@ -332,16 +365,109 @@ def transform_dataset_to_eef(
         with open(stats_path) as f:
             stats_dict = json.load(f)
         if "observation.state" in stats_dict and global_eef_states:
-            stats_dict["observation.joint_positions"] = stats_dict["observation.state"].copy()
+            # stats_dict["observation.state"]["min"] is a list. If len is 6, it's joint stats.
+            if len(stats_dict["observation.state"]["min"]) == 6:
+                stats_dict["observation.joint_positions"] = stats_dict["observation.state"].copy()
             stats_dict["observation.state"] = _compute_stats(global_eef_states)
         if "action" in stats_dict and global_eef_actions:
-            stats_dict["action_joints"] = stats_dict["action"].copy()
+            if len(stats_dict["action"]["min"]) == 6:
+                stats_dict["action_joints"] = stats_dict["action"].copy()
             stats_dict["action"] = _compute_stats(global_eef_actions)
         with open(stats_path, "w") as f:
             json.dump(stats_dict, f, indent=4)
         print("Updated meta/stats.json.")
 
     print("EEF transformation complete.\n")
+
+
+def revert_dataset_to_6d(root: Path) -> None:
+    """
+    Reverts a 10D EEF dataset back to 6D joints by swapping columns
+    and updating metadata. This allows resuming a previously converted dataset.
+    """
+    root = Path(root)
+    meta_dir = root / "meta"
+    info_path = meta_dir / "info.json"
+    if not info_path.exists():
+        return
+
+    with open(info_path, "r") as f:
+        info_dict = json.load(f)
+
+    # Only revert if currently 10D
+    if info_dict.get("features", {}).get("observation.state", {}).get("shape") != [10]:
+        return
+
+    print(f"\n[RESUME] Detected 10D EEF dataset at {root.name}. Reverting to 6D joints for recording session...")
+
+    # 1. Update Parquet files
+    data_dir = root / "data"
+    parquet_files = sorted(data_dir.rglob("*.parquet"))
+    for pq_path in parquet_files:
+        table = pq.read_table(pq_path)
+        df = table.to_pandas()
+        
+        if "observation.joint_positions" not in df.columns:
+            continue
+            
+        data_out = {}
+        schema_fields = []
+        
+        # Restore observation.state from joint_positions
+        obs_arr = np.array(df["observation.joint_positions"].tolist(), dtype=np.float32).flatten()
+        data_out["observation.state"] = pa.FixedSizeListArray.from_arrays(obs_arr, 6)
+        schema_fields.append(pa.field("observation.state", pa.list_(pa.float32(), 6)))
+        
+        # Restore action from action_joints if it exists
+        if "action_joints" in df.columns:
+            act_arr = np.array(df["action_joints"].tolist(), dtype=np.float32).flatten()
+            data_out["action"] = pa.FixedSizeListArray.from_arrays(act_arr, 6)
+            schema_fields.append(pa.field("action", pa.list_(pa.float32(), 6)))
+        elif "action" in df.columns:
+            data_out["action"] = pa.array(df["action"])
+            schema_fields.append(pa.field("action", table.schema.field("action").type))
+
+        # Copy other columns, skipping the EEF columns we moved back
+        for col in df.columns:
+            if col not in ["observation.state", "action", "observation.joint_positions", "action_joints"]:
+                data_out[col] = pa.array(df[col])
+                schema_fields.append(pa.field(col, table.schema.field(col).type))
+        
+        pq.write_table(pa.Table.from_pydict(data_out, schema=pa.schema(schema_fields)), pq_path)
+
+    # 2. Update info.json
+    if "observation.joint_positions" in info_dict["features"]:
+        info_dict["features"]["observation.state"] = info_dict["features"].pop("observation.joint_positions")
+    if "action_joints" in info_dict["features"]:
+        info_dict["features"]["action"] = info_dict["features"].pop("action_joints")
+    with open(info_path, "w") as f:
+        json.dump(info_dict, f, indent=4)
+
+    # 3. Update features.json
+    features_path = meta_dir / "features.json"
+    if features_path.exists():
+        with open(features_path, "r") as f:
+            feat_dict = json.load(f)
+        if "observation.joint_positions" in feat_dict:
+            feat_dict["observation.state"] = feat_dict.pop("observation.joint_positions")
+        if "action_joints" in feat_dict:
+            feat_dict["action"] = feat_dict.pop("action_joints")
+        with open(features_path, "w") as f:
+            json.dump(feat_dict, f, indent=4)
+
+    # 4. Update stats.json
+    stats_path = meta_dir / "stats.json"
+    if stats_path.exists():
+        with open(stats_path, "r") as f:
+            stats_dict = json.load(f)
+        if "observation.joint_positions" in stats_dict:
+            stats_dict["observation.state"] = stats_dict.pop("observation.joint_positions")
+        if "action_joints" in stats_dict:
+            stats_dict["action"] = stats_dict.pop("action_joints")
+        with open(stats_path, "w") as f:
+            json.dump(stats_dict, f, indent=4)
+
+    print("Reversed to 6D joints successfully.\n")
 
 
 # ─── Main ─────────────────────────────────────────────────────────────────
@@ -372,11 +498,6 @@ def main():
     wrist_offset = float(config_data.get("robot", {}).get("wrist_roll_offset", 0.0))
     home_pose = config_data.get("robot", {}).get("home_pose")
     so101 = SO101Control(urdf_path=URDF_PATH, wrist_roll_offset=wrist_offset, home_pose=home_pose)
-    kinematics = RobotKinematics(
-        urdf_path=URDF_PATH,
-        target_frame_name="gripper_frame_link",
-        joint_names=JOINT_NAMES,
-    )
 
     # --- Robot / teleop setup -----------------------------------------------
     robot_config = SO100FollowerConfig(
@@ -412,6 +533,7 @@ def main():
 
     if RESUME_DATASET:
         print(f"Resuming dataset from {DATA_DIR}")
+        revert_dataset_to_6d(DATA_DIR)
         dataset = LeRobotDataset(repo_id=f"{HF_USER}/{HF_REPO_ID}", root=DATA_DIR)
         episode_idx = dataset.num_episodes
     else:
@@ -434,17 +556,16 @@ def main():
     teleop.connect()
 
     # --- Wrist roll offset patch --------------------------------------------
-    limit_deg = np.rad2deg(SO101Control.URDF_LIMITS_RAD["wrist_roll"])
-    wrist_offset_motor = (wrist_offset / limit_deg) * 100.0
-    print(f"Applying Wrist Roll Offset: {wrist_offset}° -> {wrist_offset_motor:.2f} motor units")
-
+    print(f"Applying Wrist Roll Offset: {wrist_offset}° via so101 control helper")
     original_get_action = teleop.get_action
 
     def patched_get_action():
         action = original_get_action()
-        if "wrist_roll.pos" in action:
-            new_val = action["wrist_roll.pos"] + wrist_offset_motor
-            action["wrist_roll.pos"] = max(min(new_val, 100.0), -100.0)
+        # Apply wrist roll offset via control helper
+        motor_vals = np.array([action[f"{n}.pos"] for n in so101.JOINT_NAMES])
+        motor_vals = so101.apply_wrist_roll_offset(motor_vals)
+        for i, n in enumerate(so101.JOINT_NAMES):
+            action[f"{n}.pos"] = float(motor_vals[i])
         return action
 
     teleop.get_action = patched_get_action
@@ -507,7 +628,7 @@ def main():
 
     # --- Post-process: convert joints → 6D EEF ------------------------------
     log_say("Converting joint positions to 6D EEF representation...")
-    transform_dataset_to_eef(DATA_DIR, so101, kinematics)
+    transform_dataset_to_eef(DATA_DIR, so101)
 
     # --- Push to hub --------------------------------------------------------
     if args.push:

@@ -148,7 +148,9 @@ robot = None
 viz    = None
 
 def meshcat_display(motor_vals):
-    if viz: viz.display(kinematics.motor_to_rad(motor_vals))
+    if viz:
+        # Show robot state
+        viz.display(kinematics.motor_to_rad(motor_vals))
 
 def add_sphere(name, xyz, color_hex, radius=0.002):
     if viz: viz.add_sphere(name, xyz, color_hex, radius)
@@ -175,6 +177,8 @@ def main():
                         default="square", help="Motion pattern (default: square)")
     parser.add_argument("--scale", type=float, default=SCALE,
                         help=f"Pattern scale in metres (default: {SCALE})")
+    parser.add_argument("--orientation-weight", type=float, default=0.0,
+                        help="IK orientation weight (default: 0.0)")
     parser.add_argument("--no-viz", action="store_true",
                         help="Disable Meshcat visualization (real mode only)")
     args = parser.parse_args()
@@ -205,6 +209,8 @@ def main():
     if not (args.real and args.no_viz):
         viz = SO101Meshcat(urdf_path=URDF_PATH)
         print("Meshcat visualization started.")
+        # Add a static world origin reference frame
+        viz.add_axes("world_origin", np.zeros(3), np.eye(3), length=0.15)
 
     # ── Kinematics ─────────────────────────────────────────────────────────────
     kinematics = SO101Control(urdf_path=URDF_PATH, wrist_roll_offset=WRIST_ROLL_OFFSET_DEG, home_pose=HOME_POSE)
@@ -240,7 +246,7 @@ def main():
             time.sleep(1.0)
             current = kinematics.read_motor_real(robot)
         else:
-            current = kinematics.deg_to_motor(START_POSE_DEG, use_polarities=True)
+            current = kinematics.deg_to_motor(START_POSE_DEG)
             meshcat_display(current)
             time.sleep(1.0)
 
@@ -261,7 +267,7 @@ def main():
 
         # ── IK sanity check on first & last waypoint ───────────────────────────────
         for label, pt in [("start", waypoints[0]), ("end", waypoints[-1])]:
-            m = kinematics.ik_motor(pt, ref_pose, HOME_MOTOR)
+            m = kinematics.ik_motor(pt, ref_pose, HOME_MOTOR, orientation_weight=args.orientation_weight)
             if m is None:
                 print(f"  WARNING: IK failed for {label} waypoint {pt.round(4)}")
             else:

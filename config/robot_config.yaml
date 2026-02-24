@@ -6,10 +6,10 @@ robot:
   wrist_roll_offset: -90.0 # Degrees
   home_pose: # Degrees
     shoulder_pan.pos: 0.0
-    shoulder_lift.pos: 100.0
+    shoulder_lift.pos: -100.0
     elbow_flex.pos: 100.0
     wrist_flex.pos: 50.0
-    wrist_roll.pos: 0
+    wrist_roll.pos: -90
     gripper.pos: 0.0
 
 leader:
@@ -20,6 +20,10 @@ cameras:
   main: 
     id: 0
     rectify: false
+    width: 640
+    height: 360
   secondary: 
     id: 1
     rectify: false
+    width: 640
+    height: 360

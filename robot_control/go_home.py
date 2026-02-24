@@ -3,7 +3,7 @@ import yaml
 import sys
 import argparse
 from pathlib import Path
-
+import numpy as np
 # Add project root and lerobot root to sys.path
 WORKSPACE_ROOT = Path(__file__).resolve().parent.parent
 LEROBOT_ROOT = WORKSPACE_ROOT.parent / "repos" / "lerobot" / "src"
@@ -59,7 +59,6 @@ def main():
     calibration_dir = Path(calibration_dir)
 
     robot_id = robot_cfg.get("name", "arm_follower")
-    wrist_roll_offset = robot_cfg.get("wrist_roll_offset", 0.0)
     
     print(f"Initializing Robot on {port} with calibration '{robot_id}'...")
     follower_config = SO101FollowerConfig(id=robot_id, port=port, calibration_dir=calibration_dir)
@@ -67,13 +66,14 @@ def main():
     
     try:
         robot.connect(calibrate=args.calibrate)
-        control = SO101Control(urdf_path=URDF_PATH, wrist_roll_offset=wrist_roll_offset, home_pose=home_pose)
+        control = SO101Control(urdf_path=URDF_PATH, home_pose=home_pose)
         
         # Apply safety limits if needed
         # control.configure_safety(robot)
 
         print("Starting 'Go Home' sequence...")
-        print(f"Target Home Pose (Degrees): {home_pose}")
+        print(f"Target Home Pose (Kinematic Degrees): {home_pose}")
+        
         control.reset_to_home(robot, duration_s=4.0)
         print("Sequence complete.")
         

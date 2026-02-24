@@ -85,15 +85,15 @@ def run_real(q_deg_list, kinematics):
     time.sleep(1.0)
 
     print("Moving to start position...")
-    start_deg = kinematics.read_deg_real(robot, ignore_offset=True)
+    start_deg = kinematics.read_deg_real(robot)
     steps = max(1, int(round(3.0 * 30.0))) # 3 seconds to start pos at 30 fps
     waypoints_start = kinematics.interpolate_joint(start_deg, q_deg_list[0], steps)
-    kinematics.execute_joint_trajectory(robot, waypoints_start, fps=30.0, ignore_offset=True)
+    kinematics.execute_joint_trajectory(robot, waypoints_start, fps=30.0)
     time.sleep(1.0)
 
     print("Executing dataset trajectory...")
     try:
-        kinematics.execute_joint_trajectory(robot, q_deg_list, fps=30.0, ignore_offset=True)
+        kinematics.execute_joint_trajectory(robot, q_deg_list, fps=30.0)
         print("Trajectory complete.")
     except KeyboardInterrupt:
         print("\n[SIGINT caught] Stopping early!")
@@ -179,7 +179,7 @@ def main():
         else:
             # We only need radians for Meshcat simulation
             q_motor_chunk[:, 4] *= -1             
-            q_rad_chunk = kinematics.motor_to_rad(q_motor_chunk, use_polarities=False)
+            q_rad_chunk = kinematics.motor_to_rad(q_motor_chunk)
             q_rad_list.extend(q_rad_chunk)
 
     final_list = q_deg_list if args.real else q_rad_list

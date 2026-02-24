@@ -4,6 +4,11 @@ import yaml
 import numpy as np
 from functools import partial
 from pathlib import Path
+# Add lerobot to path
+lerobot_path = Path(__file__).parent.parent.parent / "repos" / "lerobot" / "src"
+if lerobot_path.exists():
+    sys.path.append(str(lerobot_path))
+
 from lerobot.utils.utils import log_say as lerobot_log_say
 from lerobot.processor import make_default_processors
 from lerobot.scripts.lerobot_record import record_loop
@@ -50,6 +55,7 @@ with open(config_path, "r") as f:
     config_data = yaml.safe_load(f)
 
 WRIST_ROLL_OFFSET = config_data.get("robot", {}).get("wrist_roll_offset", 0.0)
+WRIST_ROLL_OFFSET = 0
 URDF_PATH         = config_data.get("robot", {}).get("urdf_path")
 CALIBRATION_DIR = config_data["robot"].get("calibration_dir")
 FOLLOWER_PORT = config_data["robot"]["port"]
@@ -58,9 +64,11 @@ HOME_POSE = config_data["robot"].get("home_pose", {})
 CAMERA_CONFIG_MAP = config_data.get("cameras", {})
 
 # --- Policy ---
-POLICY_PATH = "edgarcancinoe/xvla-base_finetuned_soarm101_pickplace_orange_050e_fw_open"
+# POLICY_PATH = "edgarcancinoe/xvla-base_finetuned_soarm101_pickplace_orange_050e_fw_open"
 # POLICY_PATH = "edgarcancinoe/xvla-base_finetuned_soarm101_pickplace_orange_240e_fw_closed"
-# POLICY_PATH = "edgarcancinoe/xvla-base_finetuned_soarm101_pickplace_6d"
+
+# 6D
+POLICY_PATH = "edgarcancinoe/xvla-base_finetuned_soarm101_pickplace_6d"
 # POLICY_PATH = "edgarcancinoe/xvla-base_finetuned_soarm101_pickplace_6d_240e_fw_closed"
 
 POLICY_TYPE = "xvla" # "xvla" | "smolvla"
@@ -70,13 +78,13 @@ TASK_DESCRIPTION = "Pick up orange cube and place inside white box."
 # Pipeline selection: None (default) | 'xvla_default'
 POLICY_PIPELINE = None 
 # --- Voice ---
-USE_VOICE                  = True
+USE_VOICE          = True
 
 # --- SmolVLA
 CHUNK_SIZE         = 30
 N_ACTION_STEPS     = 30
 MAX_ACTION_TOKENS  = None
-POLICY_DELAY               = 0
+POLICY_DELAY       = 0.75
 
 # --- XVLA
 NUM_IMAGE_VIEWS            = 3
@@ -91,20 +99,31 @@ EPISODE_TIME_SEC           = 60
 HF_USER                    = "edgarcancinoe"
 EVAL_DATASET_NAME          = "eval_" + POLICY_PATH.split("/")[-1] 
 DATA_DIR                   = Path(__file__).parent.parent / "outputs" / "datasets" / EVAL_DATASET_NAME
-
-START_FROM_SCRATCH         = False
+START_FROM_SCRATCH         = True
 RESUME_DATASET             = False
 OVERWRITE_DATASET          = True  # Set True to delete and recreate the dataset on every run
 
 # --- Robot & Setup
-STARTING_POSITION = { "shoulder_pan.pos": 0.0, "shoulder_lift.pos": -80.0, "elbow_flex.pos": 100.0, "wrist_flex.pos": 30.0, "wrist_roll.pos": 40.0}
 CAMERA_MAPPING = {
     "xvla": {"main": "image", "secondary": "image2"},
     "default": {"main": "main", "secondary": "secondary"}
 }
+ACTIVE_CAMERA_MAPPING = CAMERA_MAPPING.get(POLICY_TYPE, CAMERA_MAPPING["default"])
 STARTING_POSITION_DURATION_S = 5
 HOME_DURATION_S = STARTING_POSITION_DURATION_S
 HOME_FPS = FPS
+
+# --- Meshcat Visualization ---
+USE_MESHCAT_VIZ                = True   # Set False to disable
+
+# --- Rerun Visualization ---
+USE_RERUN                      = False  # Set True to enable Rerun telemetry
+
+# --- Dry Run (visualization only, no robot commands) ---
+# Set True to run policy inference + Meshcat visualization WITHOUT sending any
+# commands to the real robot.  Useful for inspecting predicted trajectories
+# before committing to execution.  Robot is still connected for reading state.
+DRY_RUN                        = True
 
 # ─── EEF state feature names (must match training dataset schema) ─────────────
 EEF_STATE_NAMES = [
@@ -116,7 +135,14 @@ _EEF_KEY_SET = {"x", "y", "z", "gripper"}
 
 # Build config objects
 RECTIFY_MAP = {name: info.get("rectify", False) for name, info in CAMERA_CONFIG_MAP.items()}
-CAMERAS = {name: OpenCVCameraConfig(index_or_path=info["id"], width=640, height=480, fps=FPS) for name, info in CAMERA_CONFIG_MAP.items()}
+CAMERAS = {
+    name: OpenCVCameraConfig(
+        index_or_path=info["id"], 
+        width=info.get("width", 640), 
+        height=info.get("height", 480), 
+        fps=FPS
+    ) for name, info in CAMERA_CONFIG_MAP.items()
+}
 
 validate_configuration()
 
@@ -126,15 +152,47 @@ validate_configuration()
 # Utility to log and speak, respecting the USE_VOICE toggle
 log_say = partial(lerobot_log_say, play_sounds=USE_VOICE)
 
+def init_meshcat():
+    """Initialize SO101Meshcat for robot-pose + trajectory visualization.
+    Returns None (gracefully) if the package is unavailable or URDF is missing."""
+    try:
+        from robot_sim.so101_meshcat import SO101Meshcat
+        viz = SO101Meshcat(urdf_path=URDF_PATH)
+        print("[x] Meshcat visualizer started.")
+        return viz
+    except Exception as e:
+        print(f"[!] Meshcat init failed, continuing without visualization: {e}")
+        return None
+
 # > Custom get_observation():
 #   1. Rectify images based on config
 #   2. Inject EEF State if required
-def set_custom_get_observation(robot, so101: SO101Control = None, include_eef_state: bool = False):
+def set_custom_get_observation(robot, so101: SO101Control = None, include_eef_state: bool = False, dry_run: bool = False):
     
     base_obs_func = robot.get_observation
+    
+    if dry_run:
+        # Initial virtual state from physical robot (one-time read)
+        # or use home pose if preferred. Let's do one-time read.
+        init_obs = base_obs_func()
+        robot._virtual_motor = np.array([float(init_obs.get(f"{n}.pos", 0.0)) for n in so101.JOINT_NAMES])
 
     def patched_get_observation():
-        observation = base_obs_func()
+        if dry_run:
+            if not hasattr(robot, "_virtual_motor") or robot._virtual_motor is None:
+                robot._virtual_motor = np.zeros(len(so101.JOINT_NAMES))
+            observation = {f"{n}.pos": float(robot._virtual_motor[i]) for i, n in enumerate(so101.JOINT_NAMES)}
+            
+            import torch
+            for cam_key, cam in robot.cameras.items():
+                try:
+                    observation[cam_key] = cam.async_read()
+                except Exception:
+                    # Fallback to black frame
+                    h, w = robot.config.cameras[cam_key].height, robot.config.cameras[cam_key].width
+                    observation[cam_key] = torch.zeros((h, w, 3), dtype=torch.uint8)
+        else:
+            observation = base_obs_func()
         
         # Rectify images based on config
         for cam_name, should_rectify in RECTIFY_MAP.items():
@@ -152,42 +210,122 @@ def set_custom_get_observation(robot, so101: SO101Control = None, include_eef_st
             for i, name in enumerate(EEF_STATE_NAMES):
                 observation[f"{name}.pos"] = float(eef[i])
 
+        # Map observations if required (e.g. main -> image)
+        for k, v in ACTIVE_CAMERA_MAPPING.items():
+            if k in observation:
+                val = observation.pop(k)
+                observation[v] = val
+            elif v not in observation:
+                # CRITICAL: Ensure the expected key exists even if hardware fails
+                import torch
+                h, w = 360, 640 # Default fallback dimensions
+                observation[v] = torch.zeros((h, w, 3), dtype=torch.uint8)
+
         return observation
     
     print(f"[x] Robot observation patched for dynamic rectification based on config: {RECTIFY_MAP}")
     print(f"[x] Robot observation patched for EEF State: {EEF_STATE_NAMES}") if include_eef_state else None
+    print(f"[x] Robot observation patched for Camera Mapping: {ACTIVE_CAMERA_MAPPING}")
     robot.get_observation = patched_get_observation
 
 # > Custom send_action():
 #   1. Convert EEF State to motor space if required
-def set_custom_send_action(robot, so101: SO101Control = None):
+#   2. Update Meshcat robot pose display (if viz provided)
+def set_custom_send_action(robot, so101: SO101Control = None, viz=None, dry_run=False):
     base_action_func = robot.send_action
     gr_idx = so101.JOINT_NAMES.index("gripper")
+    _step = [0]
+    _last_mode = [None]
+
+    if dry_run:
+        print("[!] DRY RUN enabled — robot will NOT receive any commands.")
+
+    def _viz_update(motor_vals):
+        """Update robot pose AND draw EEF axes at the gripper frame."""
+        if not viz:
+            return
+        viz.display(so101.motor_to_rad(motor_vals, use_polarities=True))
+        T = so101.fk(motor_vals, use_polarities=True)
+        viz.add_axes("eef_axes", T[:3, 3], T[:3, :3], length=0.04)
 
     def patched_send_action(action, **kwargs):
+        _step[0] += 1
+
+        # Reliable mode detection: make_robot_action in record_loop maps tensor indices
+        # to dataset.features["action"]["names"].  With our EEF action_features override,
+        # EEF policies produce keys like "x.pos", "y.pos", etc.; motor policies produce
+        # "shoulder_pan.pos", "shoulder_lift.pos", etc.
+        is_motor = "shoulder_pan.pos" in action   # False for EEF, True for motor
+        mode = "MOTOR" if is_motor else "EEF"
+
+        # Read current motor state once (used for IK seed, fallback, dry-run hold, and logging)
+        current_motor = so101.read_motor_real(robot)
+        current_motor_dict = {f"{n}.pos": float(current_motor[i]) for i, n in enumerate(so101.JOINT_NAMES)}
+
+        # Log on mode change or every 30 steps (~1 s at 30 fps)
+        if mode != _last_mode[0] or _step[0] % 30 == 1:
+            _last_mode[0] = mode
+            if is_motor:
+                vals = "  ".join(f"{n}={action.get(f'{n}.pos', 0.0):+.1f}" for n in so101.JOINT_NAMES)
+                print(f"[send_action | step {_step[0]:4d}] MODE=MOTOR  | {vals}")
+            else:
+                cur_xyz = so101.fk_xyz(current_motor)
+                tgt_xyz = np.array([action.get('x.pos', 0.0), action.get('y.pos', 0.0), action.get('z.pos', 0.0)])
+                delta   = tgt_xyz - cur_xyz
+                grip    = action.get('gripper.pos', 0.0)
+                print(
+                    f"[send_action | step {_step[0]:4d}] MODE=EEF  "
+                    f"| cur=({cur_xyz[0]:+.3f},{cur_xyz[1]:+.3f},{cur_xyz[2]:+.3f})"
+                    f"  tgt=({tgt_xyz[0]:+.3f},{tgt_xyz[1]:+.3f},{tgt_xyz[2]:+.3f})"
+                    f"  Δ=({delta[0]:+.3f},{delta[1]:+.3f},{delta[2]:+.3f})"
+                    f"  grip={grip:+.1f}"
+                )
+
         # Case: actions are in motor space
-        if "shoulder_pan.pos" in action:
+        if is_motor:
+            motor_vals = np.array([float(action.get(f"{n}.pos", 0.0)) for n in so101.JOINT_NAMES])
+            if dry_run:
+                _viz_update(motor_vals)
+                robot._virtual_motor = motor_vals
+                return action
+            _viz_update(motor_vals)
             return base_action_func(action, **kwargs)
-        
-        # Case: actions are in eef space (xyz + 6D Orientation + Gripper)
-        target_xyz  = np.array([action["x"], action["y"], action["z"]], dtype=np.float64)
-        r6d         = np.array([action["rot6d_0"], action["rot6d_1"], action["rot6d_2"], action["rot6d_3"], action["rot6d_4"], action["rot6d_5"]], dtype=np.float64)
-        gripper_val = float(action["gripper"]) 
+
+        # Case: actions are in EEF space (xyz + 6D Orientation + Gripper)
+        # Keys produced by make_robot_action from EEF action_features: "x.pos", "y.pos", ...
+        target_xyz  = np.array([action["x.pos"], action["y.pos"], action["z.pos"]], dtype=np.float64)
+        r6d = np.array([action[f"rot6d_{i}.pos"] for i in range(6)], dtype=np.float64)
+        gripper_val = float(action["gripper.pos"])
+
+        # Guard: degenerate rot6d (all-zero first column) would cause division-by-zero
+        # in rot6d_to_mat's Gram-Schmidt step → NaN propagates through IK → garbage pose.
+        if np.linalg.norm(r6d[:3]) < 1e-6:
+            print(f"[WARN step {_step[0]}] Degenerate rot6d (near-zero norm), holding current pose")
+            _viz_update(current_motor)
+            if dry_run:
+                return current_motor_dict
+            return base_action_func(current_motor_dict, **kwargs)
 
         # IK: solve for full 6D pose (position + orientation)
-        current_motor = so101.read_motor_real(robot)
         target_motor = so101.ik_motor_6d(target_xyz, r6d, current_motor)
 
         if target_motor is None:
             print(f"[ERROR] IK failed, skipping action and holding current pose")
-            motor_dict = {f"{n}.pos": float(current_motor[i]) for i, n in enumerate(so101.JOINT_NAMES)}
-            return base_action_func(motor_dict, **kwargs)
-        
+            _viz_update(current_motor)
+            if dry_run:
+                return current_motor_dict
+            return base_action_func(current_motor_dict, **kwargs)
+
         # Gripper override
         target_motor[gr_idx] = gripper_val
-        # Convert to dictionary for lerobot send_action format
         motor_dict = {f"{n}.pos": float(target_motor[i]) for i, n in enumerate(so101.JOINT_NAMES)}
-        
+
+        if dry_run:
+            _viz_update(target_motor)
+            robot._virtual_motor = target_motor
+            return motor_dict
+
+        _viz_update(target_motor)
         return base_action_func(motor_dict, **kwargs)
 
     robot.send_action = patched_send_action
@@ -208,6 +346,150 @@ def set_custom_select_action(policy, delay_s: float):
         return original_select_action(batch, **kwargs)
     policy.select_action = patched_select_action
     print(f"Policy patched with {delay_s}s delay before inference chunks.")
+
+# > Trajectory visualization via Meshcat:
+#   Draws the full predicted EEF path every time a new inference chunk fires.
+#   Works for both xvla (EEF action space) and smolvla (motor action space).
+#   Must be called BEFORE set_custom_select_action so it is the innermost wrapper.
+def set_trajectory_visualization(policy, so101: SO101Control, viz, postprocessor, action_names: list[str]):
+    """Patches policy.select_action to visualise the predicted chunk in Meshcat."""
+    if viz is None:
+        return
+
+    original_select_action = policy.select_action
+
+    def _ensure_dict(action) -> dict | None:
+        """Convert postprocessed action (dict or tensor) → dictionary of named features."""
+        if isinstance(action, dict):
+            return action
+        if hasattr(action, "detach"): # Tensor
+            if action.ndim == 2: action = action[0]
+            if len(action_names) == 0: return None
+            return {name: float(action[i]) for i, name in enumerate(action_names) if i < len(action)}
+        return None
+
+    def _action_dict_to_xyz(action_dict: dict) -> np.ndarray | None:
+        """Extract EEF xyz (metres) from an action dictionary."""
+        # EEF action space — keys are "x.pos"/"y.pos"/"z.pos" (from EEF action_features)
+        x = action_dict.get("x.pos", action_dict.get("x"))
+        y = action_dict.get("y.pos", action_dict.get("y"))
+        z = action_dict.get("z.pos", action_dict.get("z"))
+        if x is not None and y is not None and z is not None:
+            return np.array([float(x), float(y), float(z)], dtype=np.float64)
+        
+        # Motor action space — run FK
+        try:
+            motor = np.array([float(action_dict.get(f"{n}.pos", 0.0)) for n in so101.JOINT_NAMES])
+            return so101.fk(motor, use_polarities=True)[:3, 3]
+        except Exception:
+            return None
+
+    def _decode_tensor(t) -> dict | np.ndarray | None:
+        """Apply postprocessor to a single queue tensor; try 1-D then batched form."""
+        try:
+            return postprocessor(t)
+        except Exception:
+            pass
+        try:
+            import torch
+            return postprocessor(t.unsqueeze(0))
+        except Exception:
+            return None
+
+    def _policy_queue_len(p) -> int:
+        """Returns remaining actions in the policy queue (handles smolvla and xvla)."""
+        if hasattr(p, "action_queue"):          # smolvla: direct attribute
+            return len(p.action_queue)
+        if hasattr(p, "_queues") and "action" in p._queues:  # xvla: nested dict of deques
+            return len(p._queues["action"])
+        return 0
+
+    def _policy_queue_list(p) -> list:
+        """Returns a snapshot of the policy queue as a list."""
+        if hasattr(p, "action_queue"):
+            return list(p.action_queue)
+        if hasattr(p, "_queues") and "action" in p._queues:
+            return list(p._queues["action"])
+        return []
+
+    def patched_select_action(batch, **kwargs):
+        # New inference fires when the queue is empty (or doesn't exist).
+        # smolvla exposes the queue as policy.action_queue (direct attribute).
+        # xvla stores it at policy._queues["action"] (a deque inside a dict).
+        is_new_inference = _policy_queue_len(policy) == 0
+
+        result = original_select_action(batch, **kwargs)
+
+        if is_new_inference:
+            try:
+                # Full chunk = returned item + what remains in the queue (not yet consumed)
+                remaining = _policy_queue_list(policy)
+                chunk = [result] + remaining
+                
+                if POLICY_TYPE == "xvla":
+                    print(f"\n[XVLA Inference] Model Output (raw tensor):")
+                    print(result)
+                    decoded_first = _decode_tensor(result)
+                    print(f"[XVLA Inference] Decoded First Action:")
+                    print(decoded_first)
+                    print(f"[XVLA Inference] Chunk size: {len(chunk)}\n")
+
+                print(f"[viz] New inference chunk: {len(chunk)} waypoints")
+                xyz_list  = []
+                rot_list  = []   # 3×3 rotation matrix per waypoint, or None
+                for t in chunk:
+                    decoded = _decode_tensor(t)
+                    if decoded is None:
+                        continue
+                    
+                    action_dict = _ensure_dict(decoded)
+                    if action_dict is None:
+                        continue
+
+                    xyz = _action_dict_to_xyz(action_dict)
+                    if xyz is None:
+                        continue
+                    xyz_list.append(xyz)
+
+                    # Extract rot6d → rotation matrix when available
+                    R = None
+                    r6d_vals = [
+                        action_dict.get(f"rot6d_{i}.pos", action_dict.get(f"rot6d_{i}"))
+                        for i in range(6)
+                    ]
+                    if all(v is not None for v in r6d_vals):
+                        r6d = np.array([float(v) for v in r6d_vals], dtype=np.float64)
+                        if np.linalg.norm(r6d[:3]) > 1e-6:
+                            R = so101.rot6d_to_mat(r6d)
+                    rot_list.append(R)
+
+                if xyz_list:
+                    xyz_arr = np.array(xyz_list)
+                    print(
+                        f"[viz] Predicted trajectory: {len(xyz_list)}/{len(chunk)} valid | "
+                        f"x=[{xyz_arr[:,0].min():.3f},{xyz_arr[:,0].max():.3f}]  "
+                        f"y=[{xyz_arr[:,1].min():.3f},{xyz_arr[:,1].max():.3f}]  "
+                        f"z=[{xyz_arr[:,2].min():.3f},{xyz_arr[:,2].max():.3f}]"
+                    )
+                    # Replace the previous trajectory entirely
+                    viz.viewer["infer_traj"].delete()
+                    for i, (xyz, R) in enumerate(zip(xyz_list, rot_list)):
+                        viz.add_sphere(f"infer_traj/pt_{i}", xyz, 0x00ffcc, radius=0.004)
+                        if R is not None:
+                            viz.add_axes(f"infer_traj/axes_{i}", xyz, R, length=0.015)
+                    for i in range(len(xyz_list) - 1):
+                        viz.add_line(
+                            f"infer_traj/seg_{i}",
+                            xyz_list[i], xyz_list[i + 1],
+                            color_hex=0x00ffcc, thickness=0.002,
+                        )
+            except Exception as e:
+                print(f"[viz] Trajectory visualization error: {e}")
+
+        return result
+
+    policy.select_action = patched_select_action
+    print("[x] Policy patched for predicted trajectory visualization in Meshcat.")
 
 def get_policy_processors(policy, dataset, pipeline_key: str | None = None):
     """
@@ -301,9 +583,29 @@ def main():
     policy, INCLUDE_EEF_STATE = get_policy(POLICY_TYPE, POLICY_PATH, DEVICE)
 
     # Configure the dataset features
-    action_features  = hw_to_dataset_features(robot.action_features, "action")
+    # For EEF policies: override with EEF names so make_robot_action in record_loop
+    # maps all 10 tensor dims to EEF keys ("x.pos","y.pos",...,"gripper.pos") instead
+    # of truncating to 6 motor keys. Motor policies use the robot's native features.
+    if INCLUDE_EEF_STATE:
+        eef_action_names = [f"{n}.pos" for n in EEF_STATE_NAMES]
+        action_features = {
+            "action": {"dtype": "float32", "shape": (len(eef_action_names),), "names": eef_action_names}
+        }
+    else:
+        action_features = hw_to_dataset_features(robot.action_features, "action")
     obs_features     = hw_to_dataset_features(robot.observation_features, "observation")
-    dataset_features = {**action_features, **obs_features}
+    
+    # Map robot observation features to match our patched observation names (e.g. main -> image)
+    mapped_obs_features = {}
+    for k, v in obs_features.items():
+        if k.startswith("observation.images."):
+            cam_name = k.removeprefix("observation.images.")
+            if cam_name in ACTIVE_CAMERA_MAPPING:
+                mapped_name = f"observation.images.{ACTIVE_CAMERA_MAPPING[cam_name]}"
+                mapped_obs_features[mapped_name] = v
+                continue
+        mapped_obs_features[k] = v
+    dataset_features = {**action_features, **mapped_obs_features}
 
     # Dataset Object
     dataset, episode_idx = get_dataset(dataset_features, robot.name)
@@ -311,22 +613,32 @@ def main():
     # Build preprocessor and postprocessor for policy inference
     preprocessor, postprocessor = get_policy_processors(policy=policy, dataset=dataset, pipeline_key=POLICY_PIPELINE)
 
+    # Meshcat visualization (optional — gracefully disabled if unavailable)
+    viz = init_meshcat() if USE_MESHCAT_VIZ else None
+
     # Start inference and episode recording
     # ============================================================================
 
-    # Initialize the keyboard listener and rerun visualization
+    # Initialize the keyboard listener and (optionally) rerun visualization
     _, events = init_keyboard_listener()
-    init_rerun(session_name="inference_evaluation")
-    
+    if USE_RERUN:
+        init_rerun(session_name="inference_evaluation")
+
     # Create robot processors (required by record_loop)
     teleop_action_processor, robot_action_processor, robot_observation_processor = make_default_processors()
 
     # Connect the robot
     robot.connect()
-    
+
     # Patch robot for observation and action
-    set_custom_get_observation(robot, so101=so101, include_eef_state=INCLUDE_EEF_STATE)
-    set_custom_send_action(robot, so101=so101)
+    set_custom_get_observation(robot, so101=so101, include_eef_state=INCLUDE_EEF_STATE, dry_run=DRY_RUN)
+    set_custom_send_action(robot, so101=so101, viz=viz, dry_run=DRY_RUN)
+    # Trajectory viz is patched BEFORE the delay wrapper so it sits closest to
+    # the original select_action — it draws the chunk immediately after inference.
+    # Extract action names from the "action" feature entry (hw_to_dataset_features returns a
+    # single "action" key, not individual "action.joint.pos" flat keys)
+    action_names = dataset_features.get("action", {}).get("names", [])
+    set_trajectory_visualization(policy, so101=so101, viz=viz, postprocessor=postprocessor, action_names=action_names)
     set_custom_select_action(policy, POLICY_DELAY)
 
     if not robot.is_connected:
@@ -336,7 +648,8 @@ def main():
     while episode_idx < NUM_EPISODES and not events["stop_recording"]:
         # Move to home pose before episode
         log_say("Moving to home pose...")
-        so101.reset_to_home(robot, duration_s=HOME_DURATION_S, fps=HOME_FPS)
+        so101.reset_to_home(robot, duration_s=HOME_DURATION_S, fps=HOME_FPS, viz=viz)
+        
         log_say(f"Running inference, recording eval episode {episode_idx + 1} of {NUM_EPISODES}")
 
         # Run the policy inference loop

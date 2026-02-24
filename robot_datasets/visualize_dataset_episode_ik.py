@@ -10,7 +10,6 @@ observation.state is a 10D array:
 Unit reference (from SO101Control):
   motor units  <-- motor_to_rad -->  radians  <-- rad2deg/deg2rad -->  degrees
   inverse_kinematics : takes degrees, returns degrees
-  wrist_roll_offset  : stored in motor units
   Meshcat/Pinocchio  : expects radians
 """
 
@@ -30,15 +29,14 @@ from robot_control.so101_control import SO101Control
 from lerobot.utils.robot_utils import precise_sleep
 
 # --- Configuration ---
-DATASET_ID = "edgarcancinoe/soarm101_pickplace_6d"
-VISUALIZE_EPISODE = 40
+DATASET_ID = "edgarcancinoe/soarm101_pickplace_front_6d_test"
+VISUALIZE_EPISODE = 1
 # Interpolation parameters for moving to the first frame
 START_MOVE_DURATION = 3.0  # seconds
 START_MOVE_FPS = 10.0      # waypoints per second
 # ---------------------
 
 robot = None
-
 
 def rotation_6d_to_matrix(rot_6d: np.ndarray) -> np.ndarray:
     a1 = rot_6d[0:3]
@@ -186,21 +184,23 @@ def build_trajectory(parquet_files, episode_idx, kinematics, is_real):
         else:
             continue
 
-        # Dataset-specific wrist_roll fix (Apply to motor units directly)
-        q_motor_chunk[:, 4] *= -1
-
         if is_real:
             # Need degrees for real robot
             joints_chunk = kinematics.motor_to_deg(q_motor_chunk)
         else:
             # Need radians for Meshcat (ignore polarities for sim to match URDF axes)
-            joints_chunk = kinematics.motor_to_rad(q_motor_chunk, use_polarities=False)
+            joints_chunk = kinematics.motor_to_rad(q_motor_chunk)
         
         joints_list.extend(joints_chunk)
 
         # Recompute XYZ trajectory from joints to ensure it matches the current URDF/Kinematics
-        # For simulation, we must use use_polarities=False to match the visual arm's joint axes
-        xyz_chunk = kinematics.fk_xyz_chunk(q_motor_chunk, use_polarities=is_real)
+        if is_real:
+            xyz_chunk = kinematics.fk_xyz_chunk(q_motor_chunk)
+        else:
+            # Manual FK for simulation
+            raw_degs = kinematics.motor_to_deg(q_motor_chunk)
+            xyz_chunk = np.array([kinematics.kinematics.forward_kinematics(d)[:3, 3] for d in raw_degs])
+        
         xyz_list.extend(xyz_chunk)
 
     return joints_list, xyz_list
@@ -217,20 +217,25 @@ def run_real(joints_deg_list, kinematics):
         return
     print("Executing on real robot (direct joint replay)...")
     try:
+        # Prepare home pose with offset (external call as requested)
+        home_deg_v = np.array([float(kinematics.home_pose.get(f"{n}.pos", 0.0)) for n in kinematics.JOINT_NAMES])
+        for i, n in enumerate(kinematics.JOINT_NAMES):
+            kinematics.home_pose[f"{n}.pos"] = float(home_deg_v[i])
+
         # Move to start position first
         print("Moving to home position...")
         kinematics.reset_to_home(robot, duration_s=3.0, fps=30.0)
         time.sleep(1.0)
 
         print("Moving to start position...")
-        start_deg = kinematics.read_deg_real(robot, ignore_offset=True)
+        start_deg = kinematics.read_deg_real(robot)
         steps = int(START_MOVE_DURATION * START_MOVE_FPS)
         waypoints_start = kinematics.interpolate_joint(start_deg, joints_deg_list[0], steps)
-        kinematics.execute_joint_trajectory(robot, waypoints_start, fps=30.0, ignore_offset=True)
+        kinematics.execute_joint_trajectory(robot, waypoints_start, fps=30.0)
         time.sleep(1.0)
 
         print("Executing dataset trajectory...")
-        kinematics.execute_joint_trajectory(robot, joints_deg_list, fps=30.0, ignore_offset=True)
+        kinematics.execute_joint_trajectory(robot, joints_deg_list, fps=30.0)
         
         print("Done. Returning home and disconnecting...")
         kinematics.reset_to_home(robot, duration_s=3.0, fps=30.0)
@@ -303,7 +308,7 @@ def run_meshcat(joints_rad_list, xyz_list, kinematics, episode_idx):
 
                 if i % 100 == 0:  # print roughly once a second
                     # Convert back to motor for logging consistency
-                    log_robot_state(i, kinematics.rad_to_motor(q_display, use_polarities=False), kinematics, label="Meshcat Visualization")
+                    log_robot_state(i, kinematics.rad_to_motor(q_display), kinematics, label="Meshcat Visualization")
 
                 time.sleep(1.0 / 30.0)
             time.sleep(1.0)
@@ -334,7 +339,6 @@ def main():
 
     import yaml
     config_path = Path(__file__).parent.parent / "config" / "robot_config.yaml"
-    wrist_offset = 0.0
     home_pose = None
     urdf_path = None
     
@@ -342,19 +346,28 @@ def main():
         with open(config_path) as f:
             cfg = yaml.safe_load(f)
         robot_cfg = cfg.get("robot", {})
-        wrist_offset = float(robot_cfg.get("wrist_roll_offset", 0.0))
         home_pose = robot_cfg.get("home_pose")
         urdf_path = robot_cfg.get("urdf_path")
 
     if not urdf_path:
         raise ValueError("Error: 'urdf_path' not found in config/robot_config.yaml. This is required for kinematics.")
 
-    kinematics = SO101Control(urdf_path=urdf_path, wrist_roll_offset=wrist_offset, home_pose=home_pose)
+    kinematics = SO101Control(urdf_path=urdf_path, home_pose=home_pose)
 
     if args.real:
         connect_robot()
 
-    data_dir = Path.home() / ".cache" / "lerobot" / DATASET_ID / "data"
+    # Try local output path first, then cache
+    local_data_dir = Path(__file__).parent.parent / "outputs" / "datasets" / DATASET_ID.split("/")[-1] / "data"
+    cache_data_dir = Path.home() / ".cache" / "lerobot" / DATASET_ID / "data"
+    
+    if local_data_dir.exists():
+        data_dir = local_data_dir
+        print(f"Using local dataset at: {data_dir}")
+    else:
+        data_dir = cache_data_dir
+        print(f"Using cached dataset at: {data_dir}")
+
     parquet_files = sorted(data_dir.rglob("*.parquet"))
     if not parquet_files:
         raise FileNotFoundError(f"No parquet files found in {data_dir}")

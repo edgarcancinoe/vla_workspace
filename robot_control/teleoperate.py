@@ -105,6 +105,9 @@ teleop_device.connect(calibrate=args.calibrate)
 
 init_rerun(session_name="teleoperate_debug")
 
+# Log static world origin for reference
+rr.log("world/origin", rr.Transform3D(translation=[0, 0, 0], mat3x3=np.eye(3)), static=True)
+
 print("Connected! Teleoperating...")
 
 step = 0
@@ -120,11 +123,11 @@ try:
         
         action = teleop_device.get_action()
         
-        # Apply wrist roll offset (using pre-calculated Motor Unit shift)
-        if "wrist_roll.pos" in action:
-            new_val = action["wrist_roll.pos"] + WRIST_ROLL_OFFSET_MOTOR
-            # Clamp to range [-100, 100]
-            action["wrist_roll.pos"] = max(min(new_val, 100.0), -100.0)
+        # Apply wrist roll offset via control helper
+        motor_vals = np.array([action[f"{n}.pos"] for n in control.JOINT_NAMES])
+        motor_vals = control.apply_wrist_roll_offset(motor_vals)
+        for i, n in enumerate(control.JOINT_NAMES):
+            action[f"{n}.pos"] = float(motor_vals[i])
             
         robot.send_action(action)
         
@@ -137,19 +140,30 @@ try:
         
         # Print positions periodically
         if step % print_interval == 0:
-            # Prepare motor values
-            motor_vals = [action[f"{n}.pos"] for n in SO101Control.JOINT_NAMES]
-            deg_vals = control.motor_to_deg(motor_vals)
+            # Get observed motor values for "live" pose using control helper
+            obs_motor_vals = control.extract_motor_vals(observation)
+            deg_vals = control.motor_to_deg(obs_motor_vals)
+            
+            # Calculate FK Pose using control helper
+            pos, euler = control.fk_pose(obs_motor_vals)
             
             print(f"\n--- Step {step} ---")
             print("Joint Positions (Motor Units | Degrees):")
-            for i, n in enumerate(SO101Control.JOINT_NAMES):
-                m_val = action[f"{n}.pos"]
+            for i, n in enumerate(control.JOINT_NAMES):
+                m_val = obs_motor_vals[i]
                 d_val = deg_vals[i]
                 print(f"  {n:15s}: {m_val:8.4f} units | {d_val:8.2f}°")
+            
+            print("\nEnd-Effector Pose (Cartesian):")
+            print(f"  X: {pos[0]:8.4f} m")
+            print(f"  Y: {pos[1]:8.4f} m")
+            print(f"  Z: {pos[2]:8.4f} m")
+            print(f"  Orientation (Euler xyz): Roll={euler[0]:.2f}°, Pitch={euler[1]:.2f}°, Yaw={euler[2]:.2f}°")
         
         rr.set_time_sequence("step", step)
+        
         log_rerun_data(observation=observation, action=action)
+
         
         step += 1
             
