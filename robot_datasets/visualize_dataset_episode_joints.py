@@ -106,10 +106,6 @@ def run_real(q_deg_list, kinematics):
 
 
 def main():
-    if not URDF_PATH:
-        print("Please configure URDF_PATH at the top of the script.")
-        return
-
     parser = argparse.ArgumentParser(description="Visualize Dataset Episode Joints")
     exec_mode = parser.add_mutually_exclusive_group(required=True)
     exec_mode.add_argument("--sim", action="store_true", help="Simulation (Meshcat) mode")
@@ -126,7 +122,6 @@ def main():
     # Initialize kinematics for unit conversions
     import yaml
     config_path = Path(__file__).parent.parent / "config" / "robot_config.yaml"
-    wrist_roll_offset = 0.0
     home_pose = None
     if config_path.exists():
         with open(config_path) as f:

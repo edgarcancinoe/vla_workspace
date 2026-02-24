@@ -23,9 +23,9 @@ config_path = Path(__file__).parent.parent / "config" / "robot_config.yaml"
 with open(config_path, "r") as f:
     config_data = yaml.safe_load(f)
 
-# Configuration for Rectification from robot_config.yaml
-RECTIFY_TOP = config_data.get("rectification", {}).get("top", True)
-RECTIFY_WRIST = config_data.get("rectification", {}).get("wrist", True)
+# Store camera config and rectification flags
+CAMERA_CONFIG_MAP = config_data.get("cameras", {})
+RECTIFY_MAP = {name: info.get("rectify", False) for name, info in CAMERA_CONFIG_MAP.items()}
 
 NUM_EPISODES = 50
 FPS = 30
@@ -37,7 +37,7 @@ TASK_DESCRIPTION = "Pick up orange cube and place inside white box."
 HF_USER = "edgarcancinoe"
 HF_REPO_ID = "soarm101_pickplace_front" 
 
-DATA_DIR = Path(f"~/Documents/Academic/EMAI Thesis/vla_workspace/outputs/datasets/{HF_REPO_ID}").expanduser()
+DATA_DIR = Path(__file__).parent.parent / "outputs" / "datasets" / HF_REPO_ID
 
 START_FROM_SCRATCH = False
 RESUME_DATASET = True
@@ -156,21 +156,16 @@ def patch_robot_for_rectification(robot):
     def patched_get_observation():
         observation = original_get_observation()
         
-        # Rectify based on configuration
-        if RECTIFY_TOP and "top" in observation:
-            observation["top"] = camera_calibration.rectify_image(
-                observation["top"], "top"
-            )
-            
-        if RECTIFY_WRIST and "wrist" in observation:
-            observation["wrist"] = camera_calibration.rectify_image(
-                observation["wrist"], "wrist"
-            )
-            
+        # Rectify based on per-camera configuration
+        for cam_name, should_rectify in RECTIFY_MAP.items():
+            if should_rectify and cam_name in observation:
+                observation[cam_name] = camera_calibration.rectify_image(
+                    observation[cam_name], cam_name
+                )
         return observation
         
     robot.get_observation = patched_get_observation
-    print(f"Robot observation patched for rectification (Top={RECTIFY_TOP}, Wrist={RECTIFY_WRIST})")
+    print(f"Robot observation patched for dynamic rectification based on config.")
 
 def main():
     # Manual delete
@@ -182,13 +177,16 @@ def main():
             shutil.rmtree(TARGET_DIR)
 
     FOLLOWER_PORT = config_data["robot"]["port"]
-    LEADER_PORT = config_data["leader_port"]
+    LEADER_PORT = config_data["leader"]["port"]
 
-    DEFAULT_CALIBRATION_DIR = "/Users/edgarcancino/Documents/Academic/EMAI Thesis/vla_workspace/.cache/calibration"
+    CALIBRATION_DIR = config_data["robot"].get("calibration_dir")
+    if not CALIBRATION_DIR:
+        print("Error: 'calibration_dir' not found in config/robot_config.yaml.")
+        sys.exit(1)
     # Parse arguments
     parser = argparse.ArgumentParser()
     parser.add_argument("--calibrate", action="store_true", help="Force calibration of the motors")
-    parser.add_argument("--calibration-dir", type=str, default=DEFAULT_CALIBRATION_DIR, help="Path to calibration directory")
+    parser.add_argument("--calibration-dir", type=str, default=CALIBRATION_DIR, help="Path to calibration directory")
     args = parser.parse_args()
 
     calibration_dir = Path(args.calibration_dir)
@@ -197,8 +195,8 @@ def main():
     robot_config = SO100FollowerConfig(
         id=config_data.get("robot", {}).get("name", "my_awesome_follower_arm"),
         cameras={
-            "top": OpenCVCameraConfig(index_or_path=0, width=640, height=480, fps=FPS),
-            "wrist": OpenCVCameraConfig(index_or_path=1, width=640, height=480, fps=FPS),
+            name: OpenCVCameraConfig(index_or_path=info["id"], width=640, height=480, fps=FPS)
+            for name, info in CAMERA_CONFIG_MAP.items()
         },
         port=FOLLOWER_PORT,
         calibration_dir=calibration_dir,

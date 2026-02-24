@@ -45,11 +45,18 @@ def main():
         print("Error: 'home_pose' not found in config/robot_config.yaml.")
         sys.exit(1)
 
-    # URDF Path - constant for this setup
-    URDF_PATH = "/Users/edgarcancino/Documents/Academic/EMAI Thesis/repos/SO-ARM100/Simulation/SO101/so101_new_calib.urdf"
+    # URDF Path - strictly from config
+    URDF_PATH = robot_cfg.get("urdf_path")
+    if not URDF_PATH:
+        print("Error: 'urdf_path' not found in config/robot_config.yaml.")
+        sys.exit(1)
 
-    # Define shared calibration directory
-    calibration_dir = WORKSPACE_ROOT / ".cache" / "calibration"
+    # Define shared calibration directory - strictly from config
+    calibration_dir = robot_cfg.get("calibration_dir")
+    if not calibration_dir:
+        print("Error: 'calibration_dir' not found in config/robot_config.yaml.")
+        sys.exit(1)
+    calibration_dir = Path(calibration_dir)
 
     robot_id = robot_cfg.get("name", "arm_follower")
     wrist_roll_offset = robot_cfg.get("wrist_roll_offset", 0.0)

@@ -38,7 +38,6 @@ START_MOVE_FPS = 10.0      # waypoints per second
 # ---------------------
 
 robot = None
-_robot_wrist_roll_offset = 0.0  # motor units
 
 
 def rotation_6d_to_matrix(rot_6d: np.ndarray) -> np.ndarray:
@@ -63,19 +62,17 @@ def create_target_pose(pos, rot_6d):
 # ---------------------------------------------------------------------------
 
 def connect_robot():
-    """Connect to real robot, return (robot, wrist_roll_offset in motor units)."""
-    global robot, _robot_wrist_roll_offset
+    """Connect to real robot."""
+    global robot
     import yaml
     from lerobot.robots.so101_follower.so101_follower import SO101Follower
     from lerobot.robots.so101_follower.config_so101_follower import SO101FollowerConfig
 
     config_path = Path(__file__).parent.parent / "config" / "robot_config.yaml"
-    wrist_roll_offset = 0.0
     port = None
     if config_path.exists():
         with open(config_path) as f:
             cfg = yaml.safe_load(f)
-        wrist_roll_offset = float(cfg.get("robot", {}).get("wrist_roll_offset", 0.0))
         port = cfg.get("robot", {}).get("port")
         robot_name = cfg.get("robot", {}).get("name", "arm_follower")
 
@@ -89,8 +86,7 @@ def connect_robot():
     robot = SO101Follower(robot_config)
     robot.connect()
     print(f"==========================")
-    _robot_wrist_roll_offset = wrist_roll_offset
-    return robot, wrist_roll_offset
+    return robot
 
 
 def read_robot_seed_deg(kinematics):

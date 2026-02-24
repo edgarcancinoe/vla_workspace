@@ -35,7 +35,15 @@ from robot_control.so101_control import SO101Control
 DATASET_ID = "edgarcancinoe/soarm101_pickplace_orange_240e_fw_closed"
 OUT_DATASET_ID = "edgarcancinoe/soarm101_pickplace_6d_240e_fw_closed"
 
-URDF_PATH = "/Users/edgarcancino/Documents/Academic/EMAI Thesis/repos/SO-ARM100/Simulation/SO101/so101_new_calib.urdf" 
+import yaml
+config_path = Path(__file__).parent.parent / "config" / "robot_config.yaml"
+if not config_path.exists():
+    raise FileNotFoundError(f"Config file not found at {config_path}")
+with open(config_path) as f:
+    cfg = yaml.safe_load(f)
+URDF_PATH = cfg.get("robot", {}).get("urdf_path")
+if not URDF_PATH:
+    raise ValueError("Error: 'urdf_path' not found in config/robot_config.yaml.")
 JOINT_NAMES = ['shoulder_pan', 'shoulder_lift', 'elbow_flex', 'wrist_flex', 'wrist_roll', 'gripper']
 PUSH_TO_HUB = "--push" in sys.argv  # Pushes dataset to huggingface hub
 # ---------------------
@@ -59,14 +67,8 @@ def main():
         joint_names=joint_names,
     )
     import yaml
-    config_path = Path(__file__).parent.parent / "config" / "robot_config.yaml"
-    wrist_offset = 0.0
-    home_pose = None
-    if config_path.exists():
-        with open(config_path) as f:
-            cfg = yaml.safe_load(f)
-        wrist_offset = float(cfg.get("robot", {}).get("wrist_roll_offset", 0.0))
-        home_pose = cfg.get("robot", {}).get("home_pose")
+    wrist_offset = float(cfg.get("robot", {}).get("wrist_roll_offset", 0.0))
+    home_pose = cfg.get("robot", {}).get("home_pose")
 
     so101 = SO101Control(urdf_path=URDF_PATH, wrist_roll_offset=wrist_offset, home_pose=home_pose)
 

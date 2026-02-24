@@ -17,9 +17,7 @@ with open(config_path, "r") as f:
     config_data = yaml.safe_load(f)
 
 
-# Configuration for Rectification from robot_config.yaml
-RECTIFY_TOP = config_data.get("rectification", {}).get("top", True)
-RECTIFY_WRIST = config_data.get("rectification", {}).get("wrist", True)
+# Removed global RECTIFY_TOP/WRIST as they are now per-camera in config
 
 # Wrist Roll Offset (in Degrees from config)
 WRIST_ROLL_OFFSET_DEG = config_data.get("robot", {}).get("wrist_roll_offset", 0.0)
@@ -46,8 +44,12 @@ follower_port = config_data["robot"]["port"]
 leader_dict = config_data.get("leader", {})
 leader_port = leader_dict.get("port", config_data.get("leader_port"))
 
-# Define shared calibration directory
-calibration_dir = Path(__file__).parent.parent / ".cache" / "calibration"
+# Define shared calibration directory - strictly from config
+calibration_dir = config_data.get("robot", {}).get("calibration_dir")
+if not calibration_dir:
+    print("Error: 'calibration_dir' not found in config/robot_config.yaml.")
+    sys.exit(1)
+calibration_dir = Path(calibration_dir)
 
 if args.calibrate:
     print(f"Force calibration requested. Removing calibration files in {calibration_dir}...")
@@ -59,8 +61,13 @@ print(f"Follower Port: {follower_port}")
 print(f"Leader Port: {leader_port}")
 
 camera_config = {
-    name: OpenCVCameraConfig(index_or_path=idx, width=640, height=480, fps=30)
-    for name, idx in config_data.get("cameras", {}).items()
+    name: OpenCVCameraConfig(index_or_path=info["id"], width=640, height=480, fps=30)
+    for name, info in config_data.get("cameras", {}).items()
+}
+# Store which cameras need rectification
+RECTIFY_MAP = {
+    name: info.get("rectify", False)
+    for name, info in config_data.get("cameras", {}).items()
 }
 
 # Get IDs from config
@@ -84,7 +91,10 @@ robot = SO100Follower(robot_config)
 teleop_device = SO100Leader(teleop_config)
 
 # Kinematics Control for Degree Conversion
-URDF_PATH = "/Users/edgarcancino/Documents/Academic/EMAI Thesis/repos/SO-ARM100/Simulation/SO101/so101_new_calib.urdf"
+URDF_PATH = config_data.get("robot", {}).get("urdf_path")
+if not URDF_PATH:
+    print("Error: 'urdf_path' not found in config/robot_config.yaml.")
+    sys.exit(1)
 home_pose = config_data.get("robot", {}).get("home_pose")
 control = SO101Control(urdf_path=URDF_PATH, wrist_roll_offset=WRIST_ROLL_OFFSET_DEG, home_pose=home_pose)
 
@@ -118,16 +128,12 @@ try:
             
         robot.send_action(action)
         
-        # Rectify images based on configuration
-        if RECTIFY_TOP and "top" in observation:
-            observation["top"] = camera_calibration.rectify_image(
-                observation["top"], "top"
-            )
-            
-        if RECTIFY_WRIST and "wrist" in observation:
-            observation["wrist"] = camera_calibration.rectify_image(
-                observation["wrist"], "wrist"
-            )
+        # Rectify images based on per-camera configuration
+        for cam_name, should_rectify in RECTIFY_MAP.items():
+            if should_rectify and cam_name in observation:
+                observation[cam_name] = camera_calibration.rectify_image(
+                    observation[cam_name], cam_name
+                )
         
         # Print positions periodically
         if step % print_interval == 0:

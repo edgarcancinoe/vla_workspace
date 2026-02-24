@@ -4,7 +4,16 @@ import pinocchio as pin
 from pinocchio.visualize import MeshcatVisualizer
 import copy
 
-urdf_path = "/Users/edgarcancino/Documents/Academic/EMAI Thesis/repos/SO-ARM100/Simulation/SO101/so101_new_calib.urdf"
+import yaml
+from pathlib import Path
+
+config_path = Path(__file__).parent / "config" / "robot_config.yaml"
+with open(config_path, "r") as f:
+    config_data = yaml.safe_load(f)
+
+urdf_path = config_data.get("robot", {}).get("urdf_path")
+if not urdf_path:
+    raise ValueError("Error: 'urdf_path' not found in config/robot_config.yaml.")
 
 model, cmod, vmod = pin.buildModelsFromUrdf(urdf_path)
 viz = MeshcatVisualizer(model, cmod, vmod)
