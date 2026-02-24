@@ -40,7 +40,7 @@ mkdir -p "$HF_LEROBOT_HOME"
 # ============================================================================
 HF_USER="${HF_USER:-edgarcancinoe}"
 # Dataset to use -----------------------------------
-DATASET_NAME_STR="soarm101_pickplace_orange_050e_fw_open"
+DATASET_NAME_STR="${DATASET_NAME_STR:-soarm101_pickplace_orange_050e_fw_open}"
 # --------------------------------------------------
 
 # Base model ---------------------------------------
@@ -60,7 +60,7 @@ BASE_POLICY_PATH="${BASE_USER}/${BASE_NAME}"
 # --------------------------------------------------
 
 # Image Augmentation
-ENABLE_AUGMENTATION="${ENABLE_AUGMENTATION:-true}"
+ENABLE_AUGMENTATION="${ENABLE_AUGMENTATION:-false}"
 AUGMENTATION_DEGREES="${AUGMENTATION_DEGREES:-[-2.5, 2.5]}"
 AUGMENTATION_TRANSLATE="${AUGMENTATION_TRANSLATE:-[0.025, 0.025]}"
 
@@ -92,7 +92,7 @@ LOG_FREQ="${LOG_FREQ:-100}"
 EVAL_FREQ="${EVAL_FREQ:--1}"
 
 DEVICE="${DEVICE:-cuda}"
-CUDA_DEVICE="${CUDA_DEVICE:-0}"
+CUDA_DEVICE="${CUDA_DEVICE:-2}"
 NUM_WORKERS="${NUM_WORKERS:-4}"
 
 
