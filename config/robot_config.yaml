@@ -2,6 +2,7 @@ robot:
   name: my_awesome_follower_arm
   port: /dev/cu.usbmodem5AAF2202301  # Follower port
   urdf_path: "/Users/edgarcancino/Documents/Academic/EMAI Thesis/repos/SO-ARM100/Simulation/SO101/so101_new_calib.urdf"
+  calibration_dir: "/Users/edgarcancino/Documents/Academic/EMAI Thesis/vla_workspace/.cache/calibration"
   wrist_roll_offset: -90.0 # Degrees
   home_pose: # Degrees
     shoulder_pan.pos: 0.0
@@ -15,10 +16,10 @@ leader:
   name: my_awesome_leader_arm
   port: /dev/cu.usbmodem5AAF2181531
 
-rectification:
-  top: false
-  wrist: false
-
 cameras:
-  top: 0
-  wrist: 1
+  main: 
+    id: 0
+    rectify: false
+  secondary: 
+    id: 1
+    rectify: false
