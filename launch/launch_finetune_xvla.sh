@@ -40,7 +40,7 @@ mkdir -p "$HF_LEROBOT_HOME"
 # ============================================================================
 HF_USER="${HF_USER:-edgarcancinoe}"
 # Dataset to use -----------------------------------
-DATASET_NAME_STR="${DATASET_NAME_STR:-soarm101_pickplace_orange_050e_fw_open}"
+DATASET_NAME_STR="${DATASET_NAME_STR:-soarm101_pickplace_10d}"
 # --------------------------------------------------
 
 # Base model ---------------------------------------
@@ -102,6 +102,7 @@ NUM_WORKERS="${NUM_WORKERS:-4}"
 # GRAD_ACCUM="${GRAD_ACCUM:-1}"
 
 SAVE_FREQ="${SAVE_FREQ:-30000}"
+PUSH_HF_EVERY="${PUSH_HF_EVERY:-20000}"
 
 # Evaluation frequency
 # EVAL_FREQ="${EVAL_FREQ:-500}"
@@ -203,6 +204,7 @@ echo "  Dataset:        ${DATASET_REPO_ID}"
 echo "  Batch Size:     ${BATCH_SIZE}"
 echo "  Steps:          ${STEPS}"
 echo "  Save Freq:      ${SAVE_FREQ}"
+echo "  Push HF Every:  ${PUSH_HF_EVERY}"
 echo "  Output Dir:     ${OUTPUT_DIR}"
 echo "  Job Name:       ${JOB_NAME}"
 echo "  Device:         ${DEVICE}"
@@ -251,7 +253,7 @@ python -m lerobot.scripts.lerobot_train \
   --policy.repo_id="${POLICY_REPO_ID}" \
   --policy.push_to_hub="${POLICY_PUSH_TO_HUB}" \
   --dataset.repo_id="${DATASET_REPO_ID}" \
-  --rename_map='{"observation.images.top": "observation.images.image", "observation.images.wrist": "observation.images.image2"}' \
+  --rename_map='{"observation.images.main": "observation.images.image", "observation.images.secondary": "observation.images.image2"}' \
   --dataset.image_transforms.enable="${ENABLE_AUGMENTATION}" \
   --dataset.image_transforms.tfs='{"affine": {"type": "RandomAffine", "kwargs": {"degrees": '"${AUGMENTATION_DEGREES}"', "translate": '"${AUGMENTATION_TRANSLATE}"'}}}' \
   --batch_size="${BATCH_SIZE}" \
@@ -259,6 +261,7 @@ python -m lerobot.scripts.lerobot_train \
   --log_freq="${LOG_FREQ}" \
   --eval_freq="${EVAL_FREQ}" \
   --save_freq="${SAVE_FREQ}" \
+  --push_every="${PUSH_HF_EVERY}" \
   --output_dir="${OUTPUT_DIR}" \
   --job_name="${JOB_NAME}" \
   --policy.device="${DEVICE}" \
