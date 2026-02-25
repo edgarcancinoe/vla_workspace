@@ -30,9 +30,10 @@ from lerobot.utils.robot_utils import precise_sleep
 
 # --- Configuration ---
 DEFAULT_DATASET_ID = "edgarcancinoe/soarm101_pickplace_10d"
+# DEFAULT_DATASET_ID = "edgarcancinoe/soarm101_pickplace_6d_240e_fw_closed"
+# DEFAULT_DATASET_ID = "edgarcancinoe/soarm101_pickplace_6d"
 
-
-VISUALIZE_EPISODE = 0
+VISUALIZE_EPISODE = 3
 # Interpolation parameters for moving to the first frame
 START_MOVE_DURATION = 3.0  # seconds
 START_MOVE_FPS = 10.0      # waypoints per second
@@ -363,12 +364,16 @@ def main():
         from lerobot.datasets.lerobot_dataset import LeRobotDataset
         LeRobotDataset(repo_id) # Default root handling nests correctly
     
-    # Try local output path first, then cache
+    # Try local output path first, then conversion cache, then HF cache
     local_data_dir = Path(__file__).parent.parent / "outputs" / "datasets" / repo_id.split("/")[-1] / "data"
+    conversion_data_dir = Path.home() / ".cache" / "lerobot" / repo_id / "data"
     
     if (local_data_dir.exists() and not args.force_download) and (any(local_data_dir.rglob("*.parquet"))):
         data_dir = local_data_dir
         print(f"Using local dataset at: {data_dir}")
+    elif (conversion_data_dir.exists() and not args.force_download) and (any(conversion_data_dir.rglob("*.parquet"))):
+        data_dir = conversion_data_dir
+        print(f"Using conversion output dataset at: {data_dir}")
     else:
         # Auto-download if files are missing
         if not data_dir.exists() or not any(data_dir.rglob("*.parquet")):

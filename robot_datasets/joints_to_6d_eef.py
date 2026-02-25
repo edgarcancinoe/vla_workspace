@@ -29,11 +29,11 @@ if WORKSPACE_ROOT not in sys.path:
 from robot_control.so101_control import SO101Control
 
 # --- Configuration ---
-# DATASET_ID = "edgarcancinoe/soarm101_pickplace_orange_050e_fw_open"
-# OUT_DATASET_ID = "edgarcancinoe/soarm101_pickplace_6d"
+DATASET_ID = "edgarcancinoe/soarm101_pickplace_orange_050e_fw_open"
+OUT_DATASET_ID = "edgarcancinoe/soarm101_pickplace_6d"
 
-DATASET_ID = "edgarcancinoe/soarm101_pickplace_orange_240e_fw_closed"
-OUT_DATASET_ID = "edgarcancinoe/soarm101_pickplace_6d_240e_fw_closed"
+# DATASET_ID = "edgarcancinoe/soarm101_pickplace_orange_240e_fw_closed"
+# OUT_DATASET_ID = "edgarcancinoe/soarm101_pickplace_6d_240e_fw_closed"
 
 import yaml
 config_path = Path(__file__).parent.parent / "config" / "robot_config.yaml"
@@ -99,15 +99,23 @@ def main():
         total_frames = len(df)
         eef_states = []
         eef_actions = []
+        clean_states = []
+        clean_actions = []
         has_action = "action" in df.columns
 
-        print(f"Computing Forward Kinematics over {total_frames} frames in {parquet_path.name}...")
-        
+        # Old datasets were recorded with the motor's physical zero offset from the
+        # URDF zero on wrist_roll. Correct in motor space before FK.
+        WRIST_ROLL_FK_CORRECTION_MOTOR = -2*45  # motor units
+        wr_idx = so101.JOINT_NAMES.index("wrist_roll")
+
         for i in tqdm(range(total_frames)):
-            state = df.iloc[i]["observation.state"] # Array of joints in degrees (for SOARM101)
-            
-            # Calculate for observation.state
-            state_deg = np.rad2deg(so101.motor_to_rad(state))
+            state = df.iloc[i]["observation.state"]
+            clean_states.append(state)
+
+            # Apply motor-space correction, then convert to degrees for FK
+            state_corrected = np.array(state, dtype=np.float64)
+            state_corrected[wr_idx] += WRIST_ROLL_FK_CORRECTION_MOTOR
+            state_deg = so101.motor_to_urdf_deg(state_corrected)
             T_matrix = kinematics.forward_kinematics(state_deg)
             pos = T_matrix[:3, 3]
             r6d = mat_to_rotate6d(T_matrix[:3, :3])
@@ -117,16 +125,17 @@ def main():
             # Calculate for action if present
             if has_action:
                 action = df.iloc[i]["action"]
-                action_deg = np.rad2deg(so101.motor_to_rad(action))
+                clean_actions.append(action)
+
+                action_corrected = np.array(action, dtype=np.float64)
+                action_corrected[wr_idx] += WRIST_ROLL_FK_CORRECTION_MOTOR
+                action_deg = so101.motor_to_urdf_deg(action_corrected)
                 T_matrix_act = kinematics.forward_kinematics(action_deg)
                 pos_act = T_matrix_act[:3, 3]
                 r6d_act = mat_to_rotate6d(T_matrix_act[:3, :3])
                 gripper_act = [action[-1]]
                 eef_actions.append(np.concatenate([pos_act, r6d_act, gripper_act]))
 
-        # Prepare explicitly typed PyArrow data to save space (float32 vs float64)
-        # and use FixedSizeList for efficiency.
-        
         # We'll build the table from a dictionary of arrays with explicit types
         data_to_write = {}
         schema_fields = []
@@ -144,15 +153,15 @@ def main():
             data_to_write["action"] = action_fixed
             schema_fields.append(pa.field("action", pa.list_(pa.float32(), 10)))
 
-        # 3. Observation Joint Positions (6D)
-        joint_pos_arr = np.array(df["observation.state"].tolist(), dtype=np.float32).flatten()
+        # 3. Observation Joint Positions (6D - CLEANED)
+        joint_pos_arr = np.array(clean_states, dtype=np.float32).flatten()
         joint_pos_fixed = pa.FixedSizeListArray.from_arrays(joint_pos_arr, 6)
         data_to_write["observation.joint_positions"] = joint_pos_fixed
         schema_fields.append(pa.field("observation.joint_positions", pa.list_(pa.float32(), 6)))
 
-        # 4. Action Joints (6D)
+        # 4. Action Joints (6D - CLEANED)
         if has_action:
-            action_joints_arr = np.array(df["action"].tolist(), dtype=np.float32).flatten()
+            action_joints_arr = np.array(clean_actions, dtype=np.float32).flatten()
             action_joints_fixed = pa.FixedSizeListArray.from_arrays(action_joints_arr, 6)
             data_to_write["action_joints"] = action_joints_fixed
             schema_fields.append(pa.field("action_joints", pa.list_(pa.float32(), 6)))
