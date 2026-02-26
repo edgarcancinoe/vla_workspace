@@ -78,13 +78,25 @@ POLICY_PIPELINE = None
 # --- Voice ---
 USE_VOICE          = True
 
-# --- SmolVLA
-CHUNK_SIZE         = 30
-N_ACTION_STEPS     = 30
+# --- Action Chunking (shared across policy types) ---
+# NOTE: For XVLA, these are applied BEFORE model construction so they
+#       actually affect the model's generate_actions() chunk size.
+#       Set to None to use whatever the pretrained checkpoint has.
+#
+# IMPORTANT: XVLA outputs near-constant chunks (all 30 waypoints ≈ same
+# target). n_action_steps controls how many steps are consumed before
+# re-running inference. Lower = more responsive but higher compute cost.
+#   - 30: one inference per second (jerky, ~5mm jumps)
+#   -  5: six inferences per second (smoother, more responsive)
+#   -  1: inference every step (smoothest but slowest, only for testing)
+CHUNK_SIZE         = None  # None = use pretrained default (30 for this checkpoint)
+N_ACTION_STEPS     = 5     # Use 5 of 30 predicted steps, then re-infer for responsiveness
+
+# --- SmolVLA-specific ---
 MAX_ACTION_TOKENS  = None
 POLICY_DELAY       = 0
 
-# --- XVLA
+# --- XVLA-specific ---
 NUM_IMAGE_VIEWS            = 3
 NUM_EMPTY_CAMERAS          = 1
 ACTION_MODE                = "so101_ee6d" # "so101_ee6d" | "so101_joint"
@@ -431,12 +443,23 @@ def set_trajectory_visualization(policy, so101: SO101Control, viz, postprocessor
                 chunk = [result] + remaining
                 
                 if POLICY_TYPE == "xvla":
-                    print(f"\n[XVLA Inference] Model Output (raw tensor):")
-                    print(result)
+                    print(f"\n{'='*60}")
+                    print(f"[XVLA Inference] Raw model output (normalized space):")
+                    if hasattr(result, 'shape'):
+                        print(f"  shape={list(result.shape)}, dtype={result.dtype}")
+                        flat = result.squeeze()
+                        for i, name in enumerate(action_names):
+                            if i < len(flat):
+                                print(f"    [{i}] {name:16s} = {float(flat[i]):+.6f} (raw/normalized)")
                     decoded_first = _decode_tensor(result)
-                    print(f"[XVLA Inference] Decoded First Action:")
-                    print(decoded_first)
-                    print(f"[XVLA Inference] Chunk size: {len(chunk)}\n")
+                    if decoded_first is not None and hasattr(decoded_first, 'shape'):
+                        print(f"  After postprocessor (unnormalized):")
+                        flat_d = decoded_first.squeeze()
+                        for i, name in enumerate(action_names):
+                            if i < len(flat_d):
+                                print(f"    [{i}] {name:16s} = {float(flat_d[i]):+.6f} (real-world)")
+                    print(f"  Chunk size: {len(chunk)} waypoints")
+                    print(f"{'='*60}\n")
 
                 print(f"[viz] New inference chunk: {len(chunk)} waypoints")
                 xyz_list  = []
@@ -469,11 +492,19 @@ def set_trajectory_visualization(policy, so101: SO101Control, viz, postprocessor
 
                 if xyz_list:
                     xyz_arr = np.array(xyz_list)
+                    total_disp = np.linalg.norm(xyz_arr[-1] - xyz_arr[0])
+                    max_step = max(np.linalg.norm(xyz_arr[i+1] - xyz_arr[i]) for i in range(len(xyz_arr)-1)) if len(xyz_arr) > 1 else 0
                     print(
                         f"[viz] Predicted trajectory: {len(xyz_list)}/{len(chunk)} valid | "
-                        f"x=[{xyz_arr[:,0].min():.3f},{xyz_arr[:,0].max():.3f}]  "
-                        f"y=[{xyz_arr[:,1].min():.3f},{xyz_arr[:,1].max():.3f}]  "
-                        f"z=[{xyz_arr[:,2].min():.3f},{xyz_arr[:,2].max():.3f}]"
+                        f"x=[{xyz_arr[:,0].min():.4f},{xyz_arr[:,0].max():.4f}]  "
+                        f"y=[{xyz_arr[:,1].min():.4f},{xyz_arr[:,1].max():.4f}]  "
+                        f"z=[{xyz_arr[:,2].min():.4f},{xyz_arr[:,2].max():.4f}]"
+                    )
+                    print(
+                        f"[viz] Total displacement: {total_disp*1000:.1f}mm | "
+                        f"Max single step: {max_step*1000:.2f}mm | "
+                        f"Start: ({xyz_arr[0,0]:.4f},{xyz_arr[0,1]:.4f},{xyz_arr[0,2]:.4f}) "
+                        f"End: ({xyz_arr[-1,0]:.4f},{xyz_arr[-1,1]:.4f},{xyz_arr[-1,2]:.4f})"
                     )
                     # Replace the previous trajectory entirely
                     viz.viewer["infer_traj"].delete()
@@ -593,45 +624,82 @@ def get_policy(policy_type: str, path: str, device: str):
     """
     Utility to load and configure a policy based on its type.
     Uses LeRobot's factory to resolve policy classes elegantly.
+
+    IMPORTANT: For XVLA, config overrides (chunk_size, action_mode, etc.)
+    must be applied BEFORE from_pretrained() because XVLAModel.__init__()
+    copies config values at construction time. Overriding policy.config
+    after construction has NO effect on model internals like
+    model.chunk_size or model.action_space.
     """
     from lerobot.policies.factory import get_policy_class
-    
+    from lerobot.configs.policies import PreTrainedConfig
+
     print(f"[x] Loading policy {path} ({policy_type}) on {device}")
     policy_cls = get_policy_class(policy_type)
-    policy = policy_cls.from_pretrained(path, device=device)
-    
-    # Common configurations
-    if hasattr(policy.config, "chunk_size"):
-        policy.config.chunk_size = CHUNK_SIZE
-    if hasattr(policy.config, "n_action_steps"):
-        policy.config.n_action_steps = N_ACTION_STEPS
-        
-    # smolvla specific
+
     INCLUDE_EEF_STATE = False
-    if policy_type == "smolvla":
+
+    if policy_type == "xvla":
+        # ── Step 1: Load config first, apply overrides, THEN construct ──
+        config = PreTrainedConfig.from_pretrained(path)
+        config.device = device  # Ensure model lands on the right device
+
+        # Apply chunk/action-step overrides (None = keep pretrained default)
+        if CHUNK_SIZE is not None:
+            config.chunk_size = CHUNK_SIZE
+        if N_ACTION_STEPS is not None:
+            config.n_action_steps = N_ACTION_STEPS
+
+        config.n_obs_steps     = NUM_XVLA_OBS_STEPS
+        config.empty_cameras   = NUM_EMPTY_CAMERAS
+        config.num_image_views = NUM_IMAGE_VIEWS
+        config.action_mode     = ACTION_MODE
+
+        # Cap tokenizer_max_length so the total sequence fits within
+        # the transformer's max_len_seq (512 for this checkpoint).
+        max_safe_vlm_tokens = 50
+        if getattr(config, "tokenizer_max_length", 0) > max_safe_vlm_tokens:
+            print(f"[!] Capping tokenizer_max_length from {config.tokenizer_max_length} → {max_safe_vlm_tokens} "
+                  f"to stay within max_len_seq={getattr(config, 'max_len_seq', '?')}")
+            config.tokenizer_max_length = max_safe_vlm_tokens
+
+        # ── Step 2: Construct model with the correct config ──
+        policy = policy_cls.from_pretrained(path, config=config, device=device)
+        INCLUDE_EEF_STATE = True
+
+        # ── Step 3: Post-creation verification ──
+        action_space_name = type(policy.model.action_space).__name__
+        norm_mode = config.normalization_mapping.get("ACTION", "?")
+        print(f"[x] XVLA loaded successfully:")
+        print(f"    model.chunk_size    = {policy.model.chunk_size}")
+        print(f"    config.chunk_size   = {policy.config.chunk_size}")
+        print(f"    n_action_steps      = {policy.config.n_action_steps}")
+        print(f"    action_mode         = {policy.config.action_mode}")
+        print(f"    action_space        = {action_space_name} (dim={policy.model.dim_action})")
+        print(f"    normalization(ACTION)= {norm_mode}")
+        print(f"    num_denoising_steps = {policy.config.num_denoising_steps}")
+        assert policy.model.chunk_size == policy.config.chunk_size, (
+            f"MISMATCH: model.chunk_size={policy.model.chunk_size} != "
+            f"config.chunk_size={policy.config.chunk_size}. "
+            f"Config override was not applied before model construction!"
+        )
+
+    elif policy_type == "smolvla":
+        policy = policy_cls.from_pretrained(path, device=device)
+        if CHUNK_SIZE is not None and hasattr(policy.config, "chunk_size"):
+            policy.config.chunk_size = CHUNK_SIZE
+        if N_ACTION_STEPS is not None and hasattr(policy.config, "n_action_steps"):
+            policy.config.n_action_steps = N_ACTION_STEPS
         if MAX_ACTION_TOKENS:
             policy.config.max_action_tokens = MAX_ACTION_TOKENS
-            
-    # xvla specific 
-    if policy_type == "xvla":
-        policy.config.n_obs_steps   = NUM_XVLA_OBS_STEPS
-        policy.config.empty_cameras = NUM_EMPTY_CAMERAS
-        policy.config.num_image_views = NUM_IMAGE_VIEWS
-        policy.config.action_mode   = ACTION_MODE
 
-        # Cap tokenizer_max_length so the total sequence
-        # (action_tokens + VLM_tokens + aux_visual_tokens) fits within
-        # the transformer's max_len_seq (512 for this checkpoint).
-        # The final model's policy_preprocessor.json uses max_length=50.
-        # Checkpoints missing policy_preprocessor.json (e.g. step-XXXXX) need this cap.
-        max_safe_vlm_tokens = 50  # matches the training value in policy_preprocessor.json
-        if getattr(policy.config, "tokenizer_max_length", 0) > max_safe_vlm_tokens:
-            print(f"[!] Capping tokenizer_max_length from {policy.config.tokenizer_max_length} → {max_safe_vlm_tokens} "
-                  f"to stay within max_len_seq={getattr(policy.config, 'max_len_seq', '?')}")
-            policy.config.tokenizer_max_length = max_safe_vlm_tokens
+    else:
+        policy = policy_cls.from_pretrained(path, device=device)
+        if CHUNK_SIZE is not None and hasattr(policy.config, "chunk_size"):
+            policy.config.chunk_size = CHUNK_SIZE
+        if N_ACTION_STEPS is not None and hasattr(policy.config, "n_action_steps"):
+            policy.config.n_action_steps = N_ACTION_STEPS
 
-        INCLUDE_EEF_STATE = True
-        
     policy.reset()
     return policy, INCLUDE_EEF_STATE
 

@@ -31,8 +31,8 @@ WRIST_ROLL_OFFSET_MOTOR = (WRIST_ROLL_OFFSET_DEG / limit_deg) * 100.0
 from lerobot.cameras.opencv.configuration_opencv import OpenCVCameraConfig
 from lerobot.robots.so100_follower.config_so100_follower import SO100FollowerConfig
 from lerobot.robots.so100_follower.so100_follower import SO100Follower
-from lerobot.teleoperators.so100_leader.config_so100_leader import SO100LeaderConfig
-from lerobot.teleoperators.so100_leader.so100_leader import SO100Leader
+from lerobot.teleoperators.so_leader.config_so_leader import SOLeaderTeleopConfig
+from lerobot.teleoperators.so_leader.so_leader import SOLeader
 from lerobot.utils.visualization_utils import init_rerun, log_rerun_data
 
 parser = argparse.ArgumentParser()
@@ -81,14 +81,14 @@ robot_config = SO100FollowerConfig(
     calibration_dir=calibration_dir
 )
 
-teleop_config = SO100LeaderConfig(
+teleop_config = SOLeaderTeleopConfig(
     port=leader_port,
     id=LEADER_ID,
     calibration_dir=calibration_dir
 )
 
 robot = SO100Follower(robot_config)
-teleop_device = SO100Leader(teleop_config)
+teleop_device = SOLeader(teleop_config)
 
 # Kinematics Control for Degree Conversion
 URDF_PATH = config_data.get("robot", {}).get("urdf_path")
