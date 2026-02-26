@@ -4,6 +4,7 @@ data/
 data_backup/
 visualizations/
 tasks/
+lerobot/
 
 # Logs
 logs/

@@ -49,7 +49,7 @@ BASE_NAME="xvla-base"
 OPTIMIZER_LR=1e-4
 
 # Policy Configuration
-ACTION_MODE="${ACTION_MODE:-auto}"    # Options: "auto", "ee6d" (or specific to your robot)
+ACTION_MODE="${ACTION_MODE:-so101_ee6d}"    # Options: "auto", "ee6d" (or specific to your robot)
 EMPTY_CAMERAS="${EMPTY_CAMERAS:-1}"   # Number of empty camera slots (if needed)
 POLICY_NUM_IMAGE_VIEWS="${POLICY_NUM_IMAGE_VIEWS:-2}"
 
@@ -64,7 +64,7 @@ AUGMENTATION_DEGREES="${AUGMENTATION_DEGREES:-[-2.5, 2.5]}"
 AUGMENTATION_TRANSLATE="${AUGMENTATION_TRANSLATE:-[0.025, 0.025]}"
 
 # Policy name to use when saving -------------------
-POLICY_NAME="${BASE_NAME}_finetuned_${DATASET_NAME_STR}"
+POLICY_NAME="${BASE_NAME}_finetuned_${DATASET_NAME_STR}_${ACTION_MODE}"
 # Append _aug suffix if augmentation is enabled
 if [ "${ENABLE_AUGMENTATION}" = "true" ]; then
     POLICY_NAME="${POLICY_NAME}_aug"
