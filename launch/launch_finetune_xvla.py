@@ -2,13 +2,15 @@ import os
 import sys
 import subprocess
 import datetime
+import itertools
+import json
 from pathlib import Path
 
 # ============================================================================
-# SmolVLA Finetuning Launch Script (Python Version)
+# X-VLA Finetuning Launch Script (Grid Search)
 # ============================================================================
-# This script launches the finetuning process for the SmolVLA model using 
-# lerobot code.
+# This script launches sequential finetuning runs for the SmolVLA model 
+# iterating over combinations of action modes and normalization maps.
 # ============================================================================
 
 # Check if we're already in the vla environment
@@ -42,15 +44,19 @@ BASE_USER = "lerobot"
 BASE_NAME = "xvla-base"
 OPTIMIZER_LR = "1e-4"
 
-# Policy Configuration
-ACTION_MODE = os.environ.get("ACTION_MODE", "so101_ee6d")    # Options: "auto", "ee6d" (or specific to your robot)
-EMPTY_CAMERAS = os.environ.get("EMPTY_CAMERAS", "1")         # Number of empty camera slots (if needed)
-POLICY_NUM_IMAGE_VIEWS = os.environ.get("POLICY_NUM_IMAGE_VIEWS", "2")
+# Policy Configuration Grids
+ACTION_MODES = [
+    "so101_ee6d", 
+    "so101_joint"
+]
 
-# Normalization mapping per feature type.
-# Supported modes: IDENTITY (no-op), MIN_MAX (→ [-1,1]), MEAN_STD (zero-mean unit-var),
-#                  QUANTILES (q01/q99 → [-1,1]), QUANTILE10 (q10/q90 → [-1,1])
-NORMALIZATION_MAPPING = os.environ.get("NORMALIZATION_MAPPING", '{"ACTION": "MEAN_STD", "STATE": "MEAN_STD", "VISUAL": "IDENTITY"}')
+NORMALIZATION_MAPPINGS = [
+    '{"ACTION": "MEAN_STD", "STATE": "MEAN_STD", "VISUAL": "IDENTITY"}',
+    '{"ACTION": "MEAN_STD", "STATE": "IDENTITY", "VISUAL": "IDENTITY"}',
+]
+
+EMPTY_CAMERAS = os.environ.get("EMPTY_CAMERAS", "1")
+POLICY_NUM_IMAGE_VIEWS = os.environ.get("POLICY_NUM_IMAGE_VIEWS", "2")
 
 # Model paths
 BASE_POLICY_PATH = f"{BASE_USER}/{BASE_NAME}"
@@ -60,13 +66,6 @@ BASE_POLICY_PATH = f"{BASE_USER}/{BASE_NAME}"
 ENABLE_AUGMENTATION = os.environ.get("ENABLE_AUGMENTATION", "false")
 AUGMENTATION_DEGREES = os.environ.get("AUGMENTATION_DEGREES", "[-2.5, 2.5]")
 AUGMENTATION_TRANSLATE = os.environ.get("AUGMENTATION_TRANSLATE", "[0.025, 0.025]")
-
-# Policy name to use when saving -------------------
-POLICY_NAME = f"{BASE_NAME}_finetuned_{DATASET_NAME_STR}_{ACTION_MODE}"
-# Append _aug suffix if augmentation is enabled
-if ENABLE_AUGMENTATION == "true":
-    POLICY_NAME += "_aug"
-# --------------------------------------------------
 
 # Workspace path detection -------------------------
 SCRIPT_DIR = Path(__file__).resolve().parent
@@ -91,32 +90,23 @@ NUM_WORKERS = os.environ.get("NUM_WORKERS", "4")
 SAVE_FREQ = os.environ.get("SAVE_FREQ", "20000")
 PUSH_HF_EVERY = os.environ.get("PUSH_HF_EVERY", "20000")
 
-# ============================================================================
-# OUTPUT & STORAGE CONFIGURATION
-# ============================================================================
-# 1. IDENTIFIERS & LOGGING
-TIMESTAMP = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
-
-# Job name for logging and Weights & Biases
-JOB_NAME = os.environ.get("JOB_NAME", f"{POLICY_NAME}_{TIMESTAMP}")
-
-# 2. LOCAL OUTPUT (Checkpoints & Logs)
-# Directory where training logs and checkpoints will be saved LOCALLY
-OUTPUT_DIR = os.environ.get("OUTPUT_DIR", str(WORKSPACE_DIR / "outputs" / "train" / f"{POLICY_NAME}_{TIMESTAMP}"))
-
 # Resume configuration
 RESUME = os.environ.get("RESUME", "false")
-
-# 3. HUGGING FACE HUB OUTPUT
-# Set to 'true' to push model to Hugging Face Hub, 'false' to keep local only
 POLICY_PUSH_TO_HUB = os.environ.get("POLICY_PUSH_TO_HUB", "true")
+WANDB_ENABLE = "true"
 
-# HuggingFace Hub repository ID to push the trained model to
-POLICY_REPO_ID = os.environ.get("POLICY_REPO_ID", f"{HF_USER}/{POLICY_NAME}")
-
-# Weights & Biases Configuration
-WANDB_ENABLE = "false"
-
+# ============================================================================
+# HELPER FOR NAMING
+# ============================================================================
+def get_norm_suffix(mapping_str):
+    """Generate a clean identifier for the parameter name based on json keys."""
+    try:
+        m = json.loads(mapping_str)
+        am = str(m.get("ACTION", "ID")).replace("_", "").lower()[:1]
+        sm = str(m.get("STATE", "ID")).replace("_", "").lower()[:1]
+        return f"a-{am}_s-{sm}"
+    except Exception:
+        return "custom"
 
 # ============================================================================
 # DEVICE SETUP
@@ -133,7 +123,7 @@ else:
 # ============================================================================
 
 print("============================================================================")
-print("SmolVLA Finetuning Launch Script")
+print("SmolVLA Finetuning Launch Script (Grid Search)")
 print("============================================================================")
 print()
 
@@ -158,88 +148,90 @@ if HF_USER == "YOUR_HF_USERNAME":
     if response.strip().lower() != 'y':
         sys.exit(1)
 
-# Display configuration
-print("Configuration:")
-print(f"  Dataset:        {DATASET_REPO_ID}")
-print(f"  Batch Size:     {BATCH_SIZE}")
-print(f"  Steps:          {STEPS}")
-print(f"  Save Freq:      {SAVE_FREQ}")
-print(f"  Push HF Every:  {PUSH_HF_EVERY}")
-print(f"  Output Dir:     {OUTPUT_DIR}")
-print(f"  Job Name:       {JOB_NAME}")
-print(f"  Device:         {DEVICE}")
-print(f"  CUDA_VISIBLE_DEVICES: {os.environ['CUDA_VISIBLE_DEVICES']}")
-print(f"  W&B Enabled:    {WANDB_ENABLE}")
-print(f"  Base Policy:    {BASE_POLICY_PATH}")
-print(f"  Policy Repo ID: {POLICY_REPO_ID}")
-print(f"  Push to Hub:    {POLICY_PUSH_TO_HUB}")
-print(f"  Norm Mapping:   {NORMALIZATION_MAPPING}\n")
-
-# Check W&B login status if enabled
-if WANDB_ENABLE == "true":
-    try:
-        import wandb
-        print("✓ wandb package found\n")
-    except ImportError:
-        print("WARNING: wandb package not found!")
-        print("Install with: pip install wandb\n")
-
-
+# ============================================================================
+# RUN GRID SEARCH LOOP
+# ============================================================================
 print("============================================================================")
-print("Starting training...")
+print(f"Starting {len(ACTION_MODES) * len(NORMALIZATION_MAPPINGS)} grid search iterations...")
 print("============================================================================")
 print()
 
-# ============================================================================
-# LAUNCH TRAINING
-# ============================================================================
+for action_mode, norm_mapping in itertools.product(ACTION_MODES, NORMALIZATION_MAPPINGS):
+    norm_suffix = get_norm_suffix(norm_mapping)
+    
+    # --------------------------------------------------
+    # Policy name to use when saving
+    # --------------------------------------------------
+    # Append the action mode and norm mapping to unique-ify the runs
+    POLICY_NAME = f"{BASE_NAME}_finetuned_{DATASET_NAME_STR}_{action_mode}_{norm_suffix}"
+    if ENABLE_AUGMENTATION == "true":
+        POLICY_NAME += "_aug"
+        
+    TIMESTAMP = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+    JOB_NAME = os.environ.get("JOB_NAME", f"{POLICY_NAME}_{TIMESTAMP}")
+    OUTPUT_DIR = os.environ.get("OUTPUT_DIR", str(WORKSPACE_DIR / "outputs" / "train" / f"{POLICY_NAME}_{TIMESTAMP}"))
+    POLICY_REPO_ID = f"{HF_USER}/{POLICY_NAME}"
 
-cmd = [
-    sys.executable, "-m", "lerobot.scripts.lerobot_train",
-    f"--policy.path={BASE_POLICY_PATH}",
-    f"--policy.repo_id={POLICY_REPO_ID}",
-    f"--policy.push_to_hub={POLICY_PUSH_TO_HUB}",
-    f"--dataset.repo_id={DATASET_REPO_ID}",
-    "--rename_map={\"observation.images.main\": \"observation.images.image\", \"observation.images.secondary\": \"observation.images.image2\"}",
-    f"--dataset.image_transforms.enable={ENABLE_AUGMENTATION}",
-    f"--dataset.image_transforms.tfs={{\"affine\": {{\"type\": \"RandomAffine\", \"kwargs\": {{\"degrees\": {AUGMENTATION_DEGREES}, \"translate\": {AUGMENTATION_TRANSLATE}}}}}}}",
-    f"--batch_size={BATCH_SIZE}",
-    f"--steps={STEPS}",
-    f"--log_freq={LOG_FREQ}",
-    f"--eval_freq={EVAL_FREQ}",
-    f"--save_freq={SAVE_FREQ}",
-    f"--push_every={PUSH_HF_EVERY}",
-    f"--output_dir={OUTPUT_DIR}",
-    f"--job_name={JOB_NAME}",
-    f"--policy.device={DEVICE}",
-    f"--wandb.enable={WANDB_ENABLE}",
-    f"--num_workers={NUM_WORKERS}",
-    f"--resume={RESUME}",
-    "--policy.dtype=bfloat16",
-    f"--policy.action_mode={ACTION_MODE}",
-    f"--policy.empty_cameras={EMPTY_CAMERAS}",
-    "--policy.freeze_vision_encoder=false",
-    "--policy.freeze_language_encoder=false",
-    "--policy.train_policy_transformer=true",
-    "--policy.train_soft_prompts=true",
-    f"--policy.num_image_views={POLICY_NUM_IMAGE_VIEWS}",
-    f"--policy.normalization_mapping={NORMALIZATION_MAPPING}",
-]
+    print("\n" + "="*76)
+    print("LAUNCHING TRAINING RUN")
+    print("="*76)
+    print(f"  Dataset:        {DATASET_REPO_ID}")
+    print(f"  Action Mode:    {action_mode}")
+    print(f"  Norm Mapping:   {norm_mapping}")
+    print(f"  Output Dir:     {OUTPUT_DIR}")
+    print(f"  Policy Repo ID: {POLICY_REPO_ID}")
+    print("="*76 + "\n")
 
-try:
-    # Run the command
-    exit_code = subprocess.call(cmd, env=os.environ.copy())
-except KeyboardInterrupt:
-    exit_code = 130
-except Exception as e:
-    print(f"Error launching training: {e}")
-    exit_code = 1
+    cmd = [
+        sys.executable, "-m", "lerobot.scripts.lerobot_train",
+        f"--policy.path={BASE_POLICY_PATH}",
+        f"--policy.repo_id={POLICY_REPO_ID}",
+        f"--policy.push_to_hub={POLICY_PUSH_TO_HUB}",
+        f"--dataset.repo_id={DATASET_REPO_ID}",
+        "--rename_map={\"observation.images.main\": \"observation.images.image\", \"observation.images.secondary\": \"observation.images.image2\"}",
+        f"--dataset.image_transforms.enable={ENABLE_AUGMENTATION}",
+        f"--dataset.image_transforms.tfs={{\"affine\": {{\"type\": \"RandomAffine\", \"kwargs\": {{\"degrees\": {AUGMENTATION_DEGREES}, \"translate\": {AUGMENTATION_TRANSLATE}}}}}}}",
+        f"--batch_size={BATCH_SIZE}",
+        f"--steps={STEPS}",
+        f"--log_freq={LOG_FREQ}",
+        f"--eval_freq={EVAL_FREQ}",
+        f"--save_freq={SAVE_FREQ}",
+        f"--push_every={PUSH_HF_EVERY}",
+        f"--output_dir={OUTPUT_DIR}",
+        f"--job_name={JOB_NAME}",
+        f"--policy.device={DEVICE}",
+        f"--wandb.enable={WANDB_ENABLE}",
+        f"--num_workers={NUM_WORKERS}",
+        f"--resume={RESUME}",
+        "--policy.dtype=bfloat16",
+        f"--policy.action_mode={action_mode}",
+        f"--policy.empty_cameras={EMPTY_CAMERAS}",
+        "--policy.freeze_vision_encoder=false",
+        "--policy.freeze_language_encoder=false",
+        "--policy.train_policy_transformer=true",
+        "--policy.train_soft_prompts=true",
+        f"--policy.num_image_views={POLICY_NUM_IMAGE_VIEWS}",
+        f"--policy.normalization_mapping={norm_mapping}",
+    ]
+
+    try:
+        # Run the command
+        exit_code = subprocess.call(cmd, env=os.environ.copy())
+    except KeyboardInterrupt:
+        print("\n\nUser interrupted with Ctrl+C. Exiting grid search.")
+        sys.exit(130)
+    except Exception as e:
+        print(f"Error launching training: {e}")
+        exit_code = 1
+
+    if exit_code != 0:
+        print(f"\nTraining failed with exit code: {exit_code}")
+        print("Stopping further grid search iterations.")
+        sys.exit(exit_code)
+    
+    print(f"\nCompleted run for {action_mode} | {norm_suffix}")
 
 print("\n============================================================================")
-if exit_code == 0:
-    print("Training completed successfully!")
-else:
-    print(f"Training failed with exit code: {exit_code}")
+print("All requested training runs completed successfully!")
 print("============================================================================")
-
-sys.exit(exit_code)
+sys.exit(0)
