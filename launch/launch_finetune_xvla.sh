@@ -53,6 +53,13 @@ ACTION_MODE="${ACTION_MODE:-so101_ee6d}"    # Options: "auto", "ee6d" (or specif
 EMPTY_CAMERAS="${EMPTY_CAMERAS:-1}"   # Number of empty camera slots (if needed)
 POLICY_NUM_IMAGE_VIEWS="${POLICY_NUM_IMAGE_VIEWS:-2}"
 
+# Normalization mapping per feature type.
+# Supported modes: IDENTITY (no-op), MIN_MAX (→ [-1,1]), MEAN_STD (zero-mean unit-var),
+#                  QUANTILES (q01/q99 → [-1,1]), QUANTILE10 (q10/q90 → [-1,1])
+# This value is embedded in the saved config.json and restored automatically at inference.
+# Override per-run:  NORMALIZATION_MAPPING='{"ACTION":"MIN_MAX","STATE":"IDENTITY","VISUAL":"IDENTITY"}'
+NORMALIZATION_MAPPING="${NORMALIZATION_MAPPING:-{\"ACTION\": \"IDENTITY\", \"STATE\": \"IDENTITY\", \"VISUAL\": \"IDENTITY\"}}"
+
 # Model paths
 BASE_POLICY_PATH="${BASE_USER}/${BASE_NAME}"
 # BASE_POLICY_PATH="chamborgir/smolvla_pickplace_20k"
@@ -87,7 +94,7 @@ DATASET_REPO_ID="${HF_USER}/${DATASET_NAME}"
 # Training Hyperparameters
 BATCH_SIZE="${BATCH_SIZE:-8}"
 STEPS="${STEPS:-60000}"
-LOG_FREQ="${LOG_FREQ:-100}"
+LOG_FREQ="${LOG_FREQ:-1000}"
 EVAL_FREQ="${EVAL_FREQ:--1}"
 
 DEVICE="${DEVICE:-cuda}"
@@ -101,7 +108,7 @@ NUM_WORKERS="${NUM_WORKERS:-4}"
 # Gradient accumulation steps (effective batch size = BATCH_SIZE * GRAD_ACCUM)
 # GRAD_ACCUM="${GRAD_ACCUM:-1}"
 
-SAVE_FREQ="${SAVE_FREQ:-30000}"
+SAVE_FREQ="${SAVE_FREQ:-20000}"
 PUSH_HF_EVERY="${PUSH_HF_EVERY:-20000}"
 
 # Evaluation frequency
@@ -213,6 +220,7 @@ echo "  W&B Enabled:    ${WANDB_ENABLE}"
 echo "  Base Policy:    ${BASE_POLICY_PATH}"
 echo "  Policy Repo ID: ${POLICY_REPO_ID}"
 echo "  Push to Hub:    ${POLICY_PUSH_TO_HUB}"
+echo "  Norm Mapping:   ${NORMALIZATION_MAPPING}"
 echo ""
 
 # Check W&B login status if enabled
@@ -275,7 +283,8 @@ python -m lerobot.scripts.lerobot_train \
   --policy.freeze_language_encoder=false \
   --policy.train_policy_transformer=true \
   --policy.train_soft_prompts=true \
-  --policy.num_image_views="${POLICY_NUM_IMAGE_VIEWS}"
+  --policy.num_image_views="${POLICY_NUM_IMAGE_VIEWS}" \
+  --policy.normalization_mapping="${NORMALIZATION_MAPPING}"
   
 
 # Capture exit code

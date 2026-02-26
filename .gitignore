@@ -5,6 +5,7 @@ data_backup/
 visualizations/
 tasks/
 lerobot/
+.claude/
 
 # Logs
 logs/
