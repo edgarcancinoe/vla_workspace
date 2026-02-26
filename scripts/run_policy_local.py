@@ -65,18 +65,16 @@ CAMERA_CONFIG_MAP = config_data.get("cameras", {})
 
 # --- Policy ---
 # POLICY_PATH = "edgarcancinoe/xvla-base_finetuned_soarm101_pickplace_orange_050e_fw_open"
-# POLICY_PATH = "edgarcancinoe/xvla-base_finetuned_soarm101_pickplace_orange_240e_fw_closed"
-
 # 6D
-POLICY_PATH = "edgarcancinoe/xvla-base_finetuned_soarm101_pickplace_6d"
-# POLICY_PATH = "edgarcancinoe/xvla-base_finetuned_soarm101_pickplace_6d_240e_fw_closed"
+# POLICY_PATH = "edgarcancinoe/xvla-base_finetuned_soarm101_pickplace_10d_so101_ee6d-step-20000"
+POLICY_PATH = "edgarcancinoe/xvla-base_finetuned_soarm101_pickplace_10d_so101_ee6d"
 
 POLICY_TYPE = "xvla" # "xvla" | "smolvla"
 DEVICE      = "mps"  # "cuda" | "mps" | "cpu"
 
 TASK_DESCRIPTION = "Pick up orange cube and place inside white box."
-# Pipeline selection: None (default) | 'xvla_default'
-POLICY_PIPELINE = None 
+POLICY_PIPELINE = None
+
 # --- Voice ---
 USE_VOICE          = True
 
@@ -84,17 +82,17 @@ USE_VOICE          = True
 CHUNK_SIZE         = 30
 N_ACTION_STEPS     = 30
 MAX_ACTION_TOKENS  = None
-POLICY_DELAY       = 0.75
+POLICY_DELAY       = 0
 
 # --- XVLA
 NUM_IMAGE_VIEWS            = 3
 NUM_EMPTY_CAMERAS          = 1
-ACTION_MODE                = "auto"
+ACTION_MODE                = "so101_ee6d" # "so101_ee6d" | "so101_joint"
 NUM_XVLA_OBS_STEPS         = 1
 
 # --- Evaluation & Dataset ---
 NUM_EPISODES               = 5
-FPS                        = 30
+FPS                        = 30 
 EPISODE_TIME_SEC           = 60
 HF_USER                    = "edgarcancinoe"
 EVAL_DATASET_NAME          = "eval_" + POLICY_PATH.split("/")[-1] 
@@ -117,13 +115,13 @@ HOME_FPS = FPS
 USE_MESHCAT_VIZ                = True   # Set False to disable
 
 # --- Rerun Visualization ---
-USE_RERUN                      = False  # Set True to enable Rerun telemetry
+USE_RERUN                      = True  # Set True to enable Rerun telemetry
 
 # --- Dry Run (visualization only, no robot commands) ---
 # Set True to run policy inference + Meshcat visualization WITHOUT sending any
 # commands to the real robot.  Useful for inspecting predicted trajectories
 # before committing to execution.  Robot is still connected for reading state.
-DRY_RUN                        = True
+DRY_RUN                        = False
 
 # ─── EEF state feature names (must match training dataset schema) ─────────────
 EEF_STATE_NAMES = [
@@ -218,7 +216,7 @@ def set_custom_get_observation(robot, so101: SO101Control = None, include_eef_st
             elif v not in observation:
                 # CRITICAL: Ensure the expected key exists even if hardware fails
                 import torch
-                h, w = 360, 640 # Default fallback dimensions
+                h, w = 480, 640 # Default fallback dimensions
                 observation[v] = torch.zeros((h, w, 3), dtype=torch.uint8)
 
         return observation
@@ -244,8 +242,8 @@ def set_custom_send_action(robot, so101: SO101Control = None, viz=None, dry_run=
         """Update robot pose AND draw EEF axes at the gripper frame."""
         if not viz:
             return
-        viz.display(so101.motor_to_rad(motor_vals, use_polarities=True))
-        T = so101.fk(motor_vals, use_polarities=True)
+        viz.display(so101.motor_to_rad(motor_vals))
+        T = so101.fk(motor_vals)
         viz.add_axes("eef_axes", T[:3, 3], T[:3, :3], length=0.04)
 
     def patched_send_action(action, **kwargs):
@@ -316,8 +314,14 @@ def set_custom_send_action(robot, so101: SO101Control = None, viz=None, dry_run=
                 return current_motor_dict
             return base_action_func(current_motor_dict, **kwargs)
 
-        # Gripper override
-        target_motor[gr_idx] = gripper_val
+        # Gripper: model outputs sigmoid [0,1] (unnormalization is identity for gripper dim).
+        # Remap to physical motor degree range observed in the training dataset.
+        GRIPPER_CLOSED_DEG = 7.7   # dataset action.min[9]  → fully closed
+        GRIPPER_OPEN_DEG   = 41.7  # dataset action.max[9]  → fully open
+        gripper_motor_deg = GRIPPER_CLOSED_DEG + gripper_val * (GRIPPER_OPEN_DEG - GRIPPER_CLOSED_DEG)
+        target_motor[gr_idx] = gripper_motor_deg
+        if _step[0] % 30 == 1:
+            print(f"  [gripper] sigmoid={gripper_val:.3f} → motor={gripper_motor_deg:.1f}°")
         motor_dict = {f"{n}.pos": float(target_motor[i]) for i, n in enumerate(so101.JOINT_NAMES)}
 
         if dry_run:
@@ -380,7 +384,7 @@ def set_trajectory_visualization(policy, so101: SO101Control, viz, postprocessor
         # Motor action space — run FK
         try:
             motor = np.array([float(action_dict.get(f"{n}.pos", 0.0)) for n in so101.JOINT_NAMES])
-            return so101.fk(motor, use_polarities=True)[:3, 3]
+            return so101.fk(motor)[:3, 3]
         except Exception:
             return None
 
@@ -491,6 +495,68 @@ def set_trajectory_visualization(policy, so101: SO101Control, viz, postprocessor
     policy.select_action = patched_select_action
     print("[x] Policy patched for predicted trajectory visualization in Meshcat.")
 
+def _get_sliced_action_stats_for_mode(policy_path: str, action_mode: str) -> dict:
+    """
+    Load the checkpoint's 16D action mean/std and slice to the dims that
+    the given action space actually used during training:
+      so101_ee6d  -> dims [0:10]   (xyz + rot6d + gripper)
+      so101_joint -> dims [10:16]  (5 joints + gripper)
+
+    GRIPPER SPECIAL CASE:
+    The gripper dim goes through sigmoid() in action_space.postprocess BEFORE
+    the unnormalizer runs. That means the unnormalizer receives a value in [0,1],
+    not a MEAN_STD normalized value. Applying mean/std on top of sigmoid output
+    would compress the gripper into a tiny ~10-degree window.
+    Fix: force mean=0, std=1 for the gripper dim so unnormalization is a no-op
+    for it. The sigmoid output in [0,1] is then remapped to physical degrees
+    inside patched_send_action using GRIPPER_CLOSED / GRIPPER_OPEN constants.
+    """
+    from huggingface_hub import hf_hub_download
+    from safetensors import safe_open
+    import torch
+
+    _ACTION_MODE_SLICES = {
+        "so101_ee6d":  (0,  10),
+        "so101_joint": (10, 16),
+    }
+    # Gripper is always the LAST dim within the slice
+    _GRIPPER_LOCAL_IDX = {
+        "so101_ee6d":  9,   # dim 9 of the 10D slice
+        "so101_joint": 5,   # dim 5 of the 6D slice
+    }
+    if action_mode not in _ACTION_MODE_SLICES:
+        raise ValueError(
+            f"Unknown ACTION_MODE '{action_mode}' for stat slicing. "
+            f"Add it to _ACTION_MODE_SLICES in _get_sliced_action_stats_for_mode()."
+        )
+    s, e = _ACTION_MODE_SLICES[action_mode]
+    grip_idx = _GRIPPER_LOCAL_IDX[action_mode]
+
+    post_stats_file = hf_hub_download(
+        repo_id=policy_path,
+        filename="policy_postprocessor_step_0_unnormalizer_processor.safetensors",
+    )
+    with safe_open(post_stats_file, framework="pt") as f:
+        full_mean = f.get_tensor("action.mean")   # [16]
+        full_std  = f.get_tensor("action.std")    # [16]
+
+    sliced_mean = full_mean[s:e].clone()
+    sliced_std  = full_std[s:e].clone()
+
+    # Gripper: force identity so unnormalization is a no-op for that dim.
+    # The sigmoid [0,1] output will be remapped to motor degrees in send_action.
+    sliced_mean[grip_idx] = 0.0
+    sliced_std[grip_idx]  = 1.0
+
+    print(
+        f"[x] Unnormalizer: ACTION_MODE='{action_mode}' -> "
+        f"stats dims [{s}:{e}] ({e - s}D)  [gripper dim {grip_idx} = identity]\n"
+        f"    mean={[f'{v:.4f}' for v in sliced_mean.tolist()]}\n"
+        f"    std ={[f'{v:.4f}' for v in sliced_std.tolist()]}"
+    )
+    return {"action": {"mean": sliced_mean, "std": sliced_std}}
+
+
 def get_policy_processors(policy, dataset, pipeline_key: str | None = None):
     """
     Utility to choose pre- and post-processors by a key.
@@ -504,14 +570,23 @@ def get_policy_processors(policy, dataset, pipeline_key: str | None = None):
             config=policy.config,
             dataset_stats=dataset.meta.stats,
         )
-    
-    # Default behavior
-    print(f"[x] Using default abandoned/factory processors (Device: {DEVICE})")
+
+    # Build correctly-sliced unnorm stats for XVLA action modes that use a
+    # sub-slice of the 16D training action (so101_ee6d -> [0:10],
+    # so101_joint -> [10:16]).  For any other policy type pass no override.
+    postprocessor_overrides = {}
+    if POLICY_TYPE == "xvla" and ACTION_MODE in ("so101_ee6d", "so101_joint"):
+        sliced_stats = _get_sliced_action_stats_for_mode(POLICY_PATH, ACTION_MODE)
+        postprocessor_overrides["unnormalizer_processor"] = {"stats": sliced_stats}
+
+    # Default behavior: load processors from pretrained checkpoint
+    print(f"[x] Using default/factory processors (Device: {DEVICE})")
     return make_pre_post_processors(
         policy_cfg=policy,
         pretrained_path=POLICY_PATH,
         dataset_stats=dataset.meta.stats,
         preprocessor_overrides={"device_processor": {"device": DEVICE}},
+        postprocessor_overrides=postprocessor_overrides if postprocessor_overrides else None,
     )
 
 def get_policy(policy_type: str, path: str, device: str):
@@ -543,6 +618,17 @@ def get_policy(policy_type: str, path: str, device: str):
         policy.config.empty_cameras = NUM_EMPTY_CAMERAS
         policy.config.num_image_views = NUM_IMAGE_VIEWS
         policy.config.action_mode   = ACTION_MODE
+
+        # Cap tokenizer_max_length so the total sequence
+        # (action_tokens + VLM_tokens + aux_visual_tokens) fits within
+        # the transformer's max_len_seq (512 for this checkpoint).
+        # The final model's policy_preprocessor.json uses max_length=50.
+        # Checkpoints missing policy_preprocessor.json (e.g. step-XXXXX) need this cap.
+        max_safe_vlm_tokens = 50  # matches the training value in policy_preprocessor.json
+        if getattr(policy.config, "tokenizer_max_length", 0) > max_safe_vlm_tokens:
+            print(f"[!] Capping tokenizer_max_length from {policy.config.tokenizer_max_length} → {max_safe_vlm_tokens} "
+                  f"to stay within max_len_seq={getattr(policy.config, 'max_len_seq', '?')}")
+            policy.config.tokenizer_max_length = max_safe_vlm_tokens
 
         INCLUDE_EEF_STATE = True
         

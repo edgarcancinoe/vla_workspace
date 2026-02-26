@@ -69,7 +69,7 @@ def make_custom_xvla_processors(
         DeviceProcessorStep(device=config.device),
     ]
 
-    if config.use_delta:
+    if getattr(config, 'use_delta', False):
         input_steps.append(XVLADeltaActionProcessorStep())
 
     input_steps.append(
@@ -86,7 +86,7 @@ def make_custom_xvla_processors(
         ),
     ]
 
-    if config.use_delta:
+    if getattr(config, 'use_delta', False):
         output_steps.append(XVLAAbsoluteActionProcessorStep())
 
     output_steps.append(DeviceProcessorStep(device="cpu"))
