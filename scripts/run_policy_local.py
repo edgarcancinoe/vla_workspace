@@ -142,7 +142,7 @@ HOME_POSE = config_data["robot"].get("home_pose", {})
 CAMERA_CONFIG_MAP = config_data.get("cameras", {})
 
 # --- Policy ---
-POLICY_PATH = "edgarcancinoe/xvla-base_finetuned_soarm101_pickplace_10d_so101_ee6d_a-m_s-m-step-40000"
+POLICY_PATH = "edgarcancinoe/xvla-base_finetuned_soarm101_pickplace_10d_so101_joint_a-m_s-m-step-20000"
 
 POLICY_TYPE = "xvla" # "xvla" | "smolvla"
 DEVICE      = "mps"  # "cuda" | "mps" | "cpu"
@@ -174,7 +174,7 @@ POLICY_DELAY       = 0
 # --- XVLA-specific ---
 NUM_IMAGE_VIEWS            = 3
 NUM_EMPTY_CAMERAS          = 1
-ACTION_MODE                = "so101_ee6d" # "so101_ee6d" | "so101_joint"
+ACTION_MODE                = "so101_joint" # "so101_ee6d" | "so101_joint"
 NUM_XVLA_OBS_STEPS         = 1
 
 # --- Evaluation & Dataset ---
@@ -331,7 +331,7 @@ def set_custom_get_observation(robot, so101: SO101Control = None, include_eef_st
 # > Custom send_action():
 #   1. Convert EEF State to motor space if required
 #   2. Update Meshcat robot pose display (if viz provided)
-def set_custom_send_action(robot, so101: SO101Control = None, viz=None, dry_run=False):
+def set_custom_send_action(robot, so101: SO101Control = None, viz=None, dry_run=False, policy=None, dataset=None, unnorm_stats=None):
     base_action_func = robot.send_action
     gr_idx = so101.JOINT_NAMES.index("gripper")
     _step = [0]
@@ -443,17 +443,19 @@ def set_custom_send_action(robot, so101: SO101Control = None, viz=None, dry_run=
             DBG.ik(f"  IK solution [{len(target_motor)}D]: " +
                    "  ".join(f"{n}={target_motor[i]:+.1f}°" for i, n in enumerate(so101.JOINT_NAMES)))
 
-        # Gripper: Pull scaling parameters dynamically from policy config and dataset stats (Strict)
+        # Gripper: Pull scaling parameters dynamically from policy config and unnorm stats (Strict)
         if not hasattr(policy.config, 'gripper_max_value'):
             raise RuntimeError("Policy config is missing 'gripper_max_value'.")
         GRIPPER_MODEL_MAX = float(policy.config.gripper_max_value)
         
-        if not hasattr(dataset.meta, 'stats') or dataset.meta.stats is None:
-            raise RuntimeError("Dataset metadata stats are missing.")
+        # Use unnorm_stats (from training/checkpoint) for physical bounds to match learned distribution,
+        # since the current dataset (evaluation) might be brand new and have no stats.
+        if unnorm_stats is None or "action" not in unnorm_stats:
+            raise RuntimeError("Unnormalization stats (training bounds) are missing.")
         
-        stats_act = dataset.meta.stats.get("action")
+        stats_act = unnorm_stats.get("action")
         if stats_act is None or "min" not in stats_act or "max" not in stats_act:
-            raise RuntimeError("Dataset action stats (min/max) are missing.")
+            raise RuntimeError("Action stats (min/max) are missing from training distribution.")
         
         # Pull physical bounds from index 9 (gripper)
         GRIPPER_CLOSED_DEG, GRIPPER_OPEN_DEG = float(stats_act["min"][9]), float(stats_act["max"][9])
@@ -701,21 +703,14 @@ def _get_sliced_action_stats_for_mode(policy_path: str, action_mode: str) -> dic
     from safetensors import safe_open
     import torch
 
-    _ACTION_MODE_SLICES = {
-        "so101_ee6d":  (0,  10),
-        "so101_joint": (10, 16),
-    }
-    # Gripper is always the LAST dim within the slice
     _GRIPPER_LOCAL_IDX = {
         "so101_ee6d":  9,   # dim 9 of the 10D slice
         "so101_joint": 5,   # dim 5 of the 6D slice
     }
-    if action_mode not in _ACTION_MODE_SLICES:
+    if action_mode not in _GRIPPER_LOCAL_IDX:
         raise ValueError(
             f"Unknown ACTION_MODE '{action_mode}' for stat slicing. "
-            f"Add it to _ACTION_MODE_SLICES in _get_sliced_action_stats_for_mode()."
         )
-    s, e = _ACTION_MODE_SLICES[action_mode]
     grip_idx = _GRIPPER_LOCAL_IDX[action_mode]
 
     post_stats_file = hf_hub_download(
@@ -723,24 +718,39 @@ def _get_sliced_action_stats_for_mode(policy_path: str, action_mode: str) -> dic
         filename="policy_postprocessor_step_0_unnormalizer_processor.safetensors",
     )
     with safe_open(post_stats_file, framework="pt") as f:
-        full_mean = f.get_tensor("action.mean")   # [16]
-        full_std  = f.get_tensor("action.std")    # [16]
+        full_mean = f.get_tensor("action.mean")
+        full_std  = f.get_tensor("action.std")
+        full_min  = f.get_tensor("action.min")
+        full_max  = f.get_tensor("action.max")
 
-    sliced_mean = full_mean[s:e].clone()
-    sliced_std  = full_std[s:e].clone()
+    sliced_mean = full_mean.clone()
+    sliced_std  = full_std.clone()
+    sliced_min  = full_min.clone()
+    sliced_max  = full_max.clone()
 
     # Gripper: force identity so unnormalization is a no-op for that dim.
     # The sigmoid [0,1] output will be remapped to motor degrees in send_action.
     sliced_mean[grip_idx] = 0.0
     sliced_std[grip_idx]  = 1.0
 
+    stats_dict = {
+        "action": {
+            "mean": sliced_mean,
+            "std":  sliced_std,
+            "min":  sliced_min,
+            "max":  sliced_max,
+        }
+    }
+
     print(
         f"[x] Unnormalizer: ACTION_MODE='{action_mode}' -> "
-        f"stats dims [{s}:{e}] ({e - s}D)  [gripper dim {grip_idx} = identity]\n"
+        f"stats dims ({len(sliced_mean)}D)  [gripper dim {grip_idx} = identity]\n"
         f"    mean={[f'{v:.4f}' for v in sliced_mean.tolist()]}\n"
-        f"    std ={[f'{v:.4f}' for v in sliced_std.tolist()]}"
+        f"    std ={[f'{v:.4f}' for v in sliced_std.tolist()]}\n"
+        f"    min ={[f'{v:.4f}' for v in sliced_min.tolist()]}\n"
+        f"    max ={[f'{v:.4f}' for v in sliced_max.tolist()]}"
     )
-    return {"action": {"mean": sliced_mean, "std": sliced_std}}
+    return stats_dict
 
 
 def get_policy_processors(policy, dataset, pipeline_key: str | None = None):
@@ -748,6 +758,8 @@ def get_policy_processors(policy, dataset, pipeline_key: str | None = None):
     Utility to choose pre- and post-processors by a key.
     - 'xvla_default': Use our custom XVLA replication.
     - None (or any other): Use LeRobot's default factory.
+
+    Returns: (preprocessor, postprocessor, unnorm_stats)
     """
     DBG.divider("blue", f"get_policy_processors  pipeline_key={pipeline_key!r}")
     stats = getattr(getattr(dataset, 'meta', None), 'stats', None)
@@ -797,7 +809,15 @@ def get_policy_processors(policy, dataset, pipeline_key: str | None = None):
     )
     DBG.pre(f"Preprocessor type : {type(preprocessor).__name__}")
     DBG.post(f"Postprocessor type: {type(postprocessor).__name__}")
-    return preprocessor, postprocessor
+    
+    # Return the stats used for unnormalization so they can be used for gripper remapping
+    # If we are in EEF/Joint mode, we already have sliced_stats. 
+    # Otherwise, fall back to dataset stats.
+    unnorm_stats = postprocessor_overrides.get("unnormalizer_processor", {}).get("stats")
+    if unnorm_stats is None:
+        unnorm_stats = dataset.meta.stats
+
+    return preprocessor, postprocessor, unnorm_stats
 
 def get_policy(policy_type: str, path: str, device: str):
     """
@@ -844,7 +864,7 @@ def get_policy(policy_type: str, path: str, device: str):
 
         # ── Step 2: Construct model with the correct config ──
         policy = policy_cls.from_pretrained(path, config=config, device=device)
-        INCLUDE_EEF_STATE = True
+        INCLUDE_EEF_STATE = (ACTION_MODE == "so101_ee6d")
 
         # ── Step 3: Post-creation verification ──
         action_space_name = type(policy.model.action_space).__name__
@@ -961,7 +981,7 @@ def main():
     dataset, episode_idx = get_dataset(dataset_features, robot.name)
 
     # Build preprocessor and postprocessor for policy inference
-    preprocessor, postprocessor = get_policy_processors(policy=policy, dataset=dataset, pipeline_key=POLICY_PIPELINE)
+    preprocessor, postprocessor, unnorm_stats = get_policy_processors(policy=policy, dataset=dataset, pipeline_key=POLICY_PIPELINE)
 
     # Meshcat visualization (optional — gracefully disabled if unavailable)
     viz = init_meshcat() if USE_MESHCAT_VIZ else None
@@ -982,7 +1002,7 @@ def main():
 
     # Patch robot for observation and action
     set_custom_get_observation(robot, so101=so101, include_eef_state=INCLUDE_EEF_STATE, dry_run=DRY_RUN)
-    set_custom_send_action(robot, so101=so101, viz=viz, dry_run=DRY_RUN)
+    set_custom_send_action(robot, so101=so101, viz=viz, dry_run=DRY_RUN, policy=policy, dataset=dataset, unnorm_stats=unnorm_stats)
     # Trajectory viz is patched BEFORE the delay wrapper so it sits closest to
     # the original select_action — it draws the chunk immediately after inference.
     # Extract action names from the "action" feature entry (hw_to_dataset_features returns a

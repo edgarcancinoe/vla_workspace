@@ -33,8 +33,8 @@ from lerobot.processor import make_default_processors
 from lerobot.robots.so100_follower.config_so100_follower import SO100FollowerConfig
 from lerobot.robots.so100_follower.so100_follower import SO100Follower
 from lerobot.scripts.lerobot_record import record_loop
-from lerobot.teleoperators.so100_leader.config_so100_leader import SO100LeaderConfig
-from lerobot.teleoperators.so100_leader.so100_leader import SO100Leader
+from lerobot.teleoperators.so_leader.config_so_leader import SO100LeaderConfig
+from lerobot.teleoperators.so_leader.so_leader import SO100Leader
 from lerobot.utils.control_utils import init_keyboard_listener
 from lerobot.utils.utils import log_say
 from lerobot.utils.visualization_utils import init_rerun
@@ -53,7 +53,7 @@ with open(config_path, "r") as f:
 CAMERA_CONFIG_MAP = config_data.get("cameras", {})
 RECTIFY_MAP = {name: info.get("rectify", False) for name, info in CAMERA_CONFIG_MAP.items()}
 
-NUM_EPISODES = 80
+NUM_EPISODES = 127
 
 FPS = 30
 EPISODE_TIME_SEC = 30
