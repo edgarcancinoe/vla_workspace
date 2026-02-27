@@ -87,7 +87,7 @@ USE_VOICE          = True
 #   -  5: six inferences per second (smoother, more responsive)
 #   -  1: inference every step (smoothest but slowest, only for testing)
 CHUNK_SIZE         = None  # None = use pretrained default (30 for this checkpoint)
-N_ACTION_STEPS     = 5     # Use 5 of 30 predicted steps, then re-infer for responsiveness
+N_ACTION_STEPS     = None
 
 # --- SmolVLA-specific ---
 MAX_ACTION_TOKENS  = None
