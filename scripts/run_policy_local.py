@@ -599,9 +599,14 @@ def get_policy_processors(policy, dataset, pipeline_key: str | None = None):
             dataset_stats=dataset.meta.stats,
         )
 
-    # Build correctly-sliced unnorm stats for XVLA action modes that use a
-    # sub-slice of the 16D training action (so101_ee6d -> [0:10],
-    # so101_joint -> [10:16]).  For any other policy type pass no override.
+    # Build correctly-sliced unnorm stats for XVLA action modes:
+    #   so101_ee6d:  action dims [0:10]   (xyz + rot6d + gripper)
+    #   so101_joint: action dims [10:16]  (5 joints + gripper)
+    #
+    # NOTE: observation.state stats do NOT need an override here.
+    # The checkpoint's normalizer already stores 10D EEF stats for observation.state.
+    # We ensure the observation is 10D EEF by overriding obs_features["observation.state"]
+    # in main() to use the EEF keys that patched_get_observation injects.
     postprocessor_overrides = {}
     if POLICY_TYPE == "xvla" and ACTION_MODE in ("so101_ee6d", "so101_joint"):
         sliced_stats = _get_sliced_action_stats_for_mode(POLICY_PATH, ACTION_MODE)
@@ -734,17 +739,22 @@ def main():
     policy, INCLUDE_EEF_STATE = get_policy(POLICY_TYPE, POLICY_PATH, DEVICE)
 
     # Configure the dataset features
-    # For EEF policies: override with EEF names so make_robot_action in record_loop
-    # maps all 10 tensor dims to EEF keys ("x.pos","y.pos",...,"gripper.pos") instead
-    # of truncating to 6 motor keys. Motor policies use the robot's native features.
+    # For EEF policies:
+    #   - action: override with 10D EEF names so make_robot_action maps all 10 dims
+    #     to EEF keys ("x.pos","y.pos",...,"gripper.pos") instead of 6 motor keys.
+    #   - observation.state: override to 10D EEF names so the preprocessor builds
+    #     observation.state from the EEF keys that patched_get_observation injects,
+    #     matching the 10D stats in the checkpoint's normalizer.
+    # Motor policies use the robot's native 6D features for both.
+    eef_feature_spec = {"dtype": "float32", "shape": (len(EEF_STATE_NAMES),), "names": [f"{n}.pos" for n in EEF_STATE_NAMES]}
     if INCLUDE_EEF_STATE:
-        eef_action_names = [f"{n}.pos" for n in EEF_STATE_NAMES]
-        action_features = {
-            "action": {"dtype": "float32", "shape": (len(eef_action_names),), "names": eef_action_names}
-        }
+        action_features  = {"action": eef_feature_spec}
+        obs_features     = hw_to_dataset_features(robot.observation_features, "observation")
+        # Override observation.state to 10D EEF: uses the EEF keys injected by patched_get_observation
+        obs_features["observation.state"] = eef_feature_spec
     else:
         action_features = hw_to_dataset_features(robot.action_features, "action")
-    obs_features     = hw_to_dataset_features(robot.observation_features, "observation")
+        obs_features    = hw_to_dataset_features(robot.observation_features, "observation")
     
     # Map robot observation features to match our patched observation names (e.g. main -> image)
     mapped_obs_features = {}
