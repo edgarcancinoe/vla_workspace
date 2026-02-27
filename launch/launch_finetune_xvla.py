@@ -63,9 +63,9 @@ BASE_POLICY_PATH = f"{BASE_USER}/{BASE_NAME}"
 # --------------------------------------------------
 
 # Image Augmentation
-ENABLE_AUGMENTATION = os.environ.get("ENABLE_AUGMENTATION", "false")
-AUGMENTATION_DEGREES = os.environ.get("AUGMENTATION_DEGREES", "[-2.5, 2.5]")
-AUGMENTATION_TRANSLATE = os.environ.get("AUGMENTATION_TRANSLATE", "[0.025, 0.025]")
+ENABLE_AUGMENTATION = "false"
+AUGMENTATION_DEGREES = "[-2.5, 2.5]"
+AUGMENTATION_TRANSLATE = "[0.025, 0.025]"
 
 # Workspace path detection -------------------------
 SCRIPT_DIR = Path(__file__).resolve().parent
@@ -78,22 +78,32 @@ DATASET_REPO_ID = f"{HF_USER}/{DATASET_NAME}"
 # --------------------------------------------------
 
 # Training Hyperparameters
-BATCH_SIZE = os.environ.get("BATCH_SIZE", "8")
-STEPS = os.environ.get("STEPS", "60000")
-LOG_FREQ = os.environ.get("LOG_FREQ", "1000")
-EVAL_FREQ = os.environ.get("EVAL_FREQ", "-1")
+BATCH_SIZE = "8"
+STEPS = "60000"
+LOG_FREQ = "1000"
+EVAL_FREQ = "-1"
 
-DEVICE = os.environ.get("DEVICE", "cuda")
-CUDA_DEVICE = os.environ.get("CUDA_DEVICE", "2")
-NUM_WORKERS = os.environ.get("NUM_WORKERS", "4")
+DEVICE = 'cuda'
+CUDA_DEVICE = '1'
+NUM_WORKERS = '4'
 
-SAVE_FREQ = os.environ.get("SAVE_FREQ", "20000")
-PUSH_HF_EVERY = os.environ.get("PUSH_HF_EVERY", "20000")
+SAVE_FREQ = "20000"
+PUSH_HF_EVERY = "20000"
 
 # Resume configuration
-RESUME = os.environ.get("RESUME", "false")
-POLICY_PUSH_TO_HUB = os.environ.get("POLICY_PUSH_TO_HUB", "true")
+RESUME = "false"
+POLICY_PUSH_TO_HUB = "true"
 WANDB_ENABLE = "true"
+
+# Policy Structure / Freezing
+POLICY_DTYPE = "bfloat16"
+FREEZE_VISION_ENCODER = "false"
+FREEZE_LANGUAGE_ENCODER = "false"
+TRAIN_POLICY_TRANSFORMER = "true"
+TRAIN_SOFT_PROMPTS = "true"
+
+# Data Overrides
+RENAME_MAP = '{"observation.images.main": "observation.images.image", "observation.images.secondary": "observation.images.image2"}'
 
 # ============================================================================
 # HELPER FOR NAMING
@@ -163,7 +173,7 @@ for action_mode, norm_mapping in itertools.product(ACTION_MODES, NORMALIZATION_M
     # Policy name to use when saving
     # --------------------------------------------------
     # Append the action mode and norm mapping to unique-ify the runs
-    POLICY_NAME = f"{BASE_NAME}_finetuned_{DATASET_NAME_STR}_{action_mode}_{norm_suffix}"
+    POLICY_NAME = f"{BASE_NAME}_ft_{DATASET_NAME_STR}_{action_mode}_{norm_suffix}"
     if ENABLE_AUGMENTATION == "true":
         POLICY_NAME += "_aug"
         
@@ -182,15 +192,20 @@ for action_mode, norm_mapping in itertools.product(ACTION_MODES, NORMALIZATION_M
     print(f"  Policy Repo ID: {POLICY_REPO_ID}")
     print("="*76 + "\n")
 
+    augmentation_tfs = (
+        f'{{"affine": {{"type": "RandomAffine", "kwargs": {{"degrees": {AUGMENTATION_DEGREES},'
+        f' "translate": {AUGMENTATION_TRANSLATE}}}}}}}'
+    )
+
     cmd = [
         sys.executable, "-m", "lerobot.scripts.lerobot_train",
         f"--policy.path={BASE_POLICY_PATH}",
         f"--policy.repo_id={POLICY_REPO_ID}",
         f"--policy.push_to_hub={POLICY_PUSH_TO_HUB}",
         f"--dataset.repo_id={DATASET_REPO_ID}",
-        "--rename_map={\"observation.images.main\": \"observation.images.image\", \"observation.images.secondary\": \"observation.images.image2\"}",
+        f"--rename_map={RENAME_MAP}",
         f"--dataset.image_transforms.enable={ENABLE_AUGMENTATION}",
-        f"--dataset.image_transforms.tfs={{\"affine\": {{\"type\": \"RandomAffine\", \"kwargs\": {{\"degrees\": {AUGMENTATION_DEGREES}, \"translate\": {AUGMENTATION_TRANSLATE}}}}}}}",
+        f"--dataset.image_transforms.tfs={augmentation_tfs}",
         f"--batch_size={BATCH_SIZE}",
         f"--steps={STEPS}",
         f"--log_freq={LOG_FREQ}",
@@ -203,19 +218,18 @@ for action_mode, norm_mapping in itertools.product(ACTION_MODES, NORMALIZATION_M
         f"--wandb.enable={WANDB_ENABLE}",
         f"--num_workers={NUM_WORKERS}",
         f"--resume={RESUME}",
-        "--policy.dtype=bfloat16",
+        f"--policy.dtype={POLICY_DTYPE}",
         f"--policy.action_mode={action_mode}",
         f"--policy.empty_cameras={EMPTY_CAMERAS}",
-        "--policy.freeze_vision_encoder=false",
-        "--policy.freeze_language_encoder=false",
-        "--policy.train_policy_transformer=true",
-        "--policy.train_soft_prompts=true",
+        f"--policy.freeze_vision_encoder={FREEZE_VISION_ENCODER}",
+        f"--policy.freeze_language_encoder={FREEZE_LANGUAGE_ENCODER}",
+        f"--policy.train_policy_transformer={TRAIN_POLICY_TRANSFORMER}",
+        f"--policy.train_soft_prompts={TRAIN_SOFT_PROMPTS}",
         f"--policy.num_image_views={POLICY_NUM_IMAGE_VIEWS}",
         f"--policy.normalization_mapping={norm_mapping}",
     ]
 
     try:
-        # Run the command
         exit_code = subprocess.call(cmd, env=os.environ.copy())
     except KeyboardInterrupt:
         print("\n\nUser interrupted with Ctrl+C. Exiting grid search.")

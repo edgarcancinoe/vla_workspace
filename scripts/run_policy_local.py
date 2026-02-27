@@ -64,10 +64,7 @@ HOME_POSE = config_data["robot"].get("home_pose", {})
 CAMERA_CONFIG_MAP = config_data.get("cameras", {})
 
 # --- Policy ---
-# POLICY_PATH = "edgarcancinoe/xvla-base_finetuned_soarm101_pickplace_orange_050e_fw_open"
-# 6D
-# POLICY_PATH = "edgarcancinoe/xvla-base_finetuned_soarm101_pickplace_10d_so101_ee6d-step-20000"
-POLICY_PATH = "edgarcancinoe/xvla-base_finetuned_soarm101_pickplace_10d_so101_ee6d"
+POLICY_PATH = "edgarcancinoe/xvla-base_finetuned_soarm101_pickplace_10d_so101_ee6d_a-m_s-m"
 
 POLICY_TYPE = "xvla" # "xvla" | "smolvla"
 DEVICE      = "mps"  # "cuda" | "mps" | "cpu"
