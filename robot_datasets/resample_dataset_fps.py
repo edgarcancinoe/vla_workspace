@@ -15,6 +15,16 @@ Usage:
 
     # dst defaults to  <src>_7p5hz  next to src if --dst is not given.
 
+huggingface-cli download edgarcancinoe/soarm101_pickplace_10d \
+    --repo-type dataset \
+    --local-dir ~/datasets/soarm101_pickplace_10d
+
+
+python robot_datasets/resample_dataset_fps.py \
+    --src ~/datasets/soarm101_pickplace_10d \
+    --dst-fps 7.5 \
+    --hf-repo edgarcancinoe/soarm101_pickplace_10d_7p5hz
+
 Requirements:
     pip install pyarrow numpy tqdm huggingface_hub
     ffmpeg in PATH with libsvtav1 (or libaom-av1 via --vcodec libaom-av1)
@@ -22,9 +32,11 @@ Requirements:
 
 import argparse
 import json
+import os
 import shutil
 import subprocess
 import sys
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from fractions import Fraction
 from pathlib import Path
 
@@ -78,7 +90,16 @@ def main():
     )
     parser.add_argument(
         "--vcodec", type=str, default="libsvtav1",
-        help="FFmpeg video encoder (default: libsvtav1). Use libaom-av1 if libsvtav1 is unavailable.",
+        help="FFmpeg video encoder (default: libsvtav1). "
+             "On Apple Silicon use 'hevc_videotoolbox' or 'h264_videotoolbox' for hardware-accelerated encoding.",
+    )
+    parser.add_argument(
+        "--vbitrate", type=str, default="8M",
+        help="Video bitrate for VideoToolbox codecs which do not support CRF (default: 8M).",
+    )
+    parser.add_argument(
+        "--workers", type=int, default=min(4, os.cpu_count() or 4),
+        help="Number of parallel ffmpeg workers for video re-encoding (default: min(4, cpu_count)).",
     )
     parser.add_argument(
         "--hf-repo", type=str, default=None,
@@ -98,6 +119,7 @@ def main():
     print(f"Dest     : {dst}")
     print(f"Dst FPS  : {dst_fps}")
     print(f"Encoder  : {args.vcodec}")
+    print(f"Workers  : {args.workers}")
     print(f"{'='*60}\n")
 
     # ------------------------------------------------------------------
@@ -145,12 +167,23 @@ def main():
 
     # episode_data[ep_idx] = list of per-chunk dicts, each dict = {col: list_of_values}
     episode_data: dict[int, list[dict]] = {}
+    # ep_shard[ep_idx] = index into parquet_files that owns the episode
+    ep_shard: dict[int, int] = {}
+    # shard_episodes[shard_i] = sorted list of ep_idx in that shard
+    shard_episodes: dict[int, list[int]] = {}
     global_new_index = 0
+    total_src = 0
 
-    for parquet_path in tqdm(parquet_files, desc="  Reading parquets"):
+    for shard_i, parquet_path in enumerate(tqdm(parquet_files, desc="  Reading parquets")):
         df = pq.read_table(parquet_path).to_pandas()
+        total_src += len(df)
 
         for ep_idx in sorted(df["episode_index"].unique()):
+            # Record which shard owns this episode (first occurrence wins)
+            if ep_idx not in ep_shard:
+                ep_shard[ep_idx] = shard_i
+                shard_episodes.setdefault(shard_i, []).append(ep_idx)
+
             ep_df = df[df["episode_index"] == ep_idx]
             ep_df = ep_df[ep_df["frame_index"] % stride == 0].copy()
             if ep_df.empty:
@@ -174,7 +207,7 @@ def main():
 
             episode_data.setdefault(ep_idx, []).append(chunk)
 
-    # Flatten into a single ordered list of frame dicts
+    # Flatten into a single ordered list of frame dicts (used for stats in STEP 5)
     global_frames: list[dict] = []
     for ep_idx in sorted(episode_data.keys()):
         for chunk in episode_data[ep_idx]:
@@ -182,23 +215,20 @@ def main():
                 global_frames.append({k: v[i] for k, v in chunk.items()})
 
     total_frames_new = len(global_frames)
-    print(f"  Source frames : {sum(len(pq.read_table(p)) for p in parquet_files)}")
-    print(f"  Output frames : {total_frames_new}  (~{total_frames_new / total_frames_new * 100:.0f}% of source)")
+    print(f"  Source frames : {total_src}")
+    print(f"  Output frames : {total_frames_new}  (~{total_frames_new / total_src * 100:.1f}% of source)")
 
-    # Distribute output frames across the same shard files as the source,
-    # preserving the proportional split.
-    shard_src_counts = [len(pq.read_table(p)) for p in parquet_files]
-    total_src = sum(shard_src_counts)
-    cum_src = 0
-    cum_new = 0
-
+    # Write output parquets shard-by-shard, preserving the episode→shard mapping
+    # so that parquet rows and video frames always refer to the same shard file.
     print("  Writing output parquets …")
-    for i, shard_path in enumerate(tqdm(parquet_files, desc="  Shards")):
-        cum_src += shard_src_counts[i]
-        shard_end = total_frames_new if i == len(parquet_files) - 1 \
-            else int(round(cum_src / total_src * total_frames_new))
-        shard_frames = global_frames[cum_new:shard_end]
-        cum_new = shard_end
+    for shard_i, shard_path in enumerate(tqdm(parquet_files, desc="  Shards")):
+        shard_ep_list = shard_episodes.get(shard_i, [])
+        shard_frames: list[dict] = []
+        for ep_idx in shard_ep_list:
+            if ep_idx in episode_data:
+                for chunk in episode_data[ep_idx]:
+                    for i in range(len(chunk["frame_index"])):
+                        shard_frames.append({k: v[i] for k, v in chunk.items()})
 
         if not shard_frames:
             continue
@@ -236,47 +266,69 @@ def main():
     # ------------------------------------------------------------------
     # STEP 3 — Re-encode videos at dst_fps
     # ------------------------------------------------------------------
-    print("STEP 3 — Re-encoding videos …")
+    print(f"STEP 3 — Re-encoding videos  (workers={args.workers}, codec={args.vcodec}) …")
     video_keys = [k for k, v in info["features"].items() if v.get("dtype") == "video"]
     fps_frac   = str(Fraction(dst_fps).limit_denominator(1000))  # "15/2" for 7.5
 
-    # Extra encoder flags depending on codec
-    extra_flags: list[str] = []
-    if args.vcodec == "libsvtav1":
-        extra_flags = ["-preset", "8"]          # 0=slowest … 13=fastest for SVT-AV1
+    # Build codec-specific quality + speed flags.
+    # VideoToolbox (Apple hardware encoder) uses -b:v instead of -crf.
+    is_videotoolbox = "videotoolbox" in args.vcodec
+    if is_videotoolbox:
+        quality_flags: list[str] = ["-b:v", args.vbitrate]
+        extra_flags:   list[str] = []
+    elif args.vcodec == "libsvtav1":
+        quality_flags = ["-crf", "30"]
+        extra_flags   = ["-preset", "8"]        # 0=slowest … 13=fastest for SVT-AV1
     elif args.vcodec == "libaom-av1":
-        extra_flags = ["-cpu-used", "8", "-row-mt", "1"]   # fastest for libaom
+        quality_flags = ["-crf", "30"]
+        extra_flags   = ["-cpu-used", "8", "-row-mt", "1"]
+    else:
+        quality_flags = ["-crf", "30"]
+        extra_flags   = []
+
+    def _encode_one(mp4_src: Path, mp4_dst: Path):
+        mp4_dst.parent.mkdir(parents=True, exist_ok=True)
+        cmd = [
+            "ffmpeg", "-y",
+            "-i", str(mp4_src),
+            "-vf", f"fps={fps_frac}",
+            "-c:v", args.vcodec,
+            "-pix_fmt", "yuv420p",
+            "-g", "2",
+            *quality_flags,
+            *extra_flags,
+            "-an",
+            str(mp4_dst),
+        ]
+        result = subprocess.run(cmd, capture_output=True)
+        return mp4_src, result
 
     for vkey in video_keys:
-        src_vid_dir = src  / "videos" / vkey
-        dst_vid_dir = dst  / "videos" / vkey
+        src_vid_dir = src / "videos" / vkey
+        dst_vid_dir = dst / "videos" / vkey
 
         mp4_files = sorted(src_vid_dir.rglob("*.mp4"))
         if not mp4_files:
             print(f"  WARNING: no mp4 files for '{vkey}' — skipping.")
             continue
 
-        for mp4_src in tqdm(mp4_files, desc=f"  {vkey}"):
-            mp4_dst = dst_vid_dir / mp4_src.relative_to(src_vid_dir)
-            mp4_dst.parent.mkdir(parents=True, exist_ok=True)
+        jobs = [(f, dst_vid_dir / f.relative_to(src_vid_dir)) for f in mp4_files]
+        errors = []
 
-            cmd = [
-                "ffmpeg", "-y",
-                "-i", str(mp4_src),
-                "-vf", f"fps={fps_frac}",
-                "-c:v", args.vcodec,
-                "-pix_fmt", "yuv420p",
-                "-g", "2",
-                "-crf", "30",
-                *extra_flags,
-                "-an",
-                str(mp4_dst),
-            ]
-            result = subprocess.run(cmd, capture_output=True)
-            if result.returncode != 0:
+        with ThreadPoolExecutor(max_workers=args.workers) as pool:
+            futures = {pool.submit(_encode_one, s, d): s for s, d in jobs}
+            with tqdm(total=len(futures), desc=f"  {vkey}") as pbar:
+                for fut in as_completed(futures):
+                    mp4_src, result = fut.result()
+                    if result.returncode != 0:
+                        errors.append((mp4_src, result))
+                    pbar.update(1)
+
+        if errors:
+            for mp4_src, result in errors:
                 print(f"\n  ERROR: ffmpeg failed on {mp4_src.name}")
-                print(result.stderr.decode()[-2000:])   # last 2000 chars of stderr
-                sys.exit(1)
+                print(result.stderr.decode()[-2000:])
+            sys.exit(1)
 
     print("  Videos done.\n")
 
@@ -346,6 +398,20 @@ def main():
         }
         cum += len(frames)
 
+    # Compute shard-local frame positions for each episode so that
+    # from_timestamp / to_timestamp are relative to the shard video file start
+    # (not the global dataset), matching how each file-XXX.mp4 is addressed.
+    shard_ep_local_from: dict[int, int] = {}  # ep_idx → local from-frame within shard
+    shard_ep_local_to:   dict[int, int] = {}  # ep_idx → local to-frame within shard
+    for shard_i, ep_list in shard_episodes.items():
+        local_cum = 0
+        for ep_idx in ep_list:
+            if ep_idx in ep_summary:
+                n = ep_summary[ep_idx]["length"]
+                shard_ep_local_from[ep_idx] = local_cum
+                shard_ep_local_to[ep_idx]   = local_cum + n - 1
+                local_cum += n
+
     for src_ep_pq in tqdm(sorted((src / "meta" / "episodes").rglob("*.parquet")),
                           desc="  Episode meta"):
         orig_table = pq.read_table(src_ep_pq)
@@ -362,14 +428,15 @@ def main():
             df.at[row_i, "dataset_from_index"] = ep["from_idx"]
             df.at[row_i, "dataset_to_index"]   = ep["to_idx"]
 
-            # Video timestamp ranges (position within the concatenated video file)
+            # Video timestamp ranges: positions within the shard video file (file-XXX.mp4).
+            # Must use shard-local frame indices, not global dataset indices.
             for vkey in video_keys:
                 fc = f"videos/{vkey}/from_timestamp"
                 tc = f"videos/{vkey}/to_timestamp"
                 if fc in df.columns:
-                    df.at[row_i, fc] = ep["from_idx"] / dst_fps
+                    df.at[row_i, fc] = shard_ep_local_from[ep_idx] / dst_fps
                 if tc in df.columns:
-                    df.at[row_i, tc] = ep["to_idx"]   / dst_fps
+                    df.at[row_i, tc] = shard_ep_local_to[ep_idx]   / dst_fps
 
             # Per-episode feature stats
             ep_frames = ep["frames"]
