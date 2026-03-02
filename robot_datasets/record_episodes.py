@@ -53,7 +53,7 @@ with open(config_path, "r") as f:
 CAMERA_CONFIG_MAP = config_data.get("cameras", {})
 RECTIFY_MAP = {name: info.get("rectify", False) for name, info in CAMERA_CONFIG_MAP.items()}
 
-NUM_EPISODES = 80
+NUM_EPISODES = 127
 
 FPS = 30
 EPISODE_TIME_SEC = 30

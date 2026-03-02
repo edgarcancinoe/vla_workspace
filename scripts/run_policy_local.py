@@ -26,6 +26,84 @@ sys.path.append(str(Path(__file__).parent.parent))
 from utils import camera_calibration
 from robot_control.so101_control import SO101Control
 
+# DEBUG UTILITIES
+# ============================================================================
+class DBG:
+    """Lightweight ANSI-color debug helpers. One call = one coloured line."""
+    RESET  = "\033[0m"
+    BOLD   = "\033[1m"
+    DIM    = "\033[2m"
+
+    # Palette
+    _C = {
+        "cyan":    "\033[96m",
+        "green":   "\033[92m",
+        "yellow":  "\033[93m",
+        "red":     "\033[91m",
+        "magenta": "\033[95m",
+        "blue":    "\033[94m",
+        "white":   "\033[97m",
+        "orange":  "\033[38;5;214m",
+        "teal":    "\033[38;5;86m",
+        "pink":    "\033[38;5;213m",
+    }
+
+    @classmethod
+    def _fmt(cls, color: str, tag: str, msg: str) -> str:
+        c = cls._C.get(color, "")
+        return f"{cls.BOLD}{c}[{tag}]{cls.RESET} {msg}"
+
+    @classmethod
+    def obs(cls, msg: str):    print(cls._fmt("cyan",    "OBS",     msg))
+    @classmethod
+    def pre(cls, msg: str):    print(cls._fmt("blue",    "PRE",     msg))
+    @classmethod
+    def infer(cls, msg: str):  print(cls._fmt("magenta", "INFER",   msg))
+    @classmethod
+    def post(cls, msg: str):   print(cls._fmt("teal",    "POST",    msg))
+    @classmethod
+    def act(cls, msg: str):    print(cls._fmt("green",   "ACT",     msg))
+    @classmethod
+    def ik(cls, msg: str):     print(cls._fmt("orange",  "IK",      msg))
+    @classmethod
+    def grip(cls, msg: str):   print(cls._fmt("pink",    "GRIPPER", msg))
+    @classmethod
+    def send(cls, msg: str):   print(cls._fmt("yellow",  "SEND",    msg))
+    @classmethod
+    def warn(cls, msg: str):   print(cls._fmt("red",     "WARN",    msg))
+    @classmethod
+    def info(cls, msg: str):   print(cls._fmt("white",   "INFO",    msg))
+
+    @classmethod
+    def tensor(cls, color: str, tag: str, name: str, t):
+        """Print shape, dtype, min, max and first few values of a tensor/array."""
+        import numpy as _np
+        try:
+            import torch as _torch
+            if isinstance(t, _torch.Tensor):
+                arr = t.detach().cpu().float().numpy()
+            else:
+                arr = _np.asarray(t, dtype=float)
+            flat = arr.flatten()
+            preview = " ".join(f"{v:+.4f}" for v in flat[:8])
+            if len(flat) > 8:
+                preview += " ..."
+            print(cls._fmt(color, tag,
+                f"{name}: shape={list(arr.shape)}  dtype={arr.dtype}  "
+                f"min={flat.min():+.4f}  max={flat.max():+.4f}  | {preview}"
+            ))
+        except Exception as _e:
+            print(cls._fmt(color, tag, f"{name}: <could not inspect: {_e}>"))
+
+    @classmethod
+    def divider(cls, color: str = "white", label: str = ""):
+        c = cls._C.get(color, "")
+        line = "─" * 64
+        if label:
+            print(f"{c}{cls.BOLD}┌{line}\n│  {label}\n└{line}{cls.RESET}")
+        else:
+            print(f"{c}{line}{cls.RESET}")
+
 # CONFIGURATION UTIL 
 # ============================================================================
 def validate_configuration():
@@ -64,7 +142,7 @@ HOME_POSE = config_data["robot"].get("home_pose", {})
 CAMERA_CONFIG_MAP = config_data.get("cameras", {})
 
 # --- Policy ---
-POLICY_PATH = "edgarcancinoe/xvla-base_finetuned_soarm101_pickplace_10d_so101_ee6d_a-m_s-m"
+POLICY_PATH = "edgarcancinoe/xvla-base_finetuned_soarm101_pickplace_10d_so101_joint_a-m_s-m-step-20000"
 
 POLICY_TYPE = "xvla" # "xvla" | "smolvla"
 DEVICE      = "mps"  # "cuda" | "mps" | "cpu"
@@ -96,7 +174,7 @@ POLICY_DELAY       = 0
 # --- XVLA-specific ---
 NUM_IMAGE_VIEWS            = 3
 NUM_EMPTY_CAMERAS          = 1
-ACTION_MODE                = "so101_ee6d" # "so101_ee6d" | "so101_joint"
+ACTION_MODE                = "so101_joint" # "so101_ee6d" | "so101_joint"
 NUM_XVLA_OBS_STEPS         = 1
 
 # --- Evaluation & Dataset ---
@@ -184,7 +262,9 @@ def set_custom_get_observation(robot, so101: SO101Control = None, include_eef_st
         init_obs = base_obs_func()
         robot._virtual_motor = np.array([float(init_obs.get(f"{n}.pos", 0.0)) for n in so101.JOINT_NAMES])
 
+    _obs_step = [0]  # closure counter
     def patched_get_observation():
+        _obs_step[0] += 1
         if dry_run:
             if not hasattr(robot, "_virtual_motor") or robot._virtual_motor is None:
                 robot._virtual_motor = np.zeros(len(so101.JOINT_NAMES))
@@ -228,6 +308,19 @@ def set_custom_get_observation(robot, so101: SO101Control = None, include_eef_st
                 h, w = 480, 640 # Default fallback dimensions
                 observation[v] = torch.zeros((h, w, 3), dtype=torch.uint8)
 
+        # ── DEBUG: log observation keys & state dimensions every 30 steps ──
+        if _obs_step[0] % 30 == 1:
+            DBG.divider("cyan", f"OBS  step={_obs_step[0]}")
+            scalar_keys = {k: v for k, v in observation.items() if not hasattr(v, 'shape')}
+            tensor_keys = {k: v for k, v in observation.items() if hasattr(v, 'shape')}
+            DBG.obs(f"Total obs keys: {len(observation)}  |  scalars: {len(scalar_keys)}  tensors(images): {len(tensor_keys)}")
+            if scalar_keys:
+                vals_str = "  ".join(f"{k.replace('.pos','')}={float(v):+.3f}" for k, v in scalar_keys.items())
+                DBG.obs(f"State: [{len(scalar_keys)}D] {vals_str}")
+            for k, v in tensor_keys.items():
+                sh = list(v.shape) if hasattr(v, 'shape') else '?'
+                DBG.obs(f"Image '{k}': shape={sh}")
+
         return observation
     
     print(f"[x] Robot observation patched for dynamic rectification based on config: {RECTIFY_MAP}")
@@ -238,7 +331,7 @@ def set_custom_get_observation(robot, so101: SO101Control = None, include_eef_st
 # > Custom send_action():
 #   1. Convert EEF State to motor space if required
 #   2. Update Meshcat robot pose display (if viz provided)
-def set_custom_send_action(robot, so101: SO101Control = None, viz=None, dry_run=False):
+def set_custom_send_action(robot, so101: SO101Control = None, viz=None, dry_run=False, policy=None, dataset=None, unnorm_stats=None):
     base_action_func = robot.send_action
     gr_idx = so101.JOINT_NAMES.index("gripper")
     _step = [0]
@@ -269,8 +362,20 @@ def set_custom_send_action(robot, so101: SO101Control = None, viz=None, dry_run=
         current_motor = so101.read_motor_real(robot)
         current_motor_dict = {f"{n}.pos": float(current_motor[i]) for i, n in enumerate(so101.JOINT_NAMES)}
 
+        # ── DEBUG: raw action dict received by send_action ──────────────────────
+        log_every = (_step[0] % 30 == 1)
+        if log_every:
+            DBG.divider("green", f"SEND_ACTION  step={_step[0]}  mode={mode}")
+            DBG.act(f"Action dict keys ({len(action)}): {list(action.keys())}")
+            for k, v in action.items():
+                try:
+                    DBG.act(f"  {k:25s} = {float(v):+.5f}")
+                except Exception:
+                    sh = list(v.shape) if hasattr(v, 'shape') else type(v).__name__
+                    DBG.act(f"  {k:25s} = <tensor shape={sh}>")
+
         # Log on mode change or every 30 steps (~1 s at 30 fps)
-        if mode != _last_mode[0] or _step[0] % 30 == 1:
+        if mode != _last_mode[0] or log_every:
             _last_mode[0] = mode
             if is_motor:
                 vals = "  ".join(f"{n}={action.get(f'{n}.pos', 0.0):+.1f}" for n in so101.JOINT_NAMES)
@@ -280,17 +385,20 @@ def set_custom_send_action(robot, so101: SO101Control = None, viz=None, dry_run=
                 tgt_xyz = np.array([action.get('x.pos', 0.0), action.get('y.pos', 0.0), action.get('z.pos', 0.0)])
                 delta   = tgt_xyz - cur_xyz
                 grip    = action.get('gripper.pos', 0.0)
-                print(
-                    f"[send_action | step {_step[0]:4d}] MODE=EEF  "
-                    f"| cur=({cur_xyz[0]:+.3f},{cur_xyz[1]:+.3f},{cur_xyz[2]:+.3f})"
+                DBG.act(
+                    f"step {_step[0]:4d} | MODE=EEF"
+                    f" | cur=({cur_xyz[0]:+.3f},{cur_xyz[1]:+.3f},{cur_xyz[2]:+.3f})"
                     f"  tgt=({tgt_xyz[0]:+.3f},{tgt_xyz[1]:+.3f},{tgt_xyz[2]:+.3f})"
                     f"  Δ=({delta[0]:+.3f},{delta[1]:+.3f},{delta[2]:+.3f})"
-                    f"  grip={grip:+.1f}"
+                    f"  grip_raw={grip:+.4f}"
                 )
 
         # Case: actions are in motor space
         if is_motor:
             motor_vals = np.array([float(action.get(f"{n}.pos", 0.0)) for n in so101.JOINT_NAMES])
+            if log_every:
+                DBG.send(f"Sending MOTOR command [{len(motor_vals)}D]: " +
+                         "  ".join(f"{n}={motor_vals[i]:+.1f}°" for i, n in enumerate(so101.JOINT_NAMES)))
             if dry_run:
                 _viz_update(motor_vals)
                 robot._virtual_motor = motor_vals
@@ -304,10 +412,18 @@ def set_custom_send_action(robot, so101: SO101Control = None, viz=None, dry_run=
         r6d = np.array([action[f"rot6d_{i}.pos"] for i in range(6)], dtype=np.float64)
         gripper_val = float(action["gripper.pos"])
 
+        if log_every:
+            DBG.ik(f"EEF action input [{10}D]:")
+            DBG.ik(f"  target_xyz = ({target_xyz[0]:+.4f},{target_xyz[1]:+.4f},{target_xyz[2]:+.4f}) m")
+            DBG.ik(f"  rot6d      = [" + ", ".join(f"{v:+.4f}" for v in r6d) + "]")
+            DBG.ik(f"  gripper_sigmoid = {gripper_val:+.4f}")
+            DBG.ik(f"  IK seed (current_motor) [{len(current_motor)}D]: " +
+                   "  ".join(f"{n}={current_motor[i]:+.1f}°" for i, n in enumerate(so101.JOINT_NAMES)))
+
         # Guard: degenerate rot6d (all-zero first column) would cause division-by-zero
         # in rot6d_to_mat's Gram-Schmidt step → NaN propagates through IK → garbage pose.
         if np.linalg.norm(r6d[:3]) < 1e-6:
-            print(f"[WARN step {_step[0]}] Degenerate rot6d (near-zero norm), holding current pose")
+            DBG.warn(f"step {_step[0]}: Degenerate rot6d (near-zero norm), holding current pose")
             _viz_update(current_motor)
             if dry_run:
                 return current_motor_dict
@@ -317,21 +433,47 @@ def set_custom_send_action(robot, so101: SO101Control = None, viz=None, dry_run=
         target_motor = so101.ik_motor_6d(target_xyz, r6d, current_motor)
 
         if target_motor is None:
-            print(f"[ERROR] IK failed, skipping action and holding current pose")
+            DBG.warn(f"step {_step[0]}: IK failed, holding current pose")
             _viz_update(current_motor)
             if dry_run:
                 return current_motor_dict
             return base_action_func(current_motor_dict, **kwargs)
 
-        # Gripper: model outputs sigmoid [0,1] (unnormalization is identity for gripper dim).
-        # Remap to physical motor degree range observed in the training dataset.
-        GRIPPER_CLOSED_DEG = 7.7   # dataset action.min[9]  → fully closed
-        GRIPPER_OPEN_DEG   = 41.7  # dataset action.max[9]  → fully open
-        gripper_motor_deg = GRIPPER_CLOSED_DEG + gripper_val * (GRIPPER_OPEN_DEG - GRIPPER_CLOSED_DEG)
+        if log_every:
+            DBG.ik(f"  IK solution [{len(target_motor)}D]: " +
+                   "  ".join(f"{n}={target_motor[i]:+.1f}°" for i, n in enumerate(so101.JOINT_NAMES)))
+
+        # Gripper: Pull scaling parameters dynamically from policy config and unnorm stats (Strict)
+        if not hasattr(policy.config, 'gripper_max_value'):
+            raise RuntimeError("Policy config is missing 'gripper_max_value'.")
+        GRIPPER_MODEL_MAX = float(policy.config.gripper_max_value)
+        
+        # Use unnorm_stats (from training/checkpoint) for physical bounds to match learned distribution,
+        # since the current dataset (evaluation) might be brand new and have no stats.
+        if unnorm_stats is None or "action" not in unnorm_stats:
+            raise RuntimeError("Unnormalization stats (training bounds) are missing.")
+        
+        stats_act = unnorm_stats.get("action")
+        if stats_act is None or "min" not in stats_act or "max" not in stats_act:
+            raise RuntimeError("Action stats (min/max) are missing from training distribution.")
+        
+        # Pull physical bounds from index 9 (gripper)
+        GRIPPER_CLOSED_DEG, GRIPPER_OPEN_DEG = float(stats_act["min"][9]), float(stats_act["max"][9])
+
+        t = float(np.clip(gripper_val / GRIPPER_MODEL_MAX, 0.0, 1.0))  # normalize back to [0,1]
+        gripper_motor_deg  = GRIPPER_CLOSED_DEG + t * (GRIPPER_OPEN_DEG - GRIPPER_CLOSED_DEG)
         target_motor[gr_idx] = gripper_motor_deg
-        if _step[0] % 30 == 1:
-            print(f"  [gripper] sigmoid={gripper_val:.3f} → motor={gripper_motor_deg:.1f}°")
+        
+        if log_every:
+            DBG.grip(f"action_space_out={gripper_val:.3f}\u00b0 / {GRIPPER_MODEL_MAX}\u00b0  (t={t:.3f})  "
+                     f"\u2192  motor={gripper_motor_deg:.2f}\u00b0  "
+                     f"(closed={GRIPPER_CLOSED_DEG}\u00b0 open={GRIPPER_OPEN_DEG}\u00b0)")
         motor_dict = {f"{n}.pos": float(target_motor[i]) for i, n in enumerate(so101.JOINT_NAMES)}
+
+        if log_every:
+            DBG.send(f"Dispatching to robot [{len(motor_dict)}D motor dict]:")
+            for k, v in motor_dict.items():
+                DBG.send(f"  {k:30s} = {v:+.2f}°")
 
         if dry_run:
             _viz_update(target_motor)
@@ -431,7 +573,26 @@ def set_trajectory_visualization(policy, so101: SO101Control, viz, postprocessor
         # xvla stores it at policy._queues["action"] (a deque inside a dict).
         is_new_inference = _policy_queue_len(policy) == 0
 
+        # ── DEBUG: log batch / observation coming into select_action ──────────
+        if is_new_inference:
+            DBG.divider("magenta", "POLICY INFERENCE  (queue empty → new forward pass)")
+            if isinstance(batch, dict):
+                DBG.infer(f"Batch keys ({len(batch)}): {list(batch.keys())}")
+                for bk, bv in batch.items():
+                    DBG.tensor("magenta", "INFER", f"  batch[{bk!r}]", bv)
+            else:
+                DBG.tensor("magenta", "INFER", "batch", batch)
+
         result = original_select_action(batch, **kwargs)
+
+        # ── DEBUG: raw result tensor from policy ──────────────────────────────
+        if is_new_inference:
+            DBG.tensor("teal", "POST", "select_action result (unnorm/remapped)", result)
+            if hasattr(policy.model, 'action_space'):
+                asp = policy.model.action_space
+                g_max = getattr(asp, 'gripper_max', 'N/A')
+                g_idx = getattr(asp, 'gripper_idx', 'N/A')
+                DBG.info(f"ActionSpace: type={type(asp).__name__}  gripper_max={g_max}  gripper_idx={g_idx}")
 
         if is_new_inference:
             try:
@@ -440,23 +601,22 @@ def set_trajectory_visualization(policy, so101: SO101Control, viz, postprocessor
                 chunk = [result] + remaining
                 
                 if POLICY_TYPE == "xvla":
-                    print(f"\n{'='*60}")
-                    print(f"[XVLA Inference] Raw model output (normalized space):")
+                    DBG.divider("magenta", f"XVLA Inference  chunk={len(chunk)} waypoints")
+                    DBG.infer(f"Raw model output (normalized space):")
                     if hasattr(result, 'shape'):
-                        print(f"  shape={list(result.shape)}, dtype={result.dtype}")
+                        DBG.infer(f"  shape={list(result.shape)}, dtype={result.dtype}")
                         flat = result.squeeze()
                         for i, name in enumerate(action_names):
                             if i < len(flat):
-                                print(f"    [{i}] {name:16s} = {float(flat[i]):+.6f} (raw/normalized)")
+                                DBG.infer(f"    [{i:2d}] {name:18s} = {float(flat[i]):+.6f}  (normalized)")
                     decoded_first = _decode_tensor(result)
                     if decoded_first is not None and hasattr(decoded_first, 'shape'):
-                        print(f"  After postprocessor (unnormalized):")
+                        DBG.post(f"  After postprocessor (unnormalized/real-world):")
                         flat_d = decoded_first.squeeze()
                         for i, name in enumerate(action_names):
                             if i < len(flat_d):
-                                print(f"    [{i}] {name:16s} = {float(flat_d[i]):+.6f} (real-world)")
-                    print(f"  Chunk size: {len(chunk)} waypoints")
-                    print(f"{'='*60}\n")
+                                DBG.post(f"    [{i:2d}] {name:18s} = {float(flat_d[i]):+.6f}")
+                    DBG.infer(f"  Chunk size: {len(chunk)} waypoints  |  action_names: {action_names}")
 
                 print(f"[viz] New inference chunk: {len(chunk)} waypoints")
                 xyz_list  = []
@@ -543,21 +703,14 @@ def _get_sliced_action_stats_for_mode(policy_path: str, action_mode: str) -> dic
     from safetensors import safe_open
     import torch
 
-    _ACTION_MODE_SLICES = {
-        "so101_ee6d":  (0,  10),
-        "so101_joint": (10, 16),
-    }
-    # Gripper is always the LAST dim within the slice
     _GRIPPER_LOCAL_IDX = {
         "so101_ee6d":  9,   # dim 9 of the 10D slice
         "so101_joint": 5,   # dim 5 of the 6D slice
     }
-    if action_mode not in _ACTION_MODE_SLICES:
+    if action_mode not in _GRIPPER_LOCAL_IDX:
         raise ValueError(
             f"Unknown ACTION_MODE '{action_mode}' for stat slicing. "
-            f"Add it to _ACTION_MODE_SLICES in _get_sliced_action_stats_for_mode()."
         )
-    s, e = _ACTION_MODE_SLICES[action_mode]
     grip_idx = _GRIPPER_LOCAL_IDX[action_mode]
 
     post_stats_file = hf_hub_download(
@@ -565,24 +718,39 @@ def _get_sliced_action_stats_for_mode(policy_path: str, action_mode: str) -> dic
         filename="policy_postprocessor_step_0_unnormalizer_processor.safetensors",
     )
     with safe_open(post_stats_file, framework="pt") as f:
-        full_mean = f.get_tensor("action.mean")   # [16]
-        full_std  = f.get_tensor("action.std")    # [16]
+        full_mean = f.get_tensor("action.mean")
+        full_std  = f.get_tensor("action.std")
+        full_min  = f.get_tensor("action.min")
+        full_max  = f.get_tensor("action.max")
 
-    sliced_mean = full_mean[s:e].clone()
-    sliced_std  = full_std[s:e].clone()
+    sliced_mean = full_mean.clone()
+    sliced_std  = full_std.clone()
+    sliced_min  = full_min.clone()
+    sliced_max  = full_max.clone()
 
     # Gripper: force identity so unnormalization is a no-op for that dim.
     # The sigmoid [0,1] output will be remapped to motor degrees in send_action.
     sliced_mean[grip_idx] = 0.0
     sliced_std[grip_idx]  = 1.0
 
+    stats_dict = {
+        "action": {
+            "mean": sliced_mean,
+            "std":  sliced_std,
+            "min":  sliced_min,
+            "max":  sliced_max,
+        }
+    }
+
     print(
         f"[x] Unnormalizer: ACTION_MODE='{action_mode}' -> "
-        f"stats dims [{s}:{e}] ({e - s}D)  [gripper dim {grip_idx} = identity]\n"
+        f"stats dims ({len(sliced_mean)}D)  [gripper dim {grip_idx} = identity]\n"
         f"    mean={[f'{v:.4f}' for v in sliced_mean.tolist()]}\n"
-        f"    std ={[f'{v:.4f}' for v in sliced_std.tolist()]}"
+        f"    std ={[f'{v:.4f}' for v in sliced_std.tolist()]}\n"
+        f"    min ={[f'{v:.4f}' for v in sliced_min.tolist()]}\n"
+        f"    max ={[f'{v:.4f}' for v in sliced_max.tolist()]}"
     )
-    return {"action": {"mean": sliced_mean, "std": sliced_std}}
+    return stats_dict
 
 
 def get_policy_processors(policy, dataset, pipeline_key: str | None = None):
@@ -590,7 +758,20 @@ def get_policy_processors(policy, dataset, pipeline_key: str | None = None):
     Utility to choose pre- and post-processors by a key.
     - 'xvla_default': Use our custom XVLA replication.
     - None (or any other): Use LeRobot's default factory.
+
+    Returns: (preprocessor, postprocessor, unnorm_stats)
     """
+    DBG.divider("blue", f"get_policy_processors  pipeline_key={pipeline_key!r}")
+    stats = getattr(getattr(dataset, 'meta', None), 'stats', None)
+    if stats:
+        DBG.pre(f"Dataset stats keys: {list(stats.keys())}")
+        for sk, sv in stats.items():
+            if isinstance(sv, dict):
+                for stat_name, stat_val in sv.items():
+                    DBG.tensor("blue", "PRE", f"  stats[{sk!r}][{stat_name!r}]", stat_val)
+    else:
+        DBG.pre("Dataset stats: None (new dataset — no stats yet)")
+
     if pipeline_key == "xvla_default":
         print(f"[x] Using custom pipeline: {pipeline_key}")
         from custom_pipelines.xvla_processor import make_custom_xvla_processors
@@ -611,16 +792,32 @@ def get_policy_processors(policy, dataset, pipeline_key: str | None = None):
     if POLICY_TYPE == "xvla" and ACTION_MODE in ("so101_ee6d", "so101_joint"):
         sliced_stats = _get_sliced_action_stats_for_mode(POLICY_PATH, ACTION_MODE)
         postprocessor_overrides["unnormalizer_processor"] = {"stats": sliced_stats}
+        DBG.pre(f"Sliced stats for ACTION_MODE={ACTION_MODE!r}:")
+        for sk, sv in sliced_stats.items():
+            if isinstance(sv, dict):
+                for stat_name, stat_val in sv.items():
+                    DBG.tensor("blue", "PRE", f"  sliced[{sk!r}][{stat_name!r}]", stat_val)
 
     # Default behavior: load processors from pretrained checkpoint
     print(f"[x] Using default/factory processors (Device: {DEVICE})")
-    return make_pre_post_processors(
+    preprocessor, postprocessor = make_pre_post_processors(
         policy_cfg=policy,
         pretrained_path=POLICY_PATH,
         dataset_stats=dataset.meta.stats,
         preprocessor_overrides={"device_processor": {"device": DEVICE}},
         postprocessor_overrides=postprocessor_overrides if postprocessor_overrides else None,
     )
+    DBG.pre(f"Preprocessor type : {type(preprocessor).__name__}")
+    DBG.post(f"Postprocessor type: {type(postprocessor).__name__}")
+    
+    # Return the stats used for unnormalization so they can be used for gripper remapping
+    # If we are in EEF/Joint mode, we already have sliced_stats. 
+    # Otherwise, fall back to dataset stats.
+    unnorm_stats = postprocessor_overrides.get("unnormalizer_processor", {}).get("stats")
+    if unnorm_stats is None:
+        unnorm_stats = dataset.meta.stats
+
+    return preprocessor, postprocessor, unnorm_stats
 
 def get_policy(policy_type: str, path: str, device: str):
     """
@@ -667,7 +864,7 @@ def get_policy(policy_type: str, path: str, device: str):
 
         # ── Step 2: Construct model with the correct config ──
         policy = policy_cls.from_pretrained(path, config=config, device=device)
-        INCLUDE_EEF_STATE = True
+        INCLUDE_EEF_STATE = (ACTION_MODE == "so101_ee6d")
 
         # ── Step 3: Post-creation verification ──
         action_space_name = type(policy.model.action_space).__name__
@@ -768,11 +965,23 @@ def main():
         mapped_obs_features[k] = v
     dataset_features = {**action_features, **mapped_obs_features}
 
+    # ── DEBUG: print full feature map ──────────────────────────────────────────
+    DBG.divider("white", "DATASET FEATURE MAP")
+    for k, v in action_features.items():
+        shape = v.get('shape', '?') if isinstance(v, dict) else '?'
+        names = v.get('names', []) if isinstance(v, dict) else []
+        DBG.info(f"  [action ] {k}: shape={shape}  names={names}")
+    for k, v in mapped_obs_features.items():
+        shape = v.get('shape', '?') if isinstance(v, dict) else '?'
+        names = v.get('names', []) if isinstance(v, dict) else []
+        DBG.info(f"  [obs    ] {k}: shape={shape}  names={names}")
+    DBG.info(f"Total dataset_features: {list(dataset_features.keys())}")
+
     # Dataset Object
     dataset, episode_idx = get_dataset(dataset_features, robot.name)
 
     # Build preprocessor and postprocessor for policy inference
-    preprocessor, postprocessor = get_policy_processors(policy=policy, dataset=dataset, pipeline_key=POLICY_PIPELINE)
+    preprocessor, postprocessor, unnorm_stats = get_policy_processors(policy=policy, dataset=dataset, pipeline_key=POLICY_PIPELINE)
 
     # Meshcat visualization (optional — gracefully disabled if unavailable)
     viz = init_meshcat() if USE_MESHCAT_VIZ else None
@@ -793,7 +1002,7 @@ def main():
 
     # Patch robot for observation and action
     set_custom_get_observation(robot, so101=so101, include_eef_state=INCLUDE_EEF_STATE, dry_run=DRY_RUN)
-    set_custom_send_action(robot, so101=so101, viz=viz, dry_run=DRY_RUN)
+    set_custom_send_action(robot, so101=so101, viz=viz, dry_run=DRY_RUN, policy=policy, dataset=dataset, unnorm_stats=unnorm_stats)
     # Trajectory viz is patched BEFORE the delay wrapper so it sits closest to
     # the original select_action — it draws the chunk immediately after inference.
     # Extract action names from the "action" feature entry (hw_to_dataset_features returns a
