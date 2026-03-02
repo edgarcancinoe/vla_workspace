@@ -71,8 +71,6 @@ except Exception as e:
     print(f"WARNING: Could not load config/mapping from {ROBOT_CONFIG_PATH}: {e}")
     RECTIFY_TOP = True
     RECTIFY_WRIST = True
-    # Fallback to defaults if detection fails
-    CAMERA_NAME_MAPPING = {"camera1": "wrist", "camera2": "top"}
 
 # =============================================================================
 # HELPER FUNCTIONS

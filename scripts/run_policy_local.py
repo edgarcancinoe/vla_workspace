@@ -142,7 +142,7 @@ HOME_POSE = config_data["robot"].get("home_pose", {})
 CAMERA_CONFIG_MAP = config_data.get("cameras", {})
 
 # --- Policy ---
-POLICY_PATH = "edgarcancinoe/xvla-base_soarm101_pickplace_10d_so101_ee6d_a-m_s-m_v1"
+POLICY_PATH = "edgarcancinoe/xvla-base_soarm101_pickplace_10d_so101_ee6d_a-m_s-m_v1-step-15000"
 
 POLICY_TYPE = "xvla" # "xvla" | "smolvla"
 DEVICE      = "mps"  # "cuda" | "mps" | "cpu"
@@ -274,12 +274,17 @@ def set_custom_get_observation(robot, so101: SO101Control = None, include_eef_st
             for cam_key, cam in robot.cameras.items():
                 try:
                     observation[cam_key] = cam.async_read()
-                except Exception:
-                    # Fallback to black frame
-                    h, w = robot.config.cameras[cam_key].height, robot.config.cameras[cam_key].width
-                    observation[cam_key] = torch.zeros((h, w, 3), dtype=torch.uint8)
+                except e:
+                    # Raise exception if camera fails
+                    raise e
         else:
             observation = base_obs_func()
+        
+        if _obs_step[0] % 30 == 1:
+            # Coloured logging
+            print(f"\033[94mDEBUG: Raw robot observation keys: {list(observation.keys())}\033[0m")
+            if "wrist" in observation:
+                print("\033[91m!!! DEBUG: 'wrist' key already in raw observation!\033[0m")
         
         # Rectify images based on config
         for cam_name, should_rectify in RECTIFY_MAP.items():
@@ -303,10 +308,7 @@ def set_custom_get_observation(robot, so101: SO101Control = None, include_eef_st
                 val = observation.pop(k)
                 observation[v] = val
             elif v not in observation:
-                # CRITICAL: Ensure the expected key exists even if hardware fails
-                import torch
-                h, w = 480, 640 # Default fallback dimensions
-                observation[v] = torch.zeros((h, w, 3), dtype=torch.uint8)
+                raise KeyError(f"Key '{v}' not found in observation. Available keys: {list(observation.keys())}")
 
         # ── DEBUG: log observation keys & state dimensions every 30 steps ──
         if _obs_step[0] % 30 == 1:
@@ -322,10 +324,11 @@ def set_custom_get_observation(robot, so101: SO101Control = None, include_eef_st
                 DBG.obs(f"Image '{k}': shape={sh}")
 
         return observation
-    
-    print(f"[x] Robot observation patched for dynamic rectification based on config: {RECTIFY_MAP}")
-    print(f"[x] Robot observation patched for EEF State: {EEF_STATE_NAMES}") if include_eef_state else None
-    print(f"[x] Robot observation patched for Camera Mapping: {ACTIVE_CAMERA_MAPPING}")
+    print("==============================================================================================================")
+    print("\033[94m[x] Robot observation patched for dynamic rectification based on config: {RECTIFY_MAP}\033[0m")
+    print("\033[94m[x] Robot observation patched for EEF State: {EEF_STATE_NAMES}\033[0m") if include_eef_state else None
+    print("\033[94m[x] Robot observation patched for Camera Mapping: {ACTIVE_CAMERA_MAPPING}\033[0m")
+    print("==============================================================================================================")
     robot.get_observation = patched_get_observation
 
 # > Custom send_action():
@@ -737,7 +740,6 @@ def _get_sliced_action_stats_for_mode(policy_path: str, action_mode: str) -> dic
     )
     return stats_dict
 
-
 def get_policy_processors(policy, dataset, pipeline_key: str | None = None):
     """
     Utility to choose pre- and post-processors by a key.
@@ -977,7 +979,8 @@ def main():
     # Initialize the keyboard listener and (optionally) rerun visualization
     _, events = init_keyboard_listener()
     if USE_RERUN:
-        init_rerun(session_name="inference_evaluation")
+        import uuid
+        init_rerun(session_name=f"inference_evaluation_{uuid.uuid4().hex[:8]}")
 
     # Create robot processors (required by record_loop)
     teleop_action_processor, robot_action_processor, robot_observation_processor = make_default_processors()

@@ -3,19 +3,18 @@ from lerobot.cameras.opencv.configuration_opencv import OpenCVCameraConfig
 from lerobot.cameras.opencv.camera_opencv import OpenCVCamera
 from lerobot.cameras.configs import ColorMode, Cv2Rotation
 
-# Define the cameras you want to use (e.g., indices 0 and 1)
-CAMERA_INDICES = [1, 2] 
+CAMERA_INDICES = [0,1]   # Add more indices if needed, e.g. [0, 1]
 res = (640, 480)
 cameras = []
 
 try:
-    # Initialize and connect to all cameras
+    # Initialize cameras
     for idx in CAMERA_INDICES:
         print(f"Connecting to camera {idx}...")
         config = OpenCVCameraConfig(
             index_or_path=idx,
             fps=30,
-            width=res[0],  
+            width=res[0],
             height=res[1],
             color_mode=ColorMode.RGB,
             rotation=Cv2Rotation.NO_ROTATION
@@ -27,22 +26,29 @@ try:
 
     print("Press 'q' to quit.")
 
-    count = 0
-    while count < 100:
+    while True:
         for i, cam in enumerate(cameras):
-            # Read frame (returns RGB)
             frame = cam.async_read()
-            
+
             if frame is not None:
-                # Convert RGB (LeRobot default) to BGR for OpenCV display
+                # Convert RGB → BGR for OpenCV display
                 frame_bgr = cv2.cvtColor(frame, cv2.COLOR_RGB2BGR)
-                
-                # Show the frame
-                window_name = f"Camera {CAMERA_INDICES[i]}"
-                # cv2.imshow(window_name, frame_bgr) # Commented out for headless run safety if needed
-        
-        count += 1
-        # Check for 'q' key to exit
+
+                # Overlay camera index text
+                cv2.putText(
+                    frame_bgr,
+                    f"Camera {CAMERA_INDICES[i]}",
+                    (10, 30),
+                    cv2.FONT_HERSHEY_SIMPLEX,
+                    1,
+                    (0, 255, 0),
+                    2,
+                    cv2.LINE_AA
+                )
+
+                cv2.imshow(f"Camera {CAMERA_INDICES[i]}", frame_bgr)
+
+        # Needed for window refresh
         if cv2.waitKey(1) & 0xFF == ord('q'):
             break
 
