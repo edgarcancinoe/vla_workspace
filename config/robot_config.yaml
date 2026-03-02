@@ -18,12 +18,12 @@ leader:
 
 cameras:
   main: 
-    id: 0
-    rectify: false
-    width: 640
-    height: 360
-  secondary: 
     id: 1
     rectify: false
     width: 640
-    height: 360
+    height: 480
+  secondary: 
+    id: 0
+    rectify: false
+    width: 640
+    height: 480

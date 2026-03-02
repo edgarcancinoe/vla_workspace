@@ -142,7 +142,7 @@ HOME_POSE = config_data["robot"].get("home_pose", {})
 CAMERA_CONFIG_MAP = config_data.get("cameras", {})
 
 # --- Policy ---
-POLICY_PATH = "edgarcancinoe/xvla-base_finetuned_soarm101_pickplace_10d_so101_joint_a-m_s-m-step-20000"
+POLICY_PATH = "edgarcancinoe/xvla-base_soarm101_pickplace_10d_so101_ee6d_a-m_s-m_v1"
 
 POLICY_TYPE = "xvla" # "xvla" | "smolvla"
 DEVICE      = "mps"  # "cuda" | "mps" | "cpu"
@@ -174,13 +174,13 @@ POLICY_DELAY       = 0
 # --- XVLA-specific ---
 NUM_IMAGE_VIEWS            = 3
 NUM_EMPTY_CAMERAS          = 1
-ACTION_MODE                = "so101_joint" # "so101_ee6d" | "so101_joint"
+ACTION_MODE                = "so101_ee6d" # "so101_ee6d" | "so101_joint"
 NUM_XVLA_OBS_STEPS         = 1
 
 # --- Evaluation & Dataset ---
 NUM_EPISODES               = 5
 FPS                        = 30 
-EPISODE_TIME_SEC           = 60
+EPISODE_TIME_SEC           = 120
 HF_USER                    = "edgarcancinoe"
 EVAL_DATASET_NAME          = "eval_" + POLICY_PATH.split("/")[-1] 
 DATA_DIR                   = Path(__file__).parent.parent / "outputs" / "datasets" / EVAL_DATASET_NAME
@@ -443,31 +443,16 @@ def set_custom_send_action(robot, so101: SO101Control = None, viz=None, dry_run=
             DBG.ik(f"  IK solution [{len(target_motor)}D]: " +
                    "  ".join(f"{n}={target_motor[i]:+.1f}°" for i, n in enumerate(so101.JOINT_NAMES)))
 
-        # Gripper: Pull scaling parameters dynamically from policy config and unnorm stats (Strict)
-        if not hasattr(policy.config, 'gripper_max_value'):
-            raise RuntimeError("Policy config is missing 'gripper_max_value'.")
+        # Gripper: The model's action_space.postprocess already applies sigmoid 
+        # and scales to policy.config.gripper_max_value (e.g. 24.0).
+        # We just need to clip it to [0, gripper_max] and send it.
         GRIPPER_MODEL_MAX = float(policy.config.gripper_max_value)
-        
-        # Use unnorm_stats (from training/checkpoint) for physical bounds to match learned distribution,
-        # since the current dataset (evaluation) might be brand new and have no stats.
-        if unnorm_stats is None or "action" not in unnorm_stats:
-            raise RuntimeError("Unnormalization stats (training bounds) are missing.")
-        
-        stats_act = unnorm_stats.get("action")
-        if stats_act is None or "min" not in stats_act or "max" not in stats_act:
-            raise RuntimeError("Action stats (min/max) are missing from training distribution.")
-        
-        # Pull physical bounds from index 9 (gripper)
-        GRIPPER_CLOSED_DEG, GRIPPER_OPEN_DEG = float(stats_act["min"][9]), float(stats_act["max"][9])
-
-        t = float(np.clip(gripper_val / GRIPPER_MODEL_MAX, 0.0, 1.0))  # normalize back to [0,1]
-        gripper_motor_deg  = GRIPPER_CLOSED_DEG + t * (GRIPPER_OPEN_DEG - GRIPPER_CLOSED_DEG)
+        gripper_motor_deg = np.clip(gripper_val, 0.0, GRIPPER_MODEL_MAX)
         target_motor[gr_idx] = gripper_motor_deg
         
         if log_every:
-            DBG.grip(f"action_space_out={gripper_val:.3f}\u00b0 / {GRIPPER_MODEL_MAX}\u00b0  (t={t:.3f})  "
-                     f"\u2192  motor={gripper_motor_deg:.2f}\u00b0  "
-                     f"(closed={GRIPPER_CLOSED_DEG}\u00b0 open={GRIPPER_OPEN_DEG}\u00b0)")
+            DBG.grip(f"action_space_out={gripper_val:.3f}\u00b0 / {GRIPPER_MODEL_MAX}\u00b0  "
+                     f"\u2192  motor={gripper_motor_deg:.2f}\u00b0")
         motor_dict = {f"{n}.pos": float(target_motor[i]) for i, n in enumerate(so101.JOINT_NAMES)}
 
         if log_every:
