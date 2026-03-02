@@ -36,7 +36,7 @@ os.makedirs(os.environ["HF_LEROBOT_HOME"], exist_ok=True)
 # ============================================================================
 HF_USER = os.environ.get("HF_USER", "edgarcancinoe")
 # Dataset to use -----------------------------------
-DATASET_NAME_STR = "soarm101_pickplace_10d"
+DATASET_NAME_STR = "soarm101_pickplace_10d_7p5hz"
 # --------------------------------------------------
 
 # Base model ---------------------------------------
