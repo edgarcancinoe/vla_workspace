@@ -716,7 +716,7 @@ def _get_sliced_action_stats_for_mode(policy_path: str, action_mode: str) -> dic
     # Gripper: force identity so unnormalization is a no-op for that dim.
     # The sigmoid [0,1] output will be remapped to motor degrees in send_action.
     # sliced_mean[grip_idx] = 0.0
-    # sliced_std[grip_idx]  = 1.0
+    # sliced_std[grip_idx]  = 1.0 # CHECK THIS NBORMALIZAITON THING BECEAUSE THEA CTION SHOULD ACTAULLY BE NORNMALIEZED IN PROPRIOCEPTIVE INFORMATION OR WILL JUST BE DOING NOISE
 
     stats_dict = {
         "action": {
