@@ -36,12 +36,13 @@ os.makedirs(os.environ["HF_LEROBOT_HOME"], exist_ok=True)
 # ============================================================================
 HF_USER = os.environ.get("HF_USER", "edgarcancinoe")
 # Dataset to use -----------------------------------
-DATASET_NAME_STR = os.environ.get("DATASET_NAME_STR", "soarm101_pickplace_10d")
+DATASET_NAME_STR = "soarm101_pickplace_10d"
 # --------------------------------------------------
 
 # Base model ---------------------------------------
 BASE_USER = "lerobot"
 BASE_NAME = "xvla-base"
+VERSION = os.environ.get("VERSION", "v1")
 OPTIMIZER_LR = "1e-4"
 
 # Policy Configuration Grids
@@ -52,7 +53,6 @@ ACTION_MODES = [
 
 NORMALIZATION_MAPPINGS = [
     '{"ACTION": "MEAN_STD", "STATE": "MEAN_STD", "VISUAL": "IDENTITY"}',
-    '{"ACTION": "MEAN_STD", "STATE": "IDENTITY", "VISUAL": "IDENTITY"}',
 ]
 
 EMPTY_CAMERAS = os.environ.get("EMPTY_CAMERAS", "1")
@@ -79,7 +79,7 @@ DATASET_REPO_ID = f"{HF_USER}/{DATASET_NAME}"
 
 # Training Hyperparameters
 BATCH_SIZE = "8"
-STEPS = "60000"
+STEPS = "45000"
 LOG_FREQ = "1000"
 EVAL_FREQ = "-1"
 
@@ -87,8 +87,8 @@ DEVICE = 'cuda'
 CUDA_DEVICE = '1'
 NUM_WORKERS = '4'
 
-SAVE_FREQ = "20000"
-PUSH_HF_EVERY = "20000"
+SAVE_FREQ = "15000"
+PUSH_HF_EVERY = "15000"
 
 # Resume configuration
 RESUME = "false"
@@ -173,9 +173,11 @@ for action_mode, norm_mapping in itertools.product(ACTION_MODES, NORMALIZATION_M
     # Policy name to use when saving
     # --------------------------------------------------
     # Append the action mode and norm mapping to unique-ify the runs
-    POLICY_NAME = f"{BASE_NAME}_ft_{DATASET_NAME_STR}_{action_mode}_{norm_suffix}"
+    POLICY_NAME = f"{BASE_NAME}_{DATASET_NAME_STR}_{action_mode}_{norm_suffix}"
     if ENABLE_AUGMENTATION == "true":
         POLICY_NAME += "_aug"
+    
+    POLICY_NAME += f"_{VERSION}"
         
     TIMESTAMP = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
     JOB_NAME = os.environ.get("JOB_NAME", f"{POLICY_NAME}_{TIMESTAMP}")
