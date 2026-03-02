@@ -464,7 +464,9 @@ def set_custom_send_action(robot, so101: SO101Control = None, viz=None, dry_run=
                         DBG.grip(f"Using stats: min={grip_min:.2f}°, max={grip_max:.2f}°")
 
         # Map gripper_val (normalized) to motor degrees [grip_min, grip_max]
+        print(f"gripper_val: {gripper_val:.4f}")
         gripper_motor_deg = gripper_val * (grip_max - grip_min) + grip_min
+        print(f"gripper_motor_deg: {gripper_motor_deg:.4f}")
         target_motor[gr_idx] = gripper_motor_deg
 
         if log_every:
@@ -732,8 +734,8 @@ def _get_sliced_action_stats_for_mode(policy_path: str, action_mode: str) -> dic
 
     # Gripper: force identity so unnormalization is a no-op for that dim.
     # The sigmoid [0,1] output will be remapped to motor degrees in send_action.
-    sliced_mean[grip_idx] = 0.0
-    sliced_std[grip_idx]  = 1.0
+    # sliced_mean[grip_idx] = 0.0
+    # sliced_std[grip_idx]  = 1.0
 
     stats_dict = {
         "action": {
