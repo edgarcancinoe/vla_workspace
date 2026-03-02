@@ -446,16 +446,30 @@ def set_custom_send_action(robot, so101: SO101Control = None, viz=None, dry_run=
             DBG.ik(f"  IK solution [{len(target_motor)}D]: " +
                    "  ".join(f"{n}={target_motor[i]:+.1f}°" for i, n in enumerate(so101.JOINT_NAMES)))
 
-        # Gripper: The model's action_space.postprocess already applies sigmoid 
-        # and scales to policy.config.gripper_max_value (e.g. 24.0).
-        # We just need to clip it to [0, gripper_max] and send it.
-        GRIPPER_MODEL_MAX = float(policy.config.gripper_max_value)
-        gripper_motor_deg = np.clip(gripper_val, 0.0, GRIPPER_MODEL_MAX)
+        # Gripper: Map normalized value to training range [grip_min, grip_max].
+        # Get min/max from unnorm_stats (from training dataset statistics).
+        grip_min = 0.0
+        grip_max = 100.0  # Safe default
+
+        # Try to get actual gripper range from training stats
+        if unnorm_stats and "action" in unnorm_stats:
+            action_stats = unnorm_stats["action"]
+            if isinstance(action_stats, dict):
+                stats_min = action_stats.get("min", [])
+                stats_max = action_stats.get("max", [])
+                if gr_idx < len(stats_min) and gr_idx < len(stats_max):
+                    grip_min = float(stats_min[gr_idx])
+                    grip_max = float(stats_max[gr_idx])
+                    if log_every:
+                        DBG.grip(f"Using stats: min={grip_min:.2f}°, max={grip_max:.2f}°")
+
+        # Map gripper_val (normalized) to motor degrees [grip_min, grip_max]
+        gripper_motor_deg = gripper_val * (grip_max - grip_min) + grip_min
         target_motor[gr_idx] = gripper_motor_deg
-        
+
         if log_every:
-            DBG.grip(f"action_space_out={gripper_val:.3f}\u00b0 / {GRIPPER_MODEL_MAX}\u00b0  "
-                     f"\u2192  motor={gripper_motor_deg:.2f}\u00b0")
+            DBG.grip(f"gripper: {gripper_val:.4f}  →  {gripper_motor_deg:.2f}°  "
+                     f"(range {grip_min:.2f}°-{grip_max:.2f}°)")
         motor_dict = {f"{n}.pos": float(target_motor[i]) for i, n in enumerate(so101.JOINT_NAMES)}
 
         if log_every:
