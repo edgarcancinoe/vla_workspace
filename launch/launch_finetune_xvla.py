@@ -56,7 +56,9 @@ NORMALIZATION_MAPPINGS = [
 ]
 
 EMPTY_CAMERAS = os.environ.get("EMPTY_CAMERAS", "1")
-POLICY_NUM_IMAGE_VIEWS = os.environ.get("POLICY_NUM_IMAGE_VIEWS", "2")
+POLICY_NUM_IMAGE_VIEWS = os.environ.get("POLICY_NUM_IMAGE_VIEWS", "3")
+POLICY_TOKENIZER_MAX_LENGTH = os.environ.get("POLICY_TOKENIZER_MAX_LENGTH", "64")
+POLICY_MAX_LEN_SEQ = os.environ.get("POLICY_MAX_LEN_SEQ", "1024")
 
 # Model paths
 BASE_POLICY_PATH = f"{BASE_USER}/{BASE_NAME}"
@@ -228,6 +230,8 @@ for action_mode, norm_mapping in itertools.product(ACTION_MODES, NORMALIZATION_M
         f"--policy.train_policy_transformer={TRAIN_POLICY_TRANSFORMER}",
         f"--policy.train_soft_prompts={TRAIN_SOFT_PROMPTS}",
         f"--policy.num_image_views={POLICY_NUM_IMAGE_VIEWS}",
+        f"--policy.tokenizer_max_length={POLICY_TOKENIZER_MAX_LENGTH}",
+        f"--policy.max_len_seq={POLICY_MAX_LEN_SEQ}",
         f"--policy.normalization_mapping={norm_mapping}",
     ]
 

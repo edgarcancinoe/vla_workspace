@@ -733,14 +733,6 @@ def get_policy(policy_type: str, path: str, device: str):
 
         config.n_obs_steps = NUM_XVLA_OBS_STEPS
 
-        # Cap tokenizer_max_length so the total sequence fits within
-        # the transformer's max_len_seq (512 for this checkpoint).
-        max_safe_vlm_tokens = 50
-        if getattr(config, "tokenizer_max_length", 0) > max_safe_vlm_tokens:
-            print(f"[!] Capping tokenizer_max_length from {config.tokenizer_max_length} → {max_safe_vlm_tokens} "
-                  f"to stay within max_len_seq={getattr(config, 'max_len_seq', '?')}")
-            config.tokenizer_max_length = max_safe_vlm_tokens
-
         # ── Step 2: Construct model with the correct config ──
         policy = policy_cls.from_pretrained(path, config=config, device=device)
         INCLUDE_EEF_STATE = (getattr(policy.config, "action_mode", None) == "so101_ee6d")

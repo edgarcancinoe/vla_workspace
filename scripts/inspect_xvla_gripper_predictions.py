@@ -41,7 +41,6 @@ DEVICE = "cuda" if torch.cuda.is_available() else "mps" if torch.backends.mps.is
 OUTPUT_DIR = PROJECT_ROOT / "vla_workspace" / "outputs" / "gripper_inspection"
 VIDEO_BACKEND = "pyav"
 CAMERA_RENAME = {"main": "image", "secondary": "image2"}
-MAX_SAFE_TOKENIZER_LENGTH = 50
 
 
 def sanitize_name(value: str) -> str:
@@ -128,8 +127,6 @@ def load_policy_and_processors(policy_path: str, dataset: LeRobotDataset, device
         raise ValueError(f"Expected an XVLA checkpoint, got policy type {config.type!r}")
 
     config.device = device
-    if getattr(config, "tokenizer_max_length", 0) > MAX_SAFE_TOKENIZER_LENGTH:
-        config.tokenizer_max_length = MAX_SAFE_TOKENIZER_LENGTH
     slice_spec = get_so101_slice_spec(getattr(config, "action_mode", None))
     if slice_spec is not None:
         slice_dataset_meta_in_place(dataset.meta, slice_spec)
