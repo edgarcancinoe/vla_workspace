@@ -600,9 +600,7 @@ def main():
     teleop.get_action = patched_get_action
     # -----------------------------------------------------------------------
 
-    teleop_action_processor, robot_action_processor, robot_observation_processor = (
-        make_default_processors()
-    )
+    teleop_action_processor, robot_action_processor, robot_observation_processor = (make_default_processors())
 
     # --- Recording loop -----------------------------------------------------
     while episode_idx < NUM_EPISODES and not events["stop_recording"]:
