@@ -1,3 +1,7 @@
+"""
+export PYTHONNOUSERSITE=1
+python launch/launch_finetune_xvla.py 
+"""
 import os
 import sys
 import subprocess
@@ -35,30 +39,31 @@ os.makedirs(os.environ["HF_LEROBOT_HOME"], exist_ok=True)
 # ============================================================================
 # CONFIGURATION - Adjust these variables to your setup
 # ============================================================================
-HF_USER = os.environ.get("HF_USER", "edgarcancinoe")
+HF_USER             = "edgarcancinoe"
 # Dataset to use -----------------------------------
-DATASET_NAME_STR = "soarm101_pickplace_10d" # soarm101_pickplace_10d_7p5hz"
+DATASET_NAME_STR    = "soarm101_pickplace_10d" # soarm101_pickplace_10d_7p5hz"
 # --------------------------------------------------
 
 # Base model ---------------------------------------
 BASE_USER = "lerobot"
 BASE_NAME = "xvla-base"
 VERSION = os.environ.get("VERSION", "v1")
-
+ENABLE_GRIPPER_DEBUG_STATS = "true"
 # Policy Configuration Grids
 ACTION_MODES = [
     "so101_ee6d", 
-    "so101_joint"
+    # "so101_joint"
 ]
 
 NORMALIZATION_MAPPINGS = [
     '{"ACTION": "MEAN_STD", "STATE": "MEAN_STD", "VISUAL": "IDENTITY"}',
 ]
 
-EMPTY_CAMERAS = os.environ.get("EMPTY_CAMERAS", "1")
-POLICY_NUM_IMAGE_VIEWS = os.environ.get("POLICY_NUM_IMAGE_VIEWS", "3")
-POLICY_TOKENIZER_MAX_LENGTH = os.environ.get("POLICY_TOKENIZER_MAX_LENGTH", "64")
-POLICY_MAX_LEN_SEQ = os.environ.get("POLICY_MAX_LEN_SEQ", "1024")
+EMPTY_CAMERAS =                 1
+POLICY_NUM_IMAGE_VIEWS =        3
+POLICY_TOKENIZER_MAX_LENGTH =   64
+POLICY_MAX_LEN_SEQ =            1024
+DATASET_VIDEO_BACKEND = "pyav"
 
 # Model paths
 BASE_POLICY_PATH = f"{BASE_USER}/{BASE_NAME}"
@@ -81,16 +86,16 @@ DATASET_REPO_ID = f"{HF_USER}/{DATASET_NAME}"
 
 # Training Hyperparameters
 BATCH_SIZE = "8"
-STEPS = "45000"
-LOG_FREQ = "1000"
+STEPS = "50000"
+LOG_FREQ = "100"
 EVAL_FREQ = "-1"
 
 DEVICE = 'cuda'
-CUDA_DEVICE = '2'
+CUDA_DEVICE = '1'
 NUM_WORKERS = '4'
 
-SAVE_FREQ = "15000"
-PUSH_HF_EVERY = "15000"
+SAVE_FREQ = "25000"
+PUSH_HF_EVERY = "25000"
 
 # Resume configuration
 RESUME = "false"
@@ -207,6 +212,7 @@ for action_mode, norm_mapping in itertools.product(ACTION_MODES, NORMALIZATION_M
         f"--policy.repo_id={POLICY_REPO_ID}",
         f"--policy.push_to_hub={POLICY_PUSH_TO_HUB}",
         f"--dataset.repo_id={DATASET_REPO_ID}",
+        f"--dataset.video_backend={DATASET_VIDEO_BACKEND}",
         f"--rename_map={RENAME_MAP}",
         f"--dataset.image_transforms.enable={ENABLE_AUGMENTATION}",
         f"--dataset.image_transforms.tfs={augmentation_tfs}",
@@ -233,6 +239,7 @@ for action_mode, norm_mapping in itertools.product(ACTION_MODES, NORMALIZATION_M
         f"--policy.tokenizer_max_length={POLICY_TOKENIZER_MAX_LENGTH}",
         f"--policy.max_len_seq={POLICY_MAX_LEN_SEQ}",
         f"--policy.normalization_mapping={norm_mapping}",
+        f"--policy.enable_gripper_debug_stats={ENABLE_GRIPPER_DEBUG_STATS}",
     ]
 
     try:
