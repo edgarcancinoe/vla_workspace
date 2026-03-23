@@ -7,8 +7,8 @@ import json
 import importlib
 from pathlib import Path
 os.environ["PYTHONNOUSERSITE"] = "1"
-os.environ["TORCH_DISTRIBUTED_DEBUG"] = "DETAIL"
-os.environ["NCCL_DEBUG"] = "INFO"
+# os.environ["TORCH_DISTRIBUTED_DEBUG"] = "DETAIL"
+# os.environ["NCCL_DEBUG"] = "INFO"
 
 # ============================================================================
 # X-VLA Finetuning Launch Script (Grid Search, Accelerate / Multi-GPU)
@@ -96,7 +96,7 @@ DATASET_REPO_ID = f"{HF_USER}/{DATASET_NAME}"
 # BATCH_SIZE is per process / per GPU.
 BATCH_SIZE = "8"
 STEPS = "45000"
-LOG_FREQ = "1000"
+LOG_FREQ = "500"
 EVAL_FREQ = "-1"
 
 DEVICE = "cuda"
@@ -107,7 +107,7 @@ PUSH_HF_EVERY = "15000"
 # Resume configuration
 RESUME = "false"
 POLICY_PUSH_TO_HUB = "true"
-WANDB_ENABLE = "false"
+WANDB_ENABLE = "true"
 
 # Policy Structure / Freezing
 POLICY_DTYPE = "bfloat16"

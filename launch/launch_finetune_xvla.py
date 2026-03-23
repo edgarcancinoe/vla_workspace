@@ -87,7 +87,7 @@ DATASET_REPO_ID = f"{HF_USER}/{DATASET_NAME}"
 # Training Hyperparameters
 BATCH_SIZE = "8"
 STEPS = "50000"
-LOG_FREQ = "100"
+LOG_FREQ = "500"
 EVAL_FREQ = "-1"
 
 DEVICE = 'cuda'
