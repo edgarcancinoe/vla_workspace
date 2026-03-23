@@ -6,6 +6,9 @@ import itertools
 import json
 import importlib
 from pathlib import Path
+os.environ["PYTHONNOUSERSITE"] = "1"
+os.environ["TORCH_DISTRIBUTED_DEBUG"] = "DETAIL"
+os.environ["NCCL_DEBUG"] = "INFO"
 
 # ============================================================================
 # X-VLA Finetuning Launch Script (Grid Search, Accelerate / Multi-GPU)
@@ -48,7 +51,7 @@ VERSION = os.environ.get("VERSION", "v1")
 # Policy Configuration Grids
 ACTION_MODES = [
     "so101_ee6d",
-    "so101_joint",
+    # "so101_joint",
 ]
 
 NORMALIZATION_MAPPINGS = [
@@ -63,9 +66,11 @@ POLICY_MAX_LEN_SEQ = 1024
 DATASET_VIDEO_BACKEND = "pyav"
 
 # Accelerate / distributed launch configuration
-CUDA_DEVICE_INDICES = [0, 1, 2, 3]
+CUDA_DEVICE_INDICES = [0, 1]
+NUM_WORKERS = "0"
+
 NUM_PROCESSES = len(CUDA_DEVICE_INDICES)
-MAIN_PROCESS_PORT = 29501
+MAIN_PROCESS_PORT = 45001
 MIXED_PRECISION = "bf16"
 
 # Model paths
@@ -95,7 +100,6 @@ LOG_FREQ = "1000"
 EVAL_FREQ = "-1"
 
 DEVICE = "cuda"
-NUM_WORKERS = "4"
 
 SAVE_FREQ = "15000"
 PUSH_HF_EVERY = "15000"
@@ -103,7 +107,7 @@ PUSH_HF_EVERY = "15000"
 # Resume configuration
 RESUME = "false"
 POLICY_PUSH_TO_HUB = "true"
-WANDB_ENABLE = "true"
+WANDB_ENABLE = "false"
 
 # Policy Structure / Freezing
 POLICY_DTYPE = "bfloat16"
@@ -228,11 +232,18 @@ for action_mode, norm_mapping in itertools.product(ACTION_MODES, NORMALIZATION_M
         sys.executable,
         "-m",
         "accelerate.commands.launch",
-        "--multi_gpu",
         f"--num_processes={NUM_PROCESSES}",
+        "--num_machines=1",
         f"--main_process_port={MAIN_PROCESS_PORT}",
         f"--mixed_precision={MIXED_PRECISION}",
-        "-m",
+        "--dynamo_backend=no",
+    ]
+
+    if NUM_PROCESSES > 1:
+        cmd.append("--multi_gpu")
+        
+    cmd += [
+        "--module",
         "lerobot.scripts.lerobot_train",
         f"--policy.path={BASE_POLICY_PATH}",
         f"--policy.repo_id={policy_repo_id}",
