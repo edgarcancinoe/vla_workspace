@@ -63,6 +63,7 @@ EMPTY_CAMERAS = 1
 POLICY_NUM_IMAGE_VIEWS = 3
 POLICY_TOKENIZER_MAX_LENGTH = 64
 POLICY_MAX_LEN_SEQ = 1024
+ENABLE_GRIPPER_DEBUG_STATS = "true"
 DATASET_VIDEO_BACKEND = "pyav"
 
 # Accelerate / distributed launch configuration
@@ -276,6 +277,7 @@ for action_mode, norm_mapping in itertools.product(ACTION_MODES, NORMALIZATION_M
         f"--policy.tokenizer_max_length={POLICY_TOKENIZER_MAX_LENGTH}",
         f"--policy.max_len_seq={POLICY_MAX_LEN_SEQ}",
         f"--policy.normalization_mapping={norm_mapping}",
+        f"--policy.enable_gripper_debug_stats={ENABLE_GRIPPER_DEBUG_STATS}",
     ]
 
     try:
