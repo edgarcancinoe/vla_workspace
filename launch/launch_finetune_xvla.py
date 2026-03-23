@@ -37,7 +37,7 @@ os.makedirs(os.environ["HF_LEROBOT_HOME"], exist_ok=True)
 # ============================================================================
 HF_USER = os.environ.get("HF_USER", "edgarcancinoe")
 # Dataset to use -----------------------------------
-DATASET_NAME_STR = "soarm101_pickplace_10d"
+DATASET_NAME_STR = "soarm101_pickplace_10d" # soarm101_pickplace_10d_7p5hz"
 # --------------------------------------------------
 
 # Base model ---------------------------------------
@@ -84,7 +84,7 @@ LOG_FREQ = "1000"
 EVAL_FREQ = "-1"
 
 DEVICE = 'cuda'
-CUDA_DEVICE = '1'
+CUDA_DEVICE = '2'
 NUM_WORKERS = '4'
 
 SAVE_FREQ = "15000"
