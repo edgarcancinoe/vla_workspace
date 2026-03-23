@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import argparse
 import csv
 import sys
 from pathlib import Path
@@ -27,8 +26,22 @@ from lerobot.policies.xvla.modeling_xvla import XVLAPolicy
 from lerobot.policies.xvla.processor_xvla import make_xvla_pre_post_processors
 
 
-def parse_int_list(value: str) -> list[int]:
-    return [int(part.strip()) for part in value.split(",") if part.strip()]
+# ============================================================================
+# CONFIGURATION
+# Edit these values, then run:
+# python '/Users/edgarcancino/Documents/Academic/EMAI Thesis/vla_workspace/scripts/inspect_xvla_gripper_predictions.py'
+# ============================================================================
+# POLICY_PATH = "edgarcancinoe/xvla-base_soarm101_pickplace_10d_so101_ee6d_a-m_s-m_v1"
+POLICY_PATH = "edgarcancinoe/xvla-base_soarm101_pickplace_10d_so101_joint_a-m_s-m_v1"
+DATASET_REPO_ID = "edgarcancinoe/soarm101_pickplace_10d"
+DATASET_ROOT = PROJECT_ROOT / "vla_workspace" / "outputs" / "datasets" / "soarm101_pickplace_10d"
+EPISODES = [0]
+FRAME_PERCENTAGES = [0, 20, 40, 60, 80]
+DEVICE = "cuda" if torch.cuda.is_available() else "mps" if torch.backends.mps.is_available() else "cpu"
+OUTPUT_DIR = PROJECT_ROOT / "vla_workspace" / "outputs" / "gripper_inspection"
+VIDEO_BACKEND = "pyav"
+CAMERA_RENAME = {"main": "image", "secondary": "image2"}
+MAX_SAFE_TOKENIZER_LENGTH = 50
 
 
 def sanitize_name(value: str) -> str:
@@ -41,7 +54,16 @@ def build_action_delta_timestamps(chunk_size: int, fps: int) -> dict[str, list[f
 
 
 def build_observation_input(item: dict) -> dict:
-    observation = {k: v for k, v in item.items() if k.startswith("observation.")}
+    observation = {}
+    for key, value in item.items():
+        if not key.startswith("observation."):
+            continue
+        if key.startswith("observation.images."):
+            cam_name = key.removeprefix("observation.images.")
+            mapped_name = CAMERA_RENAME.get(cam_name, cam_name)
+            observation[f"observation.images.{mapped_name}"] = value
+            continue
+        observation[key] = value
     if "task" in item:
         observation["task"] = item["task"]
     return observation
@@ -100,16 +122,14 @@ def compute_chunk_metrics(pred_bin: np.ndarray, label_bin: np.ndarray, valid_mas
     }
 
 
-def load_policy_and_processors(
-    policy_path: str,
-    dataset: LeRobotDataset,
-    device: str,
-):
+def load_policy_and_processors(policy_path: str, dataset: LeRobotDataset, device: str):
     config = PreTrainedConfig.from_pretrained(policy_path)
     if config.type != "xvla":
         raise ValueError(f"Expected an XVLA checkpoint, got policy type {config.type!r}")
 
     config.device = device
+    if getattr(config, "tokenizer_max_length", 0) > MAX_SAFE_TOKENIZER_LENGTH:
+        config.tokenizer_max_length = MAX_SAFE_TOKENIZER_LENGTH
     slice_spec = get_so101_slice_spec(getattr(config, "action_mode", None))
     if slice_spec is not None:
         slice_dataset_meta_in_place(dataset.meta, slice_spec)
@@ -120,30 +140,12 @@ def load_policy_and_processors(
     return policy, preprocessor, postprocessor
 
 
-def save_episode_outputs(
-    output_dir: Path,
-    checkpoint_name: str,
-    episode_index: int,
-    rows: list[dict],
-    plots: list[dict],
-    threshold: float,
-) -> tuple[Path, Path]:
+def save_episode_outputs(output_dir: Path, checkpoint_name: str, episode_index: int, rows: list[dict], plots: list[dict], threshold: float) -> tuple[Path, Path]:
     output_dir.mkdir(parents=True, exist_ok=True)
     png_path = output_dir / f"{checkpoint_name}_episode_{episode_index:03d}_gripper.png"
     csv_path = output_dir / f"{checkpoint_name}_episode_{episode_index:03d}_gripper.csv"
 
-    fieldnames = [
-        "episode_index",
-        "frame_index",
-        "sample_rank",
-        "chunk_offset",
-        "is_pad",
-        "pred_gripper",
-        "label_gripper",
-        "pred_bin",
-        "label_bin",
-        "correct",
-    ]
+    fieldnames = ["episode_index", "frame_index", "sample_rank", "chunk_offset", "is_pad", "pred_gripper", "label_gripper", "pred_bin", "label_bin", "correct"]
     with csv_path.open("w", newline="") as f:
         writer = csv.DictWriter(f, fieldnames=fieldnames)
         writer.writeheader()
@@ -160,23 +162,8 @@ def save_episode_outputs(
 
         padded = plot["is_pad"].astype(bool)
         if padded.any():
-            ax.scatter(
-                x[padded],
-                plot["label_gripper"][padded],
-                color="tab:blue",
-                marker="o",
-                alpha=0.3,
-                label="label_pad",
-            )
-            ax.scatter(
-                x[padded],
-                plot["pred_gripper"][padded],
-                color="tab:red",
-                marker="x",
-                alpha=0.3,
-                label="pred_pad",
-            )
-
+            ax.scatter(x[padded], plot["label_gripper"][padded], color="tab:blue", marker="o", alpha=0.3, label="label_pad")
+            ax.scatter(x[padded], plot["pred_gripper"][padded], color="tab:red", marker="x", alpha=0.3, label="pred_pad")
         ax2 = ax.twinx()
         ax2.step(x, plot["label_bin"], where="mid", color="tab:blue", linestyle=":", alpha=0.7)
         ax2.step(x, plot["pred_bin"], where="mid", color="tab:red", linestyle=":", alpha=0.7)
@@ -185,11 +172,7 @@ def save_episode_outputs(
         ax2.set_ylabel("bin")
 
         metrics = plot["metrics"]
-        ax.set_title(
-            f"Episode {episode_index} | frame {plot['frame_index']} | "
-            f"chunk_acc={metrics['accuracy']:.3f} | tp={metrics['tp']:.0f} tn={metrics['tn']:.0f} "
-            f"fp={metrics['fp']:.0f} fn={metrics['fn']:.0f}"
-        )
+        ax.set_title(f"Episode {episode_index} | frame {plot['frame_index']} | chunk_acc={metrics['accuracy']:.3f} | tp={metrics['tp']:.0f} tn={metrics['tn']:.0f} fp={metrics['fp']:.0f} fn={metrics['fn']:.0f}")
         ax.set_xlabel("chunk offset")
         ax.set_ylabel("gripper")
         ax.grid(alpha=0.3)
@@ -202,47 +185,32 @@ def save_episode_outputs(
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Inspect XVLA gripper predictions on dataset frames.")
-    parser.add_argument("--policy-path", required=True, help="Local path or repo id for the XVLA checkpoint.")
-    parser.add_argument("--dataset-repo-id", required=True, help="Dataset repo id, e.g. user/dataset_name.")
-    parser.add_argument("--dataset-root", type=Path, default=None, help="Optional local dataset root.")
-    parser.add_argument("--episodes", default="0", help="Comma-separated episode indices.")
-    parser.add_argument(
-        "--frame-percentages",
-        default="0,20,40,60,80",
-        help="Comma-separated frame percentages sampled within each episode.",
-    )
-    parser.add_argument("--device", default="cuda" if torch.cuda.is_available() else "cpu")
-    parser.add_argument("--output-dir", type=Path, default=None)
-    args = parser.parse_args()
+    episode_indices = list(EPISODES)
+    frame_percentages = list(FRAME_PERCENTAGES)
+    checkpoint_name = sanitize_name(POLICY_PATH.split("/")[-1])
 
-    episode_indices = parse_int_list(args.episodes)
-    frame_percentages = parse_int_list(args.frame_percentages)
-    checkpoint_name = sanitize_name(args.policy_path.split("/")[-1])
-
-    policy_config = PreTrainedConfig.from_pretrained(args.policy_path)
+    policy_config = PreTrainedConfig.from_pretrained(POLICY_PATH)
     if policy_config.type != "xvla":
         raise ValueError(f"Expected an XVLA checkpoint, got policy type {policy_config.type!r}")
 
     dataset_probe = LeRobotDataset(
-        repo_id=args.dataset_repo_id,
-        root=args.dataset_root,
+        repo_id=DATASET_REPO_ID,
+        root=DATASET_ROOT,
+        video_backend=VIDEO_BACKEND,
     )
     dataset = LeRobotDataset(
-        repo_id=args.dataset_repo_id,
-        root=args.dataset_root,
+        repo_id=DATASET_REPO_ID,
+        root=DATASET_ROOT,
         delta_timestamps=build_action_delta_timestamps(
             chunk_size=int(policy_config.chunk_size),
             fps=int(dataset_probe.fps),
         ),
+        video_backend=VIDEO_BACKEND,
     )
-    policy, preprocessor, postprocessor = load_policy_and_processors(args.policy_path, dataset, args.device)
+    policy, preprocessor, postprocessor = load_policy_and_processors(POLICY_PATH, dataset, DEVICE)
 
     gripper_idx = int(policy.model.action_space.gripper_idx[0])
     threshold = float(policy.config.gripper_open_threshold)
-
-    if args.output_dir is None:
-        args.output_dir = PROJECT_ROOT / "vla_workspace" / "outputs" / "gripper_inspection"
 
     for episode_index in episode_indices:
         frame_indices = sample_episode_frames(dataset, episode_index, frame_percentages)
@@ -256,9 +224,9 @@ def main() -> None:
             with torch.inference_mode():
                 processed_obs = preprocessor(observation)
                 raw_pred_chunk = policy.predict_action_chunk(processed_obs)
-                pred_chunk = postprocessor(raw_pred_chunk).detach().cpu().squeeze(0)
+                pred_chunk = postprocessor(raw_pred_chunk).detach().to(dtype=torch.float32).cpu().squeeze(0)
 
-            label_chunk = torch.as_tensor(item["action"]).detach().cpu()
+            label_chunk = torch.as_tensor(item["action"]).detach().to(dtype=torch.float32).cpu()
             pad_mask = torch.as_tensor(item.get("action_is_pad", torch.zeros(label_chunk.shape[0], dtype=torch.bool)))
             pad_mask = pad_mask.detach().cpu().bool().numpy().reshape(-1)
 
@@ -300,7 +268,7 @@ def main() -> None:
             )
 
         png_path, csv_path = save_episode_outputs(
-            output_dir=args.output_dir,
+            output_dir=OUTPUT_DIR,
             checkpoint_name=checkpoint_name,
             episode_index=episode_index,
             rows=csv_rows,
