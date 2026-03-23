@@ -53,7 +53,7 @@ with open(config_path, "r") as f:
 CAMERA_CONFIG_MAP = config_data.get("cameras", {})
 RECTIFY_MAP = {name: info.get("rectify", False) for name, info in CAMERA_CONFIG_MAP.items()}
 
-NUM_EPISODES = 127
+NUM_EPISODES = 196
 
 FPS = 30
 EPISODE_TIME_SEC = 30
@@ -67,6 +67,7 @@ URDF_PATH = config_data.get("robot", {}).get("urdf_path")
 if not URDF_PATH:
     raise ValueError("Error: 'urdf_path' not found in config/robot_config.yaml.")
 EEF_FEATURE_NAMES = ["x", "y", "z", "rot6d_0", "rot6d_1", "rot6d_2", "rot6d_3", "rot6d_4", "rot6d_5", "gripper"]
+MAX_GRIPPER_DEG = 28.0
 
 DATA_DIR = Path(__file__).parent.parent / "outputs" / "datasets" / HF_REPO_ID
 
@@ -181,10 +182,7 @@ def _compute_stats(data_list: list) -> dict:
     }
 
 
-def transform_dataset_to_eef(
-    root: Path,
-    so101: SO101Control,
-) -> None:
+def transform_dataset_to_eef(root: Path, so101: SO101Control) -> None:
     """
     Rewrites every parquet under root/data in-place, adding:
       observation.state  (10D EEF: xyz + rot6d + gripper)
@@ -587,6 +585,14 @@ def main():
         # Apply wrist roll offset via control helper
         motor_vals = np.array([action[f"{n}.pos"] for n in so101.JOINT_NAMES])
         motor_vals = so101.apply_wrist_roll_offset(motor_vals)
+        
+        # Enforce maximum gripper position (consistency for fully open state)
+        if "gripper" in so101.JOINT_NAMES:
+            gripper_idx = so101.JOINT_NAMES.index("gripper")
+            # Convert degrees to motor units (0-100 range)
+            max_gripper_motor = so101.deg_to_motor(np.full(len(so101.JOINT_NAMES), MAX_GRIPPER_DEG))[gripper_idx]
+            motor_vals[gripper_idx] = np.clip(motor_vals[gripper_idx], 0.0, max_gripper_motor)
+
         for i, n in enumerate(so101.JOINT_NAMES):
             action[f"{n}.pos"] = float(motor_vals[i])
         return action

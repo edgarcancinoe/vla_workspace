@@ -5,6 +5,9 @@
 		},
 		{
 			"path": "../repos/lerobot"
+		},
+		{
+			"path": "../repos/X-VLA"
 		}
 	],
 	"settings": {}

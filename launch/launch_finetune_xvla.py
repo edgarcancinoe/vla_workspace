@@ -4,6 +4,7 @@ import subprocess
 import datetime
 import itertools
 import json
+import importlib
 from pathlib import Path
 
 # ============================================================================
@@ -43,7 +44,6 @@ DATASET_NAME_STR = "soarm101_pickplace_10d"
 BASE_USER = "lerobot"
 BASE_NAME = "xvla-base"
 VERSION = os.environ.get("VERSION", "v1")
-OPTIMIZER_LR = "1e-4"
 
 # Policy Configuration Grids
 ACTION_MODES = [
@@ -139,7 +139,7 @@ print()
 
 # Check if lerobot Python package is installed
 try:
-    import lerobot
+    importlib.import_module("lerobot")
     print("✓ lerobot package found\n")
 except ImportError:
     print("ERROR: lerobot Python package not found!\n")

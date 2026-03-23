@@ -16,6 +16,7 @@ from lerobot.datasets.utils import hw_to_dataset_features
 from lerobot.datasets.lerobot_dataset import LeRobotDataset
 from lerobot.utils.visualization_utils import init_rerun
 from lerobot.utils.control_utils import init_keyboard_listener
+from lerobot.policies.xvla.action_contract import get_so101_slice_spec
 from lerobot.policies.xvla.utils import mat_to_rotate6d
 from lerobot.policies.factory import make_pre_post_processors
 from lerobot.cameras.opencv.configuration_opencv import OpenCVCameraConfig
@@ -172,9 +173,6 @@ MAX_ACTION_TOKENS  = None
 POLICY_DELAY       = 0
 
 # --- XVLA-specific ---
-NUM_IMAGE_VIEWS            = 3
-NUM_EMPTY_CAMERAS          = 1
-ACTION_MODE                = "so101_ee6d" # "so101_ee6d" | "so101_joint"
 NUM_XVLA_OBS_STEPS         = 1
 
 # --- Evaluation & Dataset ---
@@ -210,13 +208,8 @@ USE_RERUN                      = True  # Set True to enable Rerun telemetry
 # before committing to execution.  Robot is still connected for reading state.
 DRY_RUN                        = False
 
-# ─── EEF state feature names (must match training dataset schema) ─────────────
-EEF_STATE_NAMES = [
-    "x", "y", "z",
-    "rot6d_0", "rot6d_1", "rot6d_2", "rot6d_3", "rot6d_4", "rot6d_5",
-    "gripper",
-]
-_EEF_KEY_SET = {"x", "y", "z", "gripper"}
+# ─── State feature names (must match training dataset schema) ────────────────
+EEF_STATE_NAMES = list(get_so101_slice_spec("so101_ee6d").names)
 
 # Build config objects
 RECTIFY_MAP = {name: info.get("rectify", False) for name, info in CAMERA_CONFIG_MAP.items()}
@@ -270,13 +263,13 @@ def set_custom_get_observation(robot, so101: SO101Control = None, include_eef_st
                 robot._virtual_motor = np.zeros(len(so101.JOINT_NAMES))
             observation = {f"{n}.pos": float(robot._virtual_motor[i]) for i, n in enumerate(so101.JOINT_NAMES)}
             
-            import torch
             for cam_key, cam in robot.cameras.items():
                 try:
                     observation[cam_key] = cam.async_read()
-                except e:
-                    # Raise exception if camera fails
-                    raise e
+                except Exception as e:
+                    raise RuntimeError(
+                        f"Dry-run camera read failed for '{cam_key}'"
+                    ) from e
         else:
             observation = base_obs_func()
         
@@ -325,16 +318,16 @@ def set_custom_get_observation(robot, so101: SO101Control = None, include_eef_st
 
         return observation
     print("==============================================================================================================")
-    print("\033[94m[x] Robot observation patched for dynamic rectification based on config: {RECTIFY_MAP}\033[0m")
-    print("\033[94m[x] Robot observation patched for EEF State: {EEF_STATE_NAMES}\033[0m") if include_eef_state else None
-    print("\033[94m[x] Robot observation patched for Camera Mapping: {ACTIVE_CAMERA_MAPPING}\033[0m")
+    print(f"\033[94m[x] Robot observation patched for dynamic rectification based on config: {RECTIFY_MAP}\033[0m")
+    print(f"\033[94m[x] Robot observation patched for EEF State: {EEF_STATE_NAMES}\033[0m") if include_eef_state else None
+    print(f"\033[94m[x] Robot observation patched for Camera Mapping: {ACTIVE_CAMERA_MAPPING}\033[0m")
     print("==============================================================================================================")
     robot.get_observation = patched_get_observation
 
 # > Custom send_action():
 #   1. Convert EEF State to motor space if required
 #   2. Update Meshcat robot pose display (if viz provided)
-def set_custom_send_action(robot, so101: SO101Control = None, viz=None, dry_run=False, policy=None, dataset=None, unnorm_stats=None):
+def set_custom_send_action(robot, so101: SO101Control = None, viz=None, dry_run=False):
     base_action_func = robot.send_action
     gr_idx = so101.JOINT_NAMES.index("gripper")
     _step = [0]
@@ -418,7 +411,7 @@ def set_custom_send_action(robot, so101: SO101Control = None, viz=None, dry_run=
         if log_every:
             DBG.ik(f"EEF action input [{10}D]:")
             DBG.ik(f"  target_xyz = ({target_xyz[0]:+.4f},{target_xyz[1]:+.4f},{target_xyz[2]:+.4f}) m")
-            DBG.ik(f"  rot6d      = [" + ", ".join(f"{v:+.4f}" for v in r6d) + "]")
+            DBG.ik("  rot6d      = [" + ", ".join(f"{v:+.4f}" for v in r6d) + "]")
             DBG.ik(f"  gripper_sigmoid = {gripper_val:+.4f}")
             DBG.ik(f"  IK seed (current_motor) [{len(current_motor)}D]: " +
                    "  ".join(f"{n}={current_motor[i]:+.1f}°" for i, n in enumerate(so101.JOINT_NAMES)))
@@ -531,7 +524,6 @@ def set_trajectory_visualization(policy, so101: SO101Control, viz, postprocessor
         except Exception:
             pass
         try:
-            import torch
             return postprocessor(t.unsqueeze(0))
         except Exception:
             return None
@@ -587,7 +579,7 @@ def set_trajectory_visualization(policy, so101: SO101Control, viz, postprocessor
                 
                 if POLICY_TYPE == "xvla":
                     DBG.divider("magenta", f"XVLA Inference  chunk={len(chunk)} waypoints")
-                    DBG.infer(f"Raw model output (normalized space):")
+                    DBG.infer("Raw model output (normalized space):")
                     if hasattr(result, 'shape'):
                         DBG.infer(f"  shape={list(result.shape)}, dtype={result.dtype}")
                         flat = result.squeeze()
@@ -596,7 +588,7 @@ def set_trajectory_visualization(policy, so101: SO101Control, viz, postprocessor
                                 DBG.infer(f"    [{i:2d}] {name:18s} = {float(flat[i]):+.6f}  (normalized)")
                     decoded_first = _decode_tensor(result)
                     if decoded_first is not None and hasattr(decoded_first, 'shape'):
-                        DBG.post(f"  After postprocessor (unnormalized/real-world):")
+                        DBG.post("  After postprocessor (unnormalized/real-world):")
                         flat_d = decoded_first.squeeze()
                         for i, name in enumerate(action_names):
                             if i < len(flat_d):
@@ -668,82 +660,13 @@ def set_trajectory_visualization(policy, so101: SO101Control, viz, postprocessor
     policy.select_action = patched_select_action
     print("[x] Policy patched for predicted trajectory visualization in Meshcat.")
 
-def _get_sliced_action_stats_for_mode(policy_path: str, action_mode: str) -> dict:
-    """
-    Load the checkpoint's 16D action mean/std and slice to the dims that
-    the given action space actually used during training:
-      so101_ee6d  -> dims [0:10]   (xyz + rot6d + gripper)
-      so101_joint -> dims [10:16]  (5 joints + gripper)
-
-    GRIPPER SPECIAL CASE:
-    The gripper dim goes through sigmoid() in action_space.postprocess BEFORE
-    the unnormalizer runs. That means the unnormalizer receives a value in [0,1],
-    not a MEAN_STD normalized value. Applying mean/std on top of sigmoid output
-    would compress the gripper into a tiny ~10-degree window.
-    Fix: force mean=0, std=1 for the gripper dim so unnormalization is a no-op
-    for it. The sigmoid output in [0,1] is then remapped to physical degrees
-    inside patched_send_action using GRIPPER_CLOSED / GRIPPER_OPEN constants.
-    """
-    from huggingface_hub import hf_hub_download
-    from safetensors import safe_open
-    import torch
-
-    _GRIPPER_LOCAL_IDX = {
-        "so101_ee6d":  9,   # dim 9 of the 10D slice
-        "so101_joint": 5,   # dim 5 of the 6D slice
-    }
-    if action_mode not in _GRIPPER_LOCAL_IDX:
-        raise ValueError(
-            f"Unknown ACTION_MODE '{action_mode}' for stat slicing. "
-        )
-    grip_idx = _GRIPPER_LOCAL_IDX[action_mode]
-
-    post_stats_file = hf_hub_download(
-        repo_id=policy_path,
-        filename="policy_postprocessor_step_0_unnormalizer_processor.safetensors",
-    )
-    with safe_open(post_stats_file, framework="pt") as f:
-        full_mean = f.get_tensor("action.mean")
-        full_std  = f.get_tensor("action.std")
-        full_min  = f.get_tensor("action.min")
-        full_max  = f.get_tensor("action.max")
-
-    sliced_mean = full_mean.clone()
-    sliced_std  = full_std.clone()
-    sliced_min  = full_min.clone()
-    sliced_max  = full_max.clone()
-
-    # Gripper: force identity so unnormalization is a no-op for that dim.
-    # The sigmoid [0,1] output will be remapped to motor degrees in send_action.
-    # sliced_mean[grip_idx] = 0.0
-    # sliced_std[grip_idx]  = 1.0 # CHECK THIS NBORMALIZAITON THING BECEAUSE THEA CTION SHOULD ACTAULLY BE NORNMALIEZED IN PROPRIOCEPTIVE INFORMATION OR WILL JUST BE DOING NOISE
-
-    stats_dict = {
-        "action": {
-            "mean": sliced_mean,
-            "std":  sliced_std,
-            "min":  sliced_min,
-            "max":  sliced_max,
-        }
-    }
-
-    print(
-        f"[x] Unnormalizer: ACTION_MODE='{action_mode}' -> "
-        f"stats dims ({len(sliced_mean)}D)  [gripper dim {grip_idx} = identity]\n"
-        f"    mean={[f'{v:.4f}' for v in sliced_mean.tolist()]}\n"
-        f"    std ={[f'{v:.4f}' for v in sliced_std.tolist()]}\n"
-        f"    min ={[f'{v:.4f}' for v in sliced_min.tolist()]}\n"
-        f"    max ={[f'{v:.4f}' for v in sliced_max.tolist()]}"
-    )
-    return stats_dict
-
 def get_policy_processors(policy, dataset, pipeline_key: str | None = None):
     """
     Utility to choose pre- and post-processors by a key.
     - 'xvla_default': Use our custom XVLA replication.
     - None (or any other): Use LeRobot's default factory.
 
-    Returns: (preprocessor, postprocessor, unnorm_stats)
+    Returns: (preprocessor, postprocessor)
     """
     DBG.divider("blue", f"get_policy_processors  pipeline_key={pipeline_key!r}")
     stats = getattr(getattr(dataset, 'meta', None), 'stats', None)
@@ -759,49 +682,24 @@ def get_policy_processors(policy, dataset, pipeline_key: str | None = None):
     if pipeline_key == "xvla_default":
         print(f"[x] Using custom pipeline: {pipeline_key}")
         from custom_pipelines.xvla_processor import make_custom_xvla_processors
-        return make_custom_xvla_processors(
+        preprocessor, postprocessor = make_custom_xvla_processors(
             config=policy.config,
-            dataset_stats=dataset.meta.stats,
+            dataset_stats=stats,
         )
-
-    # Build correctly-sliced unnorm stats for XVLA action modes:
-    #   so101_ee6d:  action dims [0:10]   (xyz + rot6d + gripper)
-    #   so101_joint: action dims [10:16]  (5 joints + gripper)
-    #
-    # NOTE: observation.state stats do NOT need an override here.
-    # The checkpoint's normalizer already stores 10D EEF stats for observation.state.
-    # We ensure the observation is 10D EEF by overriding obs_features["observation.state"]
-    # in main() to use the EEF keys that patched_get_observation injects.
-    postprocessor_overrides = {}
-    if POLICY_TYPE == "xvla" and ACTION_MODE in ("so101_ee6d", "so101_joint"):
-        sliced_stats = _get_sliced_action_stats_for_mode(POLICY_PATH, ACTION_MODE)
-        postprocessor_overrides["unnormalizer_processor"] = {"stats": sliced_stats}
-        DBG.pre(f"Sliced stats for ACTION_MODE={ACTION_MODE!r}:")
-        for sk, sv in sliced_stats.items():
-            if isinstance(sv, dict):
-                for stat_name, stat_val in sv.items():
-                    DBG.tensor("blue", "PRE", f"  sliced[{sk!r}][{stat_name!r}]", stat_val)
+        return preprocessor, postprocessor
 
     # Default behavior: load processors from pretrained checkpoint
     print(f"[x] Using default/factory processors (Device: {DEVICE})")
     preprocessor, postprocessor = make_pre_post_processors(
         policy_cfg=policy,
         pretrained_path=POLICY_PATH,
-        dataset_stats=dataset.meta.stats,
+        dataset_stats=stats,
         preprocessor_overrides={"device_processor": {"device": DEVICE}},
-        postprocessor_overrides=postprocessor_overrides if postprocessor_overrides else None,
     )
     DBG.pre(f"Preprocessor type : {type(preprocessor).__name__}")
     DBG.post(f"Postprocessor type: {type(postprocessor).__name__}")
-    
-    # Return the stats used for unnormalization so they can be used for gripper remapping
-    # If we are in EEF/Joint mode, we already have sliced_stats. 
-    # Otherwise, fall back to dataset stats.
-    unnorm_stats = postprocessor_overrides.get("unnormalizer_processor", {}).get("stats")
-    if unnorm_stats is None:
-        unnorm_stats = dataset.meta.stats
 
-    return preprocessor, postprocessor, unnorm_stats
+    return preprocessor, postprocessor
 
 def get_policy(policy_type: str, path: str, device: str):
     """
@@ -823,7 +721,7 @@ def get_policy(policy_type: str, path: str, device: str):
     INCLUDE_EEF_STATE = False
 
     if policy_type == "xvla":
-        # ── Step 1: Load config first, apply overrides, THEN construct ──
+        # ── Step 1: Load config first, keep the checkpoint's XVLA contract, THEN construct ──
         config = PreTrainedConfig.from_pretrained(path)
         config.device = device  # Ensure model lands on the right device
 
@@ -833,10 +731,7 @@ def get_policy(policy_type: str, path: str, device: str):
         if N_ACTION_STEPS is not None:
             config.n_action_steps = N_ACTION_STEPS
 
-        config.n_obs_steps     = NUM_XVLA_OBS_STEPS
-        config.empty_cameras   = NUM_EMPTY_CAMERAS
-        config.num_image_views = NUM_IMAGE_VIEWS
-        config.action_mode     = ACTION_MODE
+        config.n_obs_steps = NUM_XVLA_OBS_STEPS
 
         # Cap tokenizer_max_length so the total sequence fits within
         # the transformer's max_len_seq (512 for this checkpoint).
@@ -848,16 +743,18 @@ def get_policy(policy_type: str, path: str, device: str):
 
         # ── Step 2: Construct model with the correct config ──
         policy = policy_cls.from_pretrained(path, config=config, device=device)
-        INCLUDE_EEF_STATE = (ACTION_MODE == "so101_ee6d")
+        INCLUDE_EEF_STATE = (getattr(policy.config, "action_mode", None) == "so101_ee6d")
 
         # ── Step 3: Post-creation verification ──
         action_space_name = type(policy.model.action_space).__name__
         norm_mode = config.normalization_mapping.get("ACTION", "?")
-        print(f"[x] XVLA loaded successfully:")
+        print("[x] XVLA loaded successfully:")
         print(f"    model.chunk_size    = {policy.model.chunk_size}")
         print(f"    config.chunk_size   = {policy.config.chunk_size}")
         print(f"    n_action_steps      = {policy.config.n_action_steps}")
         print(f"    action_mode         = {policy.config.action_mode}")
+        print(f"    num_image_views     = {getattr(policy.config, 'num_image_views', 'N/A')}")
+        print(f"    empty_cameras       = {getattr(policy.config, 'empty_cameras', 'N/A')}")
         print(f"    action_space        = {action_space_name} (dim={policy.model.dim_action})")
         print(f"    normalization(ACTION)= {norm_mode}")
         print(f"    num_denoising_steps = {policy.config.num_denoising_steps}")
@@ -918,24 +815,30 @@ def main():
     
     # Policy Object
     policy, INCLUDE_EEF_STATE = get_policy(POLICY_TYPE, POLICY_PATH, DEVICE)
+    action_slice_spec = None
+    if POLICY_TYPE == "xvla":
+        action_slice_spec = get_so101_slice_spec(getattr(policy.config, "action_mode", None))
+        if action_slice_spec is None:
+            raise ValueError(
+                f"Unsupported XVLA action_mode in checkpoint config: {getattr(policy.config, 'action_mode', None)!r}"
+            )
 
-    # Configure the dataset features
-    # For EEF policies:
-    #   - action: override with 10D EEF names so make_robot_action maps all 10 dims
-    #     to EEF keys ("x.pos","y.pos",...,"gripper.pos") instead of 6 motor keys.
-    #   - observation.state: override to 10D EEF names so the preprocessor builds
-    #     observation.state from the EEF keys that patched_get_observation injects,
-    #     matching the 10D stats in the checkpoint's normalizer.
-    # Motor policies use the robot's native 6D features for both.
-    eef_feature_spec = {"dtype": "float32", "shape": (len(EEF_STATE_NAMES),), "names": [f"{n}.pos" for n in EEF_STATE_NAMES]}
-    if INCLUDE_EEF_STATE:
-        action_features  = {"action": eef_feature_spec}
-        obs_features     = hw_to_dataset_features(robot.observation_features, "observation")
-        # Override observation.state to 10D EEF: uses the EEF keys injected by patched_get_observation
-        obs_features["observation.state"] = eef_feature_spec
+    # Configure the dataset features.
+    # XVLA uses the checkpoint action_mode as the source of truth for both action
+    # and observation.state schemas so record_loop emits robot actions with the
+    # correct key names and the preprocessor sees the expected proprio format.
+    if action_slice_spec is not None:
+        mode_feature_spec = {
+            "dtype": "float32",
+            "shape": (action_slice_spec.real_dim,),
+            "names": list(action_slice_spec.feature_names(suffix=".pos")),
+        }
+        action_features = {"action": mode_feature_spec}
+        obs_features = hw_to_dataset_features(robot.observation_features, "observation")
+        obs_features["observation.state"] = mode_feature_spec
     else:
         action_features = hw_to_dataset_features(robot.action_features, "action")
-        obs_features    = hw_to_dataset_features(robot.observation_features, "observation")
+        obs_features = hw_to_dataset_features(robot.observation_features, "observation")
     
     # Map robot observation features to match our patched observation names (e.g. main -> image)
     mapped_obs_features = {}
@@ -965,7 +868,7 @@ def main():
     dataset, episode_idx = get_dataset(dataset_features, robot.name)
 
     # Build preprocessor and postprocessor for policy inference
-    preprocessor, postprocessor, unnorm_stats = get_policy_processors(policy=policy, dataset=dataset, pipeline_key=POLICY_PIPELINE)
+    preprocessor, postprocessor = get_policy_processors(policy=policy, dataset=dataset, pipeline_key=POLICY_PIPELINE)
 
     # Meshcat visualization (optional — gracefully disabled if unavailable)
     viz = init_meshcat() if USE_MESHCAT_VIZ else None
@@ -987,7 +890,7 @@ def main():
 
     # Patch robot for observation and action
     set_custom_get_observation(robot, so101=so101, include_eef_state=INCLUDE_EEF_STATE, dry_run=DRY_RUN)
-    set_custom_send_action(robot, so101=so101, viz=viz, dry_run=DRY_RUN, policy=policy, dataset=dataset, unnorm_stats=unnorm_stats)
+    set_custom_send_action(robot, so101=so101, viz=viz, dry_run=DRY_RUN)
     # Trajectory viz is patched BEFORE the delay wrapper so it sits closest to
     # the original select_action — it draws the chunk immediately after inference.
     # Extract action names from the "action" feature entry (hw_to_dataset_features returns a
