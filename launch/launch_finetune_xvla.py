@@ -102,7 +102,7 @@ CUDA_DEVICE = '1'
 NUM_WORKERS = '4'
 
 SAVE_FREQ = "25000"
-PUSH_HF_EVERY = "10"
+PUSH_HF_EVERY = "25000"
 
 # Resume configuration
 RESUME = "false"
