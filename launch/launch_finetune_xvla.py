@@ -1,6 +1,8 @@
 """
 export PYTHONNOUSERSITE=1
+export HF_USER=edgarcancinoe
 python launch/launch_finetune_xvla.py 
+
 """
 
 import os
@@ -92,8 +94,8 @@ DATASET_REPO_ID = f"{HF_USER}/{DATASET_NAME}"
 # --------------------------------------------------
 
 # Training Hyperparameters
-BATCH_SIZE = "8"
-STEPS = "50000"
+BATCH_SIZE = "32"
+STEPS = "12500"
 LOG_FREQ = "500"
 EVAL_FREQ = "-1"
 
@@ -101,8 +103,8 @@ DEVICE = 'cuda'
 CUDA_DEVICE = '1'
 NUM_WORKERS = '4'
 
-SAVE_FREQ = "25000"
-PUSH_HF_EVERY = "25000"
+SAVE_FREQ = "8000"
+PUSH_HF_EVERY = "8000"
 
 # Resume configuration
 RESUME = "false"

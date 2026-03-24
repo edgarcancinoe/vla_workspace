@@ -178,7 +178,7 @@ MAX_ACTION_TOKENS  = None
 POLICY_DELAY       = 0
 
 # --- XVLA-specific ---
-NUM_XVLA_OBS_STEPS         = 10
+NUM_XVLA_OBS_STEPS         = 1
 
 # --- Evaluation & Dataset ---
 NUM_EPISODES               = 5
