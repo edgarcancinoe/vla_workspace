@@ -25,6 +25,11 @@ from lerobot.robots.so100_follower.config_so100_follower import SO100FollowerCon
 
 sys.path.append(str(Path(__file__).parent.parent))
 from utils import camera_calibration
+from utils.xvla_runtime import (
+    make_xvla_runtime_processors,
+    resolve_xvla_rename_map,
+    sync_xvla_policy_config,
+)
 from robot_control.so101_control import SO101Control
 
 # DEBUG UTILITIES
@@ -143,7 +148,7 @@ HOME_POSE = config_data["robot"].get("home_pose", {})
 CAMERA_CONFIG_MAP = config_data.get("cameras", {})
 
 # --- Policy ---
-POLICY_PATH = "edgarcancinoe/xvla-base_soarm101_pickplace_10d_so101_ee6d_a-m_s-m_v1-step-15000"
+POLICY_PATH = "edgarcancinoe/xvla-base_soarm101_pickplace_10d_so101_ee6d_a-m_s-m_v1"
 
 POLICY_TYPE = "xvla" # "xvla" | "smolvla"
 DEVICE      = "mps"  # "cuda" | "mps" | "cpu"
@@ -173,12 +178,12 @@ MAX_ACTION_TOKENS  = None
 POLICY_DELAY       = 0
 
 # --- XVLA-specific ---
-NUM_XVLA_OBS_STEPS         = 1
+NUM_XVLA_OBS_STEPS         = 10
 
 # --- Evaluation & Dataset ---
 NUM_EPISODES               = 5
 FPS                        = 30 
-EPISODE_TIME_SEC           = 120
+EPISODE_TIME_SEC           = 300
 HF_USER                    = "edgarcancinoe"
 EVAL_DATASET_NAME          = "eval_" + POLICY_PATH.split("/")[-1] 
 DATA_DIR                   = Path(__file__).parent.parent / "outputs" / "datasets" / EVAL_DATASET_NAME
@@ -187,11 +192,7 @@ RESUME_DATASET             = False
 OVERWRITE_DATASET          = True  # Set True to delete and recreate the dataset on every run
 
 # --- Robot & Setup
-CAMERA_MAPPING = {
-    "xvla": {"main": "image", "secondary": "image2"},
-    "default": {"main": "main", "secondary": "secondary"}
-}
-ACTIVE_CAMERA_MAPPING = CAMERA_MAPPING.get(POLICY_TYPE, CAMERA_MAPPING["default"])
+ACTIVE_XVLA_RENAME_MAP = {}
 STARTING_POSITION_DURATION_S = 5
 HOME_DURATION_S = STARTING_POSITION_DURATION_S
 HOME_FPS = FPS
@@ -295,13 +296,16 @@ def set_custom_get_observation(robot, so101: SO101Control = None, include_eef_st
             for i, name in enumerate(EEF_STATE_NAMES):
                 observation[f"{name}.pos"] = float(eef[i])
 
-        # Map observations if required (e.g. main -> image)
-        for k, v in ACTIVE_CAMERA_MAPPING.items():
-            if k in observation:
-                val = observation.pop(k)
-                observation[v] = val
-            elif v not in observation:
-                raise KeyError(f"Key '{v}' not found in observation. Available keys: {list(observation.keys())}")
+        expected_camera_keys = {
+            src.removeprefix("observation.images.")
+            for src in ACTIVE_XVLA_RENAME_MAP
+        }
+        for cam_name in expected_camera_keys:
+            if cam_name not in observation:
+                raise KeyError(
+                    f"Expected camera '{cam_name}' not found in observation. "
+                    f"Available keys: {list(observation.keys())}"
+                )
 
         # ── DEBUG: log observation keys & state dimensions every 30 steps ──
         if _obs_step[0] % 30 == 1:
@@ -320,7 +324,8 @@ def set_custom_get_observation(robot, so101: SO101Control = None, include_eef_st
     print("==============================================================================================================")
     print(f"\033[94m[x] Robot observation patched for dynamic rectification based on config: {RECTIFY_MAP}\033[0m")
     print(f"\033[94m[x] Robot observation patched for EEF State: {EEF_STATE_NAMES}\033[0m") if include_eef_state else None
-    print(f"\033[94m[x] Robot observation patched for Camera Mapping: {ACTIVE_CAMERA_MAPPING}\033[0m")
+    if ACTIVE_XVLA_RENAME_MAP:
+        print(f"\033[94m[x] Robot observation keeps training camera keys for rename_map: {ACTIVE_XVLA_RENAME_MAP}\033[0m")
     print("==============================================================================================================")
     robot.get_observation = patched_get_observation
 
@@ -680,22 +685,31 @@ def get_policy_processors(policy, dataset, pipeline_key: str | None = None):
         DBG.pre("Dataset stats: None (new dataset — no stats yet)")
 
     if pipeline_key == "xvla_default":
-        print(f"[x] Using custom pipeline: {pipeline_key}")
-        from custom_pipelines.xvla_processor import make_custom_xvla_processors
-        preprocessor, postprocessor = make_custom_xvla_processors(
-            config=policy.config,
-            dataset_stats=stats,
+        print(f"[x] Using XVLA runtime pipeline: {pipeline_key}")
+        preprocessor, postprocessor = make_xvla_runtime_processors(
+            policy=policy,
+            pretrained_path=POLICY_PATH,
+            device=DEVICE,
+            rename_map=ACTIVE_XVLA_RENAME_MAP,
         )
         return preprocessor, postprocessor
 
     # Default behavior: load processors from pretrained checkpoint
     print(f"[x] Using default/factory processors (Device: {DEVICE})")
-    preprocessor, postprocessor = make_pre_post_processors(
-        policy_cfg=policy,
-        pretrained_path=POLICY_PATH,
-        dataset_stats=stats,
-        preprocessor_overrides={"device_processor": {"device": DEVICE}},
-    )
+    if policy.config.type == "xvla":
+        preprocessor, postprocessor = make_xvla_runtime_processors(
+            policy=policy,
+            pretrained_path=POLICY_PATH,
+            device=DEVICE,
+            rename_map=ACTIVE_XVLA_RENAME_MAP,
+        )
+    else:
+        preprocessor, postprocessor = make_pre_post_processors(
+            policy_cfg=policy.config,
+            pretrained_path=POLICY_PATH,
+            dataset_stats=stats,
+            preprocessor_overrides={"device_processor": {"device": DEVICE}},
+        )
     DBG.pre(f"Preprocessor type : {type(preprocessor).__name__}")
     DBG.post(f"Postprocessor type: {type(postprocessor).__name__}")
 
@@ -832,17 +846,7 @@ def main():
         action_features = hw_to_dataset_features(robot.action_features, "action")
         obs_features = hw_to_dataset_features(robot.observation_features, "observation")
     
-    # Map robot observation features to match our patched observation names (e.g. main -> image)
-    mapped_obs_features = {}
-    for k, v in obs_features.items():
-        if k.startswith("observation.images."):
-            cam_name = k.removeprefix("observation.images.")
-            if cam_name in ACTIVE_CAMERA_MAPPING:
-                mapped_name = f"observation.images.{ACTIVE_CAMERA_MAPPING[cam_name]}"
-                mapped_obs_features[mapped_name] = v
-                continue
-        mapped_obs_features[k] = v
-    dataset_features = {**action_features, **mapped_obs_features}
+    dataset_features = {**action_features, **obs_features}
 
     # ── DEBUG: print full feature map ──────────────────────────────────────────
     DBG.divider("white", "DATASET FEATURE MAP")
@@ -850,7 +854,7 @@ def main():
         shape = v.get('shape', '?') if isinstance(v, dict) else '?'
         names = v.get('names', []) if isinstance(v, dict) else []
         DBG.info(f"  [action ] {k}: shape={shape}  names={names}")
-    for k, v in mapped_obs_features.items():
+    for k, v in obs_features.items():
         shape = v.get('shape', '?') if isinstance(v, dict) else '?'
         names = v.get('names', []) if isinstance(v, dict) else []
         DBG.info(f"  [obs    ] {k}: shape={shape}  names={names}")
@@ -858,6 +862,17 @@ def main():
 
     # Dataset Object
     dataset, episode_idx = get_dataset(dataset_features, robot.name)
+    if POLICY_TYPE == "xvla":
+        global ACTIVE_XVLA_RENAME_MAP
+        ACTIVE_XVLA_RENAME_MAP = resolve_xvla_rename_map(dataset.meta.camera_keys)
+        if not ACTIVE_XVLA_RENAME_MAP:
+            raise ValueError(
+                "Unable to resolve XVLA rename_map from dataset camera keys: "
+                f"{dataset.meta.camera_keys}"
+            )
+        sync_xvla_policy_config(policy, dataset.meta, ACTIVE_XVLA_RENAME_MAP)
+        DBG.pre(f"XVLA rename_map: {ACTIVE_XVLA_RENAME_MAP}")
+        DBG.pre(f"XVLA input features: {list(policy.config.input_features.keys())}")
 
     # Build preprocessor and postprocessor for policy inference
     preprocessor, postprocessor = get_policy_processors(policy=policy, dataset=dataset, pipeline_key=POLICY_PIPELINE)

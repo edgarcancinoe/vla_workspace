@@ -23,8 +23,13 @@ from lerobot.configs.policies import PreTrainedConfig
 from lerobot.datasets.lerobot_dataset import LeRobotDataset
 from lerobot.policies.xvla.action_contract import get_so101_slice_spec, slice_dataset_meta_in_place
 from lerobot.policies.xvla.modeling_xvla import XVLAPolicy
-from lerobot.policies.xvla.processor_xvla import make_xvla_pre_post_processors
 
+sys.path.insert(0, str(PROJECT_ROOT / "vla_workspace"))
+from utils.xvla_runtime import (
+    make_xvla_runtime_processors,
+    resolve_xvla_rename_map,
+    sync_xvla_policy_config,
+)
 
 # ============================================================================
 # CONFIGURATION
@@ -40,7 +45,6 @@ FRAME_PERCENTAGES = [0, 20, 40, 60, 80]
 DEVICE = "cuda" if torch.cuda.is_available() else "mps" if torch.backends.mps.is_available() else "cpu"
 OUTPUT_DIR = PROJECT_ROOT / "vla_workspace" / "outputs" / "gripper_inspection"
 VIDEO_BACKEND = "pyav"
-CAMERA_RENAME = {"main": "image", "secondary": "image2"}
 
 
 def sanitize_name(value: str) -> str:
@@ -56,11 +60,6 @@ def build_observation_input(item: dict) -> dict:
     observation = {}
     for key, value in item.items():
         if not key.startswith("observation."):
-            continue
-        if key.startswith("observation.images."):
-            cam_name = key.removeprefix("observation.images.")
-            mapped_name = CAMERA_RENAME.get(cam_name, cam_name)
-            observation[f"observation.images.{mapped_name}"] = value
             continue
         observation[key] = value
     if "task" in item:
@@ -131,8 +130,20 @@ def load_policy_and_processors(policy_path: str, dataset: LeRobotDataset, device
     if slice_spec is not None:
         slice_dataset_meta_in_place(dataset.meta, slice_spec)
 
+    rename_map = resolve_xvla_rename_map(dataset.meta.camera_keys)
+    if not rename_map:
+        raise ValueError(f"Unable to resolve XVLA rename_map from camera keys: {dataset.meta.camera_keys}")
+
+    sync_xvla_policy_config(config, dataset.meta, rename_map)
     policy = XVLAPolicy.from_pretrained(policy_path, config=config, device=device)
-    preprocessor, postprocessor = make_xvla_pre_post_processors(config=config, dataset_stats=dataset.meta.stats)
+    preprocessor, postprocessor = make_xvla_runtime_processors(
+        policy=policy,
+        pretrained_path=policy_path,
+        device=device,
+        rename_map=rename_map,
+        dataset_stats=dataset.meta.stats,
+        use_dataset_stats=True,
+    )
     policy.eval()
     return policy, preprocessor, postprocessor
 
