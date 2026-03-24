@@ -96,10 +96,9 @@ DATASET_REPO_ID = f"{HF_USER}/{DATASET_NAME}"
 # Training Hyperparameters
 # BATCH_SIZE is per process / per GPU.
 BATCH_SIZE = "8"
-STEPS = "45000"
+STEPS = "25000"
 LOG_FREQ = "500"
 EVAL_FREQ = "-1"
-
 DEVICE = "cuda"
 
 SAVE_FREQ = "15000"

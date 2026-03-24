@@ -2,6 +2,7 @@
 export PYTHONNOUSERSITE=1
 python launch/launch_finetune_xvla.py 
 """
+
 import os
 import sys
 import subprocess
@@ -10,7 +11,7 @@ import itertools
 import json
 import importlib
 from pathlib import Path
-
+os.environ["PYTHONNOUSERSITE"] = "1"
 # ============================================================================
 # X-VLA Finetuning Launch Script (Grid Search)
 # ============================================================================
@@ -95,7 +96,7 @@ CUDA_DEVICE = '1'
 NUM_WORKERS = '4'
 
 SAVE_FREQ = "25000"
-PUSH_HF_EVERY = "25000"
+PUSH_HF_EVERY = "10"
 
 # Resume configuration
 RESUME = "false"
