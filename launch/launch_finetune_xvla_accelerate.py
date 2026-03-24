@@ -30,8 +30,14 @@ USER = os.environ.get("USER", "default_user")
 CACHE_ROOT = f"/tmp/vla_cache_{USER}"
 os.makedirs(CACHE_ROOT, exist_ok=True)
 
-os.environ["HF_HOME"] = CACHE_ROOT
+# Keep Hugging Face auth in the user's normal persistent location.
+# Only redirect cache-heavy artifacts to local /tmp.
+os.environ.pop("HF_HOME", None)
+os.environ["HF_HUB_CACHE"] = f"{CACHE_ROOT}/hub"
+os.environ["HF_ASSETS_CACHE"] = f"{CACHE_ROOT}/assets"
 os.environ["HF_LEROBOT_HOME"] = f"{CACHE_ROOT}/lerobot"
+os.makedirs(os.environ["HF_HUB_CACHE"], exist_ok=True)
+os.makedirs(os.environ["HF_ASSETS_CACHE"], exist_ok=True)
 os.makedirs(os.environ["HF_LEROBOT_HOME"], exist_ok=True)
 
 # ============================================================================
