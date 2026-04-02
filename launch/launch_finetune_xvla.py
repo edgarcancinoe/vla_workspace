@@ -50,7 +50,7 @@ os.makedirs(os.environ["HF_LEROBOT_HOME"], exist_ok=True)
 # ============================================================================
 HF_USER             = "edgarcancinoe"
 # Dataset to use -----------------------------------
-DATASET_NAME_STR    = "soarm101_pickplace_10d" # soarm101_pickplace_10d_7p5hz"
+DATASET_NAME_STR    = "soarm101_pickplace_10d_7p5hz_resampled" # soarm101_pickplace_10d_7p5hz"
 # --------------------------------------------------
 
 # Base model ---------------------------------------
@@ -61,7 +61,7 @@ ENABLE_GRIPPER_DEBUG_STATS = "true"
 # Policy Configuration Grids
 ACTION_MODES = [
     "so101_ee6d", 
-    # "so101_joint"
+    "so101_joint"
 ]
 
 NORMALIZATION_MAPPINGS = [
@@ -101,7 +101,7 @@ EVAL_FREQ = "-1"
 
 DEVICE = 'cuda'
 CUDA_DEVICE = '1'
-NUM_WORKERS = '4'
+NUM_WORKERS = '8'
 
 SAVE_FREQ = "8000"
 PUSH_HF_EVERY = "8000"

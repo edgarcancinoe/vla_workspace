@@ -52,7 +52,7 @@ os.makedirs(os.environ["HF_LEROBOT_HOME"], exist_ok=True)
 HF_USER = os.environ.get("HF_USER", "edgarcancinoe")
 
 # Dataset to use -----------------------------------
-DATASET_NAME_STR = "soarm101_pickplace_10d_7p5hz"
+DATASET_NAME_STR = "soarm101_pickplace_10d_7p5hz_fixed"
 # --------------------------------------------------
 
 # Base model ---------------------------------------
@@ -79,7 +79,7 @@ ENABLE_GRIPPER_DEBUG_STATS = "true"
 DATASET_VIDEO_BACKEND = "pyav"
 
 # Accelerate / distributed launch configuration
-CUDA_DEVICE_INDICES = [0, 1]
+CUDA_DEVICE_INDICES = [0,1]
 NUM_WORKERS = "0"
 
 NUM_PROCESSES = len(CUDA_DEVICE_INDICES)
@@ -107,9 +107,9 @@ DATASET_REPO_ID = f"{HF_USER}/{DATASET_NAME}"
 
 # Training Hyperparameters
 # BATCH_SIZE is per process / per GPU.
-BATCH_SIZE = "32"
-STEPS = "6250"
-LOG_FREQ = "500"
+BATCH_SIZE = "8"
+STEPS = "25000"
+LOG_FREQ = "100"
 EVAL_FREQ = "-1"
 DEVICE = "cuda"
 
