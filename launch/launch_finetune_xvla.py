@@ -50,7 +50,7 @@ os.makedirs(os.environ["HF_LEROBOT_HOME"], exist_ok=True)
 # ============================================================================
 HF_USER             = "edgarcancinoe"
 # Dataset to use -----------------------------------
-DATASET_NAME_STR    = "soarm101_pickplace_10d_7p5hz_resampled" # soarm101_pickplace_10d_7p5hz"
+DATASET_NAME_STR    = "soarm101_pickplace_multicolor_v1_7p5hz" # soarm101_pickplace_10d_7p5hz"
 # --------------------------------------------------
 
 # Base model ---------------------------------------
@@ -100,7 +100,7 @@ LOG_FREQ = "500"
 EVAL_FREQ = "-1"
 
 DEVICE = 'cuda'
-CUDA_DEVICE = '1'
+CUDA_DEVICE = '0'
 NUM_WORKERS = '8'
 
 SAVE_FREQ = "8000"
@@ -115,6 +115,7 @@ WANDB_ENABLE = "true"
 POLICY_DTYPE = "bfloat16"
 FREEZE_VISION_ENCODER = "false"
 FREEZE_LANGUAGE_ENCODER = "false"
+
 TRAIN_POLICY_TRANSFORMER = "true"
 TRAIN_SOFT_PROMPTS = "true"
 
