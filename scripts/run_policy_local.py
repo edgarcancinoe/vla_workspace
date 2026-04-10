@@ -148,8 +148,8 @@ HOME_POSE = config_data["robot"].get("home_pose", {})
 CAMERA_CONFIG_MAP = config_data.get("cameras", {})
 
 # --- Policy ---
-POLICY_PATH = "edgarcancinoe/xvla-base_soarm101_pickplace_10d_so101_ee6d_a-m_s-m_v1"
-
+POLICY_PATH = "edgarcancinoe/xvla-base_soarm101_pickplace_10d_7p5hz_resampled_so101_ee6d_a-m_s-m_v1"
+# POLICY_PATH = "edgarcancinoe/xvla-base_soarm101_pickplace_10d_7p5hz_resampled_so101_ee6d_a-m_s-m_v1-step-8000"
 POLICY_TYPE = "xvla" # "xvla" | "smolvla"
 DEVICE      = "mps"  # "cuda" | "mps" | "cpu"
 
@@ -171,19 +171,21 @@ USE_VOICE          = True
 #   -  5: six inferences per second (smoother, more responsive)
 #   -  1: inference every step (smoothest but slowest, only for testing)
 CHUNK_SIZE         = None  # None = use pretrained default (30 for this checkpoint)
-N_ACTION_STEPS     = None
+N_ACTION_STEPS     = 25  # Number of control steps to execute before running the next inference chunk. Only for XVLA.
 
 # --- SmolVLA-specific ---
 MAX_ACTION_TOKENS  = None
-POLICY_DELAY       = 0
+POLICY_DELAY       = 0.0
 
 # --- XVLA-specific ---
 NUM_XVLA_OBS_STEPS         = 1
+BINARY_GRIPPER_INFERENCE   = True
 
 # --- Evaluation & Dataset ---
 NUM_EPISODES               = 5
-FPS                        = 30 
-EPISODE_TIME_SEC           = 300
+CONTROL_FPS                = 7.5
+CAMERA_FPS                 = 30
+EPISODE_TIME_SEC           = 600
 HF_USER                    = "edgarcancinoe"
 EVAL_DATASET_NAME          = "eval_" + POLICY_PATH.split("/")[-1] 
 DATA_DIR                   = Path(__file__).parent.parent / "outputs" / "datasets" / EVAL_DATASET_NAME
@@ -195,10 +197,10 @@ OVERWRITE_DATASET          = True  # Set True to delete and recreate the dataset
 ACTIVE_XVLA_RENAME_MAP = {}
 STARTING_POSITION_DURATION_S = 5
 HOME_DURATION_S = STARTING_POSITION_DURATION_S
-HOME_FPS = FPS
+HOME_FPS = CONTROL_FPS
 
 # --- Meshcat Visualization ---
-USE_MESHCAT_VIZ                = True   # Set False to disable
+USE_MESHCAT_VIZ                = False   # Set False to disable
 
 # --- Rerun Visualization ---
 USE_RERUN                      = True  # Set True to enable Rerun telemetry
@@ -219,7 +221,7 @@ CAMERAS = {
         index_or_path=info["id"], 
         width=info.get("width", 640), 
         height=info.get("height", 480), 
-        fps=FPS
+        fps=CAMERA_FPS
     ) for name, info in CAMERA_CONFIG_MAP.items()
 }
 
@@ -746,6 +748,7 @@ def get_policy(policy_type: str, path: str, device: str):
             config.n_action_steps = N_ACTION_STEPS
 
         config.n_obs_steps = NUM_XVLA_OBS_STEPS
+        config.binary_gripper_inference = BINARY_GRIPPER_INFERENCE
 
         # ── Step 2: Construct model with the correct config ──
         policy = policy_cls.from_pretrained(path, config=config, device=device)
@@ -764,6 +767,7 @@ def get_policy(policy_type: str, path: str, device: str):
         print(f"    action_space        = {action_space_name} (dim={policy.model.dim_action})")
         print(f"    normalization(ACTION)= {norm_mode}")
         print(f"    num_denoising_steps = {policy.config.num_denoising_steps}")
+        print(f"    binary_gripper_inf  = {getattr(policy.config, 'binary_gripper_inference', False)}")
         assert policy.model.chunk_size == policy.config.chunk_size, (
             f"MISMATCH: model.chunk_size={policy.model.chunk_size} != "
             f"config.chunk_size={policy.config.chunk_size}. "
@@ -803,7 +807,7 @@ def get_dataset(features: dict, robot_type: str):
         print(f"[x] Creating new evaluation dataset: {repo_id}")
         dataset = LeRobotDataset.create(
             repo_id=repo_id,
-            fps=FPS,
+            fps=CONTROL_FPS,
             features=features,
             robot_type=robot_type,
             use_videos=True,
@@ -921,7 +925,7 @@ def main():
         record_loop(
             robot=robot,
             events=events,
-            fps=FPS,
+            fps=CONTROL_FPS,
             teleop_action_processor=teleop_action_processor,
             robot_action_processor=robot_action_processor,
             robot_observation_processor=robot_observation_processor,
