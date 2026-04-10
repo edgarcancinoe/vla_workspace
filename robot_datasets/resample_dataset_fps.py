@@ -15,15 +15,15 @@ Usage:
 
     # dst defaults to <src>_7p5hz next to src if --dst is not given.
 
-huggingface-cli download edgarcancinoe/soarm101_pickplace_10d \
+huggingface-cli download edgarcancinoe/soarm101_pickplace_multicolor_v1 \
     --repo-type dataset \
-    --local-dir ~/datasets/soarm101_pickplace_10d
+    --local-dir ~/datasets/edgarcancinoe/soarm101_pickplace_multicolor_v1
 
 
-so robot_datasets/resample_dataset_fps.py \
-    --src ~/datasets/soarm101_pickplace_10d \
+python robot_datasets/resample_dataset_fps.py \
+    --src ~/datasets/edgarcancinoe/soarm101_pickplace_multicolor_v1 \
     --dst-fps 7.5 \
-    --hf-repo edgarcancinoe/soarm101_pickplace_10d_7p5hz
+    --hf-repo edgarcancinoe/soarm101_pickplace_multicolor_v1_7p5hz
 
 Requirements:
     pip install pyarrow numpy tqdm huggingface_hub av
@@ -362,6 +362,48 @@ def _build_source_file_frame_ranges(
     return ranges
 
 
+def _find_source_length_mismatches(
+    source_episode_rows: dict[int, dict],
+    episode_manifest: dict[int, dict],
+) -> list[tuple[int, int, int]]:
+    mismatches: list[tuple[int, int, int]] = []
+    for ep_idx, manifest in sorted(episode_manifest.items()):
+        src_row = source_episode_rows.get(ep_idx)
+        if src_row is None:
+            continue
+        meta_len = int(src_row["length"])
+        data_len = int(manifest["src_length"])
+        if meta_len != data_len:
+            mismatches.append((ep_idx, data_len, meta_len))
+    return mismatches
+
+
+def _decode_video_frame_count(video_path: Path) -> int:
+    frame_count = 0
+    with av.open(str(video_path)) as container:
+        if not container.streams.video:
+            raise ValueError(f"No video stream found in {video_path}")
+        stream = container.streams.video[0]
+        for packet in container.demux(stream):
+            for _frame in packet.decode():
+                frame_count += 1
+    return frame_count
+
+
+def _validate_source_video_jobs(video_jobs: list[VideoJob]) -> None:
+    for job in tqdm(video_jobs, desc="  Source video checks"):
+        if not job.selected_source_frame_indices:
+            raise RuntimeError(f"No selected source frames were computed for {job.src_path}")
+        decoded_frames = _decode_video_frame_count(job.src_path)
+        required_frames = job.selected_source_frame_indices[-1] + 1
+        if decoded_frames < required_frames:
+            raise RuntimeError(
+                f"Source video is shorter than the selected source frame indices for {job.src_path}. "
+                f"Decoded {decoded_frames} frame(s), but resampling requires at least {required_frames}. "
+                f"Affected episodes: {job.episode_indices}."
+            )
+
+
 def _import_lerobot_dataset():
     try:
         from lerobot.datasets.lerobot_dataset import LeRobotDataset
@@ -444,12 +486,20 @@ def main():
             "(e.g. 'edgarcancinoe/soarm101_pickplace_10d_7p5hz'). Skipped if not given."
         ),
     )
+    parser.add_argument(
+        "--exclude-episodes",
+        type=int,
+        nargs="*",
+        default=[],
+        help="Episode indices to drop from the resampled output if the source dataset has known broken episodes.",
+    )
     args = parser.parse_args()
 
     src: Path = args.src.resolve()
     dst_fps: float = args.dst_fps
     fps_tag = f"{dst_fps:.4g}".replace(".", "p")
     dst: Path = args.dst.resolve() if args.dst else src.parent / f"{src.name}_{fps_tag}hz"
+    excluded_episodes = set(int(ep) for ep in args.exclude_episodes)
 
     print(f"\n{'=' * 60}")
     print(f"Source   : {src}")
@@ -507,6 +557,8 @@ def main():
         total_src += len(df)
 
         for ep_idx in sorted(df["episode_index"].unique()):
+            if int(ep_idx) in excluded_episodes:
+                continue
             ep_df_all = df[df["episode_index"] == ep_idx].copy()
             src_length = len(ep_df_all)
             selected_local_indices = ep_df_all.loc[
@@ -556,6 +608,19 @@ def main():
                 chunk[vc] = ep_df[vc].values.tolist()
 
             episode_data.setdefault(int(ep_idx), []).append(chunk)
+
+    length_mismatches = _find_source_length_mismatches(source_episode_rows, episode_manifest)
+    if length_mismatches:
+        details = ", ".join(
+            f"episode {ep_idx}: data={data_len}, meta={meta_len}"
+            for ep_idx, data_len, meta_len in length_mismatches[:10]
+        )
+        if len(length_mismatches) > 10:
+            details += f", ... (+{len(length_mismatches) - 10} more)"
+        raise RuntimeError(
+            "Source dataset is internally inconsistent between data parquet lengths and meta/episodes lengths. "
+            f"{details}. Use a cleaned source dataset or rerun with --exclude-episodes for the broken episodes."
+        )
 
     for ep_idx in sorted(episode_data.keys()):
         frames = [
@@ -667,6 +732,8 @@ def main():
                     pbar.update(1)
 
     all_video_jobs = [job for jobs in video_jobs_by_key.values() for job in jobs]
+    print("  Validating source video coverage …")
+    _validate_source_video_jobs(all_video_jobs)
     print("  Videos done.\n")
 
     print("STEP 4 — Updating info.json …")
@@ -774,7 +841,26 @@ def main():
 
         api = HfApi()
         api.create_repo(repo_id=args.hf_repo, repo_type="dataset", exist_ok=True)
-        api.upload_folder(folder_path=str(dst), repo_id=args.hf_repo, repo_type="dataset")
+        api.upload_folder(
+            folder_path=str(dst),
+            repo_id=args.hf_repo,
+            repo_type="dataset",
+            ignore_patterns=[
+                ".cache/**",
+                "**/.cache/**",
+                ".DS_Store",
+                "**/.DS_Store",
+            ],
+            delete_patterns=[
+                "data/**",
+                "meta/**",
+                "videos/**",
+                "images/**",
+                "tmp*",
+                "tmp*/**",
+            ],
+            commit_message="Sync resampled dataset from local output",
+        )
 
         codebase_version = new_info.get("codebase_version")
         if codebase_version:
@@ -784,6 +870,7 @@ def main():
                     tag=codebase_version,
                     repo_type="dataset",
                     revision="main",
+                    exist_ok=True,
                 )
                 print(f"  Tagged repo with codebase version: {codebase_version}")
             except HfHubHTTPError as exc:
