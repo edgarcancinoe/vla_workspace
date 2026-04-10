@@ -155,6 +155,49 @@ def validate_lerobot_dataset_on_disk(root: Path) -> None:
             f"meta/episodes should have exactly 1 row per episode. "
             f"Got rows={rows} but unique episode_index={n}."
         )
+
+    meta_lengths: dict[int, int] = {}
+    for _, row in df_ep.iterrows():
+        meta_lengths[int(row["episode_index"])] = int(row["length"])
+
+    data_lengths: dict[int, int] = {}
+    data_root = root / "data"
+    if not data_root.exists():
+        raise RuntimeError(f"Missing data directory: {data_root}")
+    data_parquets = sorted(data_root.rglob("*.parquet"))
+    if not data_parquets:
+        raise RuntimeError(f"No data parquet files found under {data_root}")
+
+    total_data_rows = 0
+    for parquet_path in data_parquets:
+        df_data = pq.read_table(parquet_path, columns=["episode_index"]).to_pandas()
+        total_data_rows += len(df_data)
+        counts = df_data["episode_index"].value_counts().to_dict()
+        for ep_idx, count in counts.items():
+            ep_idx_int = int(ep_idx)
+            data_lengths[ep_idx_int] = data_lengths.get(ep_idx_int, 0) + int(count)
+
+    length_mismatches = []
+    for ep_idx in expected:
+        data_len = data_lengths.get(ep_idx)
+        meta_len = meta_lengths.get(ep_idx)
+        if data_len != meta_len:
+            length_mismatches.append((ep_idx, data_len, meta_len))
+
+    if length_mismatches:
+        raise RuntimeError(
+            "Data parquet rows do not match meta/episodes lengths: "
+            f"{length_mismatches}. Remove or repair those episodes before pushing."
+        )
+
+    total_frames = info.get("total_frames")
+    if total_frames is None:
+        raise RuntimeError("info.json missing key 'total_frames'")
+    if int(total_frames) != total_data_rows:
+        raise RuntimeError(
+            f"info.json total_frames={total_frames} but data parquets contain {total_data_rows} rows"
+        )
+
     video_keys = [key for key, ft in info.get("features", {}).items() if ft.get("dtype") == "video"]
     missing_video_metadata = []
     missing_video_files = []
@@ -1051,7 +1094,26 @@ def main():
         from huggingface_hub import HfApi
         api = HfApi()
         api.create_repo(repo_id=repo_id, repo_type="dataset", exist_ok=True)
-        api.upload_folder(folder_path=DATA_DIR, repo_id=repo_id, repo_type="dataset")
+        api.upload_folder(
+            folder_path=DATA_DIR,
+            repo_id=repo_id,
+            repo_type="dataset",
+            ignore_patterns=[
+                ".cache/**",
+                "**/.cache/**",
+                ".DS_Store",
+                "**/.DS_Store",
+            ],
+            delete_patterns=[
+                "data/**",
+                "meta/**",
+                "videos/**",
+                "images/**",
+                "tmp*",
+                "tmp*/**",
+            ],
+            commit_message="Sync dataset from clean local source",
+        )
         info_path = DATA_DIR / "meta" / "info.json"
         if info_path.exists():
             with open(info_path) as f:

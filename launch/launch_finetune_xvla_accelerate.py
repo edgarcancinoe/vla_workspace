@@ -51,6 +51,45 @@ os.makedirs(os.environ["HF_LEROBOT_HOME"], exist_ok=True)
 # ============================================================================
 HF_USER = os.environ.get("HF_USER", "edgarcancinoe")
 
+
+def resolve_hf_repo_id(repo_or_name: str, hf_user: str) -> str:
+    repo_or_name = repo_or_name.strip()
+    if "/" in repo_or_name:
+        return repo_or_name
+    return f"{hf_user}/{repo_or_name}"
+
+
+def repo_slug(repo_id: str) -> str:
+    return repo_id.split("/")[-1]
+
+
+def training_mode_suffix(
+    freeze_vision_encoder: str,
+    freeze_language_encoder: str,
+    train_policy_transformer: str,
+    train_soft_prompts: str,
+) -> str:
+    def is_true(value: str) -> bool:
+        return str(value).strip().lower() == "true"
+
+    fv = is_true(freeze_vision_encoder)
+    fl = is_true(freeze_language_encoder)
+    tp = is_true(train_policy_transformer)
+    ts = is_true(train_soft_prompts)
+
+    if fv and fl and (not tp) and ts:
+        return "softprompts"
+    if fv and fl and tp and ts:
+        return "transformer_softprompts"
+    if fv and fl and tp and (not ts):
+        return "transformer_only"
+    if (not fv) and (not fl) and tp and ts:
+        return "full_adapt"
+    return (
+        f"fv-{int(fv)}_fl-{int(fl)}_"
+        f"tp-{int(tp)}_ts-{int(ts)}"
+    )
+
 # Dataset to use -----------------------------------
 DATASET_NAME_STR = "soarm101_pickplace_10d_7p5hz_fixed"
 # --------------------------------------------------
@@ -102,7 +141,9 @@ WORKSPACE_DIR = SCRIPT_DIR.parent
 
 # Dataset Configuration ----------------------------
 DATASET_NAME = os.environ.get("DATASET_NAME", DATASET_NAME_STR)
-DATASET_REPO_ID = f"{HF_USER}/{DATASET_NAME}"
+DATASET_REPO_ID = resolve_hf_repo_id(DATASET_NAME, HF_USER)
+DATASET_SLUG = repo_slug(DATASET_REPO_ID)
+DATASET_REVISION = os.environ.get("DATASET_REVISION", "v3.0")
 # --------------------------------------------------
 
 # Training Hyperparameters
@@ -127,6 +168,12 @@ FREEZE_VISION_ENCODER = "false"
 FREEZE_LANGUAGE_ENCODER = "false"
 TRAIN_POLICY_TRANSFORMER = "true"
 TRAIN_SOFT_PROMPTS = "true"
+TRAINING_MODE_SUFFIX = training_mode_suffix(
+    FREEZE_VISION_ENCODER,
+    FREEZE_LANGUAGE_ENCODER,
+    TRAIN_POLICY_TRANSFORMER,
+    TRAIN_SOFT_PROMPTS,
+)
 
 # Data Overrides
 RENAME_MAP = '{"observation.images.main": "observation.images.image", "observation.images.secondary": "observation.images.image2"}'
@@ -208,7 +255,7 @@ print()
 for action_mode, norm_mapping in itertools.product(ACTION_MODES, NORMALIZATION_MAPPINGS):
     norm_suffix = get_norm_suffix(norm_mapping)
 
-    policy_name = f"{BASE_NAME}_{DATASET_NAME_STR}_{action_mode}_{norm_suffix}"
+    policy_name = f"{BASE_NAME}_{DATASET_SLUG}_{action_mode}_{norm_suffix}_{TRAINING_MODE_SUFFIX}"
     if ENABLE_AUGMENTATION == "true":
         policy_name += "_aug"
     policy_name += f"_{VERSION}"
@@ -261,6 +308,7 @@ for action_mode, norm_mapping in itertools.product(ACTION_MODES, NORMALIZATION_M
         f"--policy.repo_id={policy_repo_id}",
         f"--policy.push_to_hub={POLICY_PUSH_TO_HUB}",
         f"--dataset.repo_id={DATASET_REPO_ID}",
+        f"--dataset.revision={DATASET_REVISION}",
         f"--rename_map={RENAME_MAP}",
         f"--dataset.image_transforms.enable={ENABLE_AUGMENTATION}",
         f"--dataset.image_transforms.tfs={augmentation_tfs}",
