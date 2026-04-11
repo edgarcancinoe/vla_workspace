@@ -1,0 +1,408 @@
+_wandb:
+    value:
+        cli_version: 0.24.0
+        e:
+            5mpak52s1laocxicnv5jcmt6a2c4o1pb:
+                args:
+                    - --policy.path=lerobot/xvla-base
+                    - --policy.repo_id=edgarcancinoe/xvla-base_finetuned_soarm101_pickplace_10d_so101_joint_a-m_s-m
+                    - --policy.push_to_hub=true
+                    - --dataset.repo_id=edgarcancinoe/soarm101_pickplace_10d
+                    - '--rename_map={"observation.images.main": "observation.images.image", "observation.images.secondary": "observation.images.image2"}'
+                    - --dataset.image_transforms.enable=false
+                    - '--dataset.image_transforms.tfs={"affine": {"type": "RandomAffine", "kwargs": {"degrees": [-2.5, 2.5], "translate": [0.025, 0.025]}}}'
+                    - --batch_size=8
+                    - --steps=60000
+                    - --log_freq=1000
+                    - --eval_freq=-1
+                    - --save_freq=20000
+                    - --push_every=20000
+                    - --output_dir=/home/jose/vla_workspace/outputs/train/xvla-base_finetuned_soarm101_pickplace_10d_so101_joint_a-m_s-m_20260227_075637
+                    - --job_name=xvla-base_finetuned_soarm101_pickplace_10d_so101_joint_a-m_s-m_20260227_075637
+                    - --policy.device=cuda
+                    - --wandb.enable=true
+                    - --num_workers=4
+                    - --resume=false
+                    - --policy.dtype=bfloat16
+                    - --policy.action_mode=so101_joint
+                    - --policy.empty_cameras=1
+                    - --policy.freeze_vision_encoder=false
+                    - --policy.freeze_language_encoder=false
+                    - --policy.train_policy_transformer=true
+                    - --policy.train_soft_prompts=true
+                    - --policy.num_image_views=2
+                    - '--policy.normalization_mapping={"ACTION": "MEAN_STD", "STATE": "MEAN_STD", "VISUAL": "IDENTITY"}'
+                cpu_count: 128
+                cpu_count_logical: 256
+                cudaVersion: "13.0"
+                disk:
+                    /:
+                        total: "942911799296"
+                        used: "262392303616"
+                executable: /home/jose/conda/envs/vla/bin/python3
+                git:
+                    commit: 807f87fee866aae2b0948734ac01c37165b22ddd
+                    remote: https://github.com/edgarcancinoe/vla_workspace.git
+                gpu: NVIDIA A100-SXM4-40GB
+                gpu_count: 4
+                gpu_nvidia:
+                    - architecture: Ampere
+                      cudaCores: 6912
+                      memoryTotal: "42949672960"
+                      name: NVIDIA A100-SXM4-40GB
+                      uuid: GPU-0809ff89-0755-71d5-2c0f-cef07bac41fe
+                    - architecture: Ampere
+                      cudaCores: 6912
+                      memoryTotal: "42949672960"
+                      name: NVIDIA A100-SXM4-40GB
+                      uuid: GPU-49625c92-e2b0-90d2-7849-237cf98d4ddc
+                    - architecture: Ampere
+                      cudaCores: 6912
+                      memoryTotal: "42949672960"
+                      name: NVIDIA A100-SXM4-40GB
+                      uuid: GPU-0dbe3a31-fe81-87e3-a84b-68cf021b69a5
+                    - architecture: Ampere
+                      cudaCores: 6912
+                      memoryTotal: "42949672960"
+                      name: NVIDIA A100-SXM4-40GB
+                      uuid: GPU-8932b862-102a-14b9-286e-37d81ff6b3ff
+                host: zapp
+                memory:
+                    total: "540664000512"
+                os: Linux-5.4.0-216-generic-x86_64-with-glibc2.35
+                program: -m lerobot.scripts.lerobot_train
+                python: CPython 3.10.19
+                root: /home/jose/vla_workspace/outputs/train/xvla-base_finetuned_soarm101_pickplace_10d_so101_joint_a-m_s-m_20260227_075637
+                startedAt: "2026-02-27T06:56:59.909775Z"
+                writerId: 5mpak52s1laocxicnv5jcmt6a2c4o1pb
+        m: []
+        python_version: 3.10.19
+        t:
+            "1":
+                - 1
+                - 11
+                - 41
+                - 49
+                - 51
+                - 71
+                - 83
+            "2":
+                - 1
+                - 11
+                - 41
+                - 49
+                - 51
+                - 71
+                - 83
+            "3":
+                - 13
+                - 15
+                - 16
+                - 61
+            "4": 3.10.19
+            "5": 0.24.0
+            "6": 4.57.5
+            "10":
+                - 21
+            "12": 0.24.0
+            "13": linux-x86_64
+batch_size:
+    value: 8
+checkpoint_path:
+    value: null
+dataset:
+    value:
+        episodes: null
+        image_transforms:
+            enable: false
+            max_num_transforms: 3
+            random_order: false
+            tfs:
+                affine:
+                    kwargs:
+                        degrees:
+                            - -2.5
+                            - 2.5
+                        translate:
+                            - 0.025
+                            - 0.025
+                    type: RandomAffine
+                    weight: 1
+        repo_id: edgarcancinoe/soarm101_pickplace_10d
+        revision: null
+        root: null
+        streaming: false
+        use_imagenet_stats: true
+        video_backend: torchcodec
+env:
+    value: null
+eval:
+    value:
+        batch_size: 50
+        n_episodes: 50
+        use_async_envs: false
+eval_freq:
+    value: -1
+job_name:
+    value: xvla-base_finetuned_soarm101_pickplace_10d_so101_joint_a-m_s-m_20260227_075637
+log_freq:
+    value: 1000
+num_workers:
+    value: 4
+optimizer:
+    value:
+        betas:
+            - 0.9
+            - 0.95
+        eps: 1e-08
+        grad_clip_norm: 10
+        lr: 0.0001
+        soft_prompt_lr_scale: 1
+        soft_prompt_warmup_lr_scale: null
+        type: xvla-adamw
+        weight_decay: 0.0001
+output_dir:
+    value: /home/jose/vla_workspace/outputs/train/xvla-base_finetuned_soarm101_pickplace_10d_so101_joint_a-m_s-m_20260227_075637
+peft:
+    value: null
+policy:
+    value:
+        action_mode: so101_joint
+        chunk_size: 30
+        depth: 24
+        device: cuda
+        dim_time: 32
+        domain_feature_key: null
+        domain_id: 0
+        dtype: bfloat16
+        empty_cameras: 1
+        florence_config:
+            bos_token_id: 0
+            eos_token_id: 2
+            ignore_index: -100
+            is_encoder_decoder: true
+            model_type: florence2
+            pad_token_id: 1
+            projection_dim: 1024
+            text_config:
+                activation_dropout: 0.1
+                activation_function: gelu
+                add_bias_logits: false
+                add_final_layer_norm: false
+                attention_dropout: 0.1
+                bos_token_id: 0
+                classif_dropout: 0.1
+                classifier_dropout: 0
+                d_model: 1024
+                decoder_attention_heads: 16
+                decoder_ffn_dim: 4096
+                decoder_layerdrop: 0
+                decoder_layers: 12
+                decoder_start_token_id: 2
+                dropout: 0.1
+                early_stopping: true
+                encoder_attention_heads: 16
+                encoder_ffn_dim: 4096
+                encoder_layerdrop: 0
+                encoder_layers: 12
+                eos_token_id: 2
+                forced_bos_token_id: 0
+                forced_eos_token_id: 2
+                gradient_checkpointing: false
+                init_std: 0.02
+                is_encoder_decoder: true
+                label2id:
+                    LABEL_0: 0
+                    LABEL_1: 1
+                    LABEL_2: 2
+                max_position_embeddings: 4096
+                no_repeat_ngram_size: 3
+                normalize_before: false
+                num_beams: 3
+                num_hidden_layers: 12
+                pad_token_id: 1
+                scale_embedding: false
+                vocab_size: 51289
+            torch_dtype: float32
+            vision_config:
+                depths:
+                    - 1
+                    - 1
+                    - 9
+                    - 1
+                dim_embed:
+                    - 256
+                    - 512
+                    - 1024
+                    - 2048
+                drop_path_rate: 0.1
+                enable_checkpoint: false
+                image_feature_source:
+                    - spatial_avg_pool
+                    - temporal_avg_pool
+                image_pos_embed:
+                    max_pos_embeddings: 50
+                    type: learned_abs_2d
+                model_type: davit
+                num_groups:
+                    - 8
+                    - 16
+                    - 32
+                    - 64
+                num_heads:
+                    - 8
+                    - 16
+                    - 32
+                    - 64
+                patch_padding:
+                    - 3
+                    - 1
+                    - 1
+                    - 1
+                patch_prenorm:
+                    - false
+                    - true
+                    - true
+                    - true
+                patch_size:
+                    - 7
+                    - 3
+                    - 3
+                    - 3
+                patch_stride:
+                    - 4
+                    - 2
+                    - 2
+                    - 2
+                projection_dim: 1024
+                visual_temporal_embedding:
+                    max_temporal_embeddings: 100
+                    type: COSINE
+                window_size: 12
+            vocab_size: 51289
+        freeze_language_encoder: false
+        freeze_vision_encoder: false
+        gripper_max_value: 24
+        gripper_open_threshold: 12
+        hidden_size: 1024
+        input_features:
+            observation.images.empty_camera_0:
+                shape:
+                    - 3
+                    - 224
+                    - 224
+                type: VISUAL
+            observation.images.image:
+                shape:
+                    - 3
+                    - 256
+                    - 256
+                type: VISUAL
+            observation.images.image2:
+                shape:
+                    - 3
+                    - 256
+                    - 256
+                type: VISUAL
+            observation.state:
+                shape:
+                    - 8
+                type: STATE
+        len_soft_prompts: 32
+        license: null
+        max_action_dim: 20
+        max_len_seq: 512
+        max_state_dim: 20
+        mlp_ratio: 4
+        n_action_steps: 30
+        n_obs_steps: 1
+        normalization_mapping:
+            ACTION: MEAN_STD
+            STATE: MEAN_STD
+            VISUAL: IDENTITY
+        num_denoising_steps: 10
+        num_domains: 30
+        num_heads: 16
+        num_image_views: 2
+        optimizer_betas:
+            - 0.9
+            - 0.95
+        optimizer_eps: 1e-08
+        optimizer_grad_clip_norm: 10
+        optimizer_lr: 0.0001
+        optimizer_soft_prompt_lr_scale: 1
+        optimizer_soft_prompt_warmup_lr_scale: null
+        optimizer_weight_decay: 0.0001
+        output_features:
+            action:
+                shape:
+                    - 20
+                type: ACTION
+        pad_language_to: max_length
+        pretrained_path: lerobot/xvla-base
+        private: null
+        push_to_hub: true
+        repo_id: edgarcancinoe/xvla-base_finetuned_soarm101_pickplace_10d_so101_joint_a-m_s-m
+        resize_imgs_with_padding:
+            - 224
+            - 224
+        scheduler_decay_lr: 2.5e-06
+        scheduler_decay_steps: 30000
+        scheduler_warmup_steps: 1000
+        tags: null
+        tokenizer_max_length: 1024
+        tokenizer_name: facebook/bart-large
+        tokenizer_padding_side: right
+        train_policy_transformer: true
+        train_soft_prompts: true
+        type: xvla
+        use_amp: false
+        use_hetero_proj: false
+        use_peft: false
+        use_proprio: true
+push_every:
+    value: 20000
+rabc_epsilon:
+    value: 1e-06
+rabc_head_mode:
+    value: sparse
+rabc_kappa:
+    value: 0.01
+rabc_progress_path:
+    value: null
+rename_map:
+    value:
+        observation.images.main: observation.images.image
+        observation.images.secondary: observation.images.image2
+resume:
+    value: false
+save_checkpoint:
+    value: true
+save_freq:
+    value: 20000
+scheduler:
+    value:
+        decay_lr: 2.5e-06
+        num_decay_steps: 30000
+        num_warmup_steps: 1000
+        peak_lr: 0.0001
+        type: cosine_decay_with_warmup
+seed:
+    value: 1000
+steps:
+    value: 60000
+tolerance_s:
+    value: 0.0001
+use_policy_training_preset:
+    value: true
+use_rabc:
+    value: false
+wandb:
+    value:
+        disable_artifact: false
+        enable: true
+        entity: null
+        mode: null
+        notes: null
+        project: lerobot
+        run_id: null

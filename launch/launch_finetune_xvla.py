@@ -136,17 +136,17 @@ DATASET_REVISION = os.environ.get("DATASET_REVISION", "v3.0")
 # --------------------------------------------------
 
 # Training Hyperparameters
-BATCH_SIZE = "32"
-STEPS = "12500"
+BATCH_SIZE = "64"
+STEPS = "6250"
 LOG_FREQ = "500"
 EVAL_FREQ = "-1"
 
 DEVICE = 'cuda'
-CUDA_DEVICE = '0'
+CUDA_DEVICE = '1'
 NUM_WORKERS = '8'
 
-SAVE_FREQ = "8000"
-PUSH_HF_EVERY = "8000"
+SAVE_FREQ = "4000"
+PUSH_HF_EVERY = "4000"
 
 # Resume configuration
 RESUME = "false"
@@ -155,11 +155,12 @@ WANDB_ENABLE = "true"
 
 # Policy Structure / Freezing
 POLICY_DTYPE = "bfloat16"
-FREEZE_VISION_ENCODER = "false"
-FREEZE_LANGUAGE_ENCODER = "false"
+FREEZE_VISION_ENCODER = "true"
+FREEZE_LANGUAGE_ENCODER = "true"
 
-TRAIN_POLICY_TRANSFORMER = "true"
+TRAIN_POLICY_TRANSFORMER = "false"
 TRAIN_SOFT_PROMPTS = "true"
+
 TRAINING_MODE_SUFFIX = training_mode_suffix(
     FREEZE_VISION_ENCODER,
     FREEZE_LANGUAGE_ENCODER,

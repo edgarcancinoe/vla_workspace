@@ -3,20 +3,17 @@
 
 import time
 import threading
-import yaml
-import torch
-from pathlib import Path
-
-# LeRobot Imports
 import sys
 from pathlib import Path
 
-# Add workspace root to sys.path to allow importing from scripts/utils
-WORKSPACE_ROOT = Path(__file__).parent.parent
-sys.path.append(str(WORKSPACE_ROOT))
+import torch
+import yaml
 
-# Now we can import from scripts/utils
-from utils import camera_calibration
+WORKSPACE_ROOT = Path(__file__).resolve().parent.parent
+sys.path.append(str(WORKSPACE_ROOT / "src"))
+
+from thesis_vla.common.paths import LAUNCH_CLIENT_CONFIG_PATH, ROBOT_CONFIG_PATH
+from thesis_vla.vision import camera_calibration
 
 from lerobot.async_inference.robot_client import RobotClient, RobotClientConfig
 
@@ -24,8 +21,7 @@ from lerobot.async_inference.robot_client import RobotClient, RobotClientConfig
 # CONFIGURATION
 # =============================================================================
 # Use WORKSPACE_ROOT from imports section for robust paths
-LAUNCH_CONFIG_PATH = WORKSPACE_ROOT / "config" / "launch_client.yaml"
-ROBOT_CONFIG_PATH = WORKSPACE_ROOT / "config" / "robot_config.yaml"
+LAUNCH_CONFIG_PATH = LAUNCH_CLIENT_CONFIG_PATH
 
 
 # Denormalization Settings
