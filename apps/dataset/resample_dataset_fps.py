@@ -20,7 +20,7 @@ huggingface-cli download edgarcancinoe/soarm101_pickplace_multicolor_v1 \
     --local-dir ~/datasets/edgarcancinoe/soarm101_pickplace_multicolor_v1
 
 
-python robot_datasets/resample_dataset_fps.py \
+python apps/dataset/resample_dataset_fps.py \
     --src ~/datasets/edgarcancinoe/soarm101_pickplace_multicolor_v1 \
     --dst-fps 7.5 \
     --hf-repo edgarcancinoe/soarm101_pickplace_multicolor_v1_7p5hz
