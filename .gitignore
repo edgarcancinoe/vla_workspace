@@ -1,49 +1,37 @@
-# Custom
-lerobot_src/
-data/
-data_backup/
-visualizations/
-tasks/
-lerobot/
+# Local tooling
 .claude/
-
-# Logs
-logs/
-*.log
-
-# Cache directories
-.cache/
-__pycache__/
-*.pyc
-*.pyo
-*.pyd
-
-# Python virtual environments
-venv/
-env/
-ENV/
-
-# HuggingFace cache
-.huggingface/
-
-# Rerun recordings
-recordings/
-
-# Output directories
-outputs/
-checkpoints/
-
-# IDE
 .vscode/
 .idea/
 *.swp
 *.swo
 *~
 
-# OS
-.DS_Store
-Thumbs.db
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+venv/
+env/
+ENV/
 
-# Temporary files
+# Runtime artifacts
+runtime/
+data/
+data_backup/
+visualizations/
+tasks/
+recordings/
+checkpoints/
+*.log
 *.tmp
 tmp/
+
+# Legacy local caches
+.huggingface/
+lerobot_src/
+lerobot/
+
+# OS files
+.DS_Store
+Thumbs.db
