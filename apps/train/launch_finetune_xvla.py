@@ -37,7 +37,7 @@ DEFAULTS = LaunchConfig(
     runtime=RuntimeConfig(
         launch_mode="single",
         cuda_devices=(1,),
-        num_workers=0,
+        num_workers=12,
         dry_run=False,
     ),
 
@@ -54,7 +54,7 @@ DEFAULTS = LaunchConfig(
     gradient_accumulation_steps=1,
     optimizer_lr=1e-4,
     scheduler_decay_lr=1e-5,
-    steps=12_500,
+    steps=15_000,
 
     # ------- Logging and checkpoint settings -------
     log_freq=500,
@@ -112,13 +112,13 @@ EXPERIMENTS = [
         base_model=BASE_ORANGE_196,     dataset_name=DATASET_MULTICOLOR,
         batch_size=32,  optimizer_lr=1e-4,  steps=15_000,  scheduler_decay_lr=1e-5,
     ),
-    # 3: [Orange196 -> Multicolor] [NoAug] [train_all]
+    # 3: [Orange196 -> Multicolor] [NoAug] [train_all]              (RUNNING)
     ExperimentSpec(
         action_mode="so101_ee6d",   
         base_model=BASE_ORANGE_196,     dataset_name=DATASET_MULTICOLOR,
         batch_size=32,  optimizer_lr=1e-4,  steps=15_000,  scheduler_decay_lr=1e-5,
     ),
-    # 4: [Orange196 -> Multicolor] [NoAug] [train_domain_specific]
+    # 4: [Orange196 -> Multicolor] [NoAug] [train_domain_specific]  (RUNNING)
     ExperimentSpec(
         action_mode="so101_ee6d",   
         base_model=BASE_ORANGE_196,     dataset_name=DATASET_MULTICOLOR,
@@ -128,7 +128,7 @@ EXPERIMENTS = [
 
 ]
 
-EXPERIMENTS = [EXPERIMENTS[4]]
+EXPERIMENTS = [EXPERIMENTS[3]]
 
 def main() -> None:
     run_experiments(workspace_dir=WORKSPACE_DIR, defaults=DEFAULTS, experiments=EXPERIMENTS)
