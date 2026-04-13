@@ -82,7 +82,7 @@ BASE_ORANGE_196 = "edgarcancinoe/xvla-base_soarm101_pickplace_10d_7p5hz_resample
 
 # Dataset presets for convenience
 DATASET_ORANGE = "soarm101_pickplace_10d_7p5hz_resampled"
-DATASET_MULTICOLOR = "pickplace_multicolor_v1_7p5hz"
+DATASET_MULTICOLOR = "soarm101_pickplace_multicolor_v1_7p5hz"
 
 
 # Experiment specs.
