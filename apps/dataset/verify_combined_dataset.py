@@ -1,6 +1,17 @@
 import argparse
+import sys
 from lerobot.datasets.lerobot_dataset import LeRobotDataset
 import torch
+from pathlib import Path
+
+ROOT_DIR = Path(__file__).resolve().parents[2]
+src_root = ROOT_DIR / "src"
+if str(src_root) not in sys.path:
+    sys.path.insert(0, str(src_root))
+lerobot_src = ROOT_DIR.parent / "repos" / "lerobot" / "src"
+if lerobot_src.exists() and str(lerobot_src) not in sys.path:
+    sys.path.insert(0, str(lerobot_src))
+
 from thesis_vla.common.paths import DATASETS_OUTPUT_DIR
 
 DATA_DIR = DATASETS_OUTPUT_DIR / "soarm101_pickplace_local"

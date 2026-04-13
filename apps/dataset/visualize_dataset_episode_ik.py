@@ -14,9 +14,18 @@ Unit reference (from SO101Control):
 """
 
 from pathlib import Path
+import sys
 import numpy as np
 import argparse
 import time
+
+ROOT_DIR = Path(__file__).resolve().parents[2]
+src_root = ROOT_DIR / "src"
+if str(src_root) not in sys.path:
+    sys.path.insert(0, str(src_root))
+lerobot_src = ROOT_DIR.parent / "repos" / "lerobot" / "src"
+if lerobot_src.exists() and str(lerobot_src) not in sys.path:
+    sys.path.insert(0, str(lerobot_src))
 
 from thesis_vla.common.paths import DATASETS_OUTPUT_DIR, ROBOT_CONFIG_PATH, RUNTIME_CACHE_DIR
 from thesis_vla.robot.so101_control import SO101Control
