@@ -66,8 +66,8 @@ DEFAULTS = LaunchConfig(
 
     # ------------ Augmentation settings ------------
     enable_augmentation=False,
-    augmentation_degrees="[-2.5, 2.5]",
-    augmentation_translate="[0.025, 0.025]",
+    augmentation_degrees="[-1., 1.]",
+    augmentation_translate="[0.015, 0.015]",
     augmentation_backend="custom",
     augmentation_enable_photometric=True,
     augmentation_fill_mode="reflect",
@@ -93,13 +93,13 @@ EXPERIMENTS = [
     # 0: [Base ->      Orange196]  [NoAug] [train_all]
     ExperimentSpec(
         action_mode="so101_ee6d",   
-        base_model=BASE_MODEL,    dataset_name=DATASET_ORANGE, 
+        base_model=BASE_MODEL,    dataset_name=DATASET_ORANGE,  dataset_revision="main", 
         batch_size=32,  optimizer_lr=1e-4,  steps=15_000,  scheduler_decay_lr=1e-5,
     ),
     # 1: [Base ->      Orange196]  [Aug]   [train_all]
     ExperimentSpec(
         action_mode="so101_ee6d",   
-        base_model=BASE_MODEL,     dataset_name=DATASET_ORANGE,     enable_augmentation=True,
+        base_model=BASE_MODEL,     dataset_name=DATASET_ORANGE, dataset_revision="main",  enable_augmentation=True,
         batch_size=32,  optimizer_lr=1e-4,  steps=15_000,  scheduler_decay_lr=1e-5,
     ),
     # ------------------------------------------------------------------
@@ -110,7 +110,7 @@ EXPERIMENTS = [
     ExperimentSpec(
         action_mode="so101_ee6d",   
         base_model=BASE_ORANGE_196,     dataset_name=DATASET_MULTICOLOR,
-        batch_size=32,  optimizer_lr=1e-4,  steps=15_000,  scheduler_decay_lr=1e-5,
+        batch_size=8,  optimizer_lr=1e-4,  steps=15_000,  scheduler_decay_lr=1e-5, gradient_accumulation_steps=4
     ),
     # 3: [Orange196 -> Multicolor] [NoAug] [train_all]              (RUNNING)
     ExperimentSpec(
@@ -128,7 +128,7 @@ EXPERIMENTS = [
 
 ]
 
-EXPERIMENTS = [EXPERIMENTS[3]]
+EXPERIMENTS = [EXPERIMENTS[1]]
 
 def main() -> None:
     run_experiments(workspace_dir=WORKSPACE_DIR, defaults=DEFAULTS, experiments=EXPERIMENTS)
