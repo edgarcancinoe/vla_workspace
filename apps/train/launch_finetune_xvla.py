@@ -37,7 +37,7 @@ DEFAULTS = LaunchConfig(
     runtime=RuntimeConfig(
         launch_mode="single",
         cuda_devices=(1,),
-        num_workers=0,
+        num_workers=12,
         dry_run=False,
     ),
 
@@ -53,7 +53,7 @@ DEFAULTS = LaunchConfig(
     batch_size=32,
     optimizer_lr=1e-4,
     scheduler_decay_lr=1e-5,
-    steps=12_500,
+    steps=15_000,
 
     # ------- Logging and checkpoint settings -------
     log_freq=500,
@@ -82,7 +82,7 @@ BASE_ORANGE_196 = "edgarcancinoe/xvla-base_soarm101_pickplace_10d_7p5hz_resample
 
 # Dataset presets for convenience
 DATASET_ORANGE = "soarm101_pickplace_10d_7p5hz_resampled"
-DATASET_MULTICOLOR = "pickplace_multicolor_v1_7p5hz"
+DATASET_MULTICOLOR = "soarm101_pickplace_multicolor_v1_7p5hz"
 
 
 # Experiment specs.
@@ -111,13 +111,13 @@ EXPERIMENTS = [
         base_model=BASE_ORANGE_196,     dataset_name=DATASET_MULTICOLOR,
         batch_size=32,  optimizer_lr=1e-4,  steps=15_000,  scheduler_decay_lr=1e-5,
     ),
-    # 3: [Orange196 -> Multicolor] [NoAug] [train_all]
+    # 3: [Orange196 -> Multicolor] [NoAug] [train_all]              (RUNNING)
     ExperimentSpec(
         action_mode="so101_ee6d",   
         base_model=BASE_ORANGE_196,     dataset_name=DATASET_MULTICOLOR,
         batch_size=32,  optimizer_lr=1e-4,  steps=15_000,  scheduler_decay_lr=1e-5,
     ),
-    # 4: [Orange196 -> Multicolor] [NoAug] [train_domain_specific]
+    # 4: [Orange196 -> Multicolor] [NoAug] [train_domain_specific]  (RUNNING)
     ExperimentSpec(
         action_mode="so101_ee6d",   
         base_model=BASE_ORANGE_196,     dataset_name=DATASET_MULTICOLOR,
@@ -127,7 +127,7 @@ EXPERIMENTS = [
 
 ]
 
-EXPERIMENTS = [EXPERIMENTS[4]]
+EXPERIMENTS = [EXPERIMENTS[3]]
 
 def main() -> None:
     run_experiments(workspace_dir=WORKSPACE_DIR, defaults=DEFAULTS, experiments=EXPERIMENTS)
