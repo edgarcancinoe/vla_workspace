@@ -31,6 +31,7 @@ DEFAULTS = LaunchConfig(
     dataset_revision="v3.0",
     base_model="lerobot/xvla-base",
     normalization_mapping='{"ACTION": "MEAN_STD", "STATE": "MEAN_STD", "VISUAL": "IDENTITY"}',
+    action_mode="so101_ee6d", # so101_ee6d / so101_joint
 
     # ----------- Runtime/Device settings -----------
     runtime=RuntimeConfig(
@@ -72,13 +73,39 @@ DEFAULTS = LaunchConfig(
 
 # Experiment specs. Edit for overriding settings.
 EXPERIMENTS = [
+    # ------------------------------------------------------------------
+    # [Base][Orange196][NoAug][32, 1e-4, 15_000][Enc_Vis, Enc_Lang, PolicyTransf, SoftPrompts]
     ExperimentSpec(
-        action_mode="so101_ee6d",
-        enable_augmentation=False,
+        action_mode="so101_ee6d",   
+        base_model="lerobot/xvla-base",    
+        dataset_name="soarm101_pickplace_10d_7p5hz_resampled", 
+        batch_size=32,  optimizer_lr=1e-4,  steps=15_000,
     ),
+    # [Base][Orange196][Aug][32, 1e-4, 15_000][Enc_Vis, Enc_Lang, PolicyTransf, SoftPrompts]
     ExperimentSpec(
-        action_mode="so101_joint",
-        enable_augmentation=False,
+        action_mode="so101_ee6d",   
+        base_model="lerobot/xvla-base",     
+        dataset_name="soarm101_pickplace_10d_7p5hz_resampled",  
+        enable_augmentation=True,
+        batch_size=32,  optimizer_lr=1e-4,  steps=15_000,
+    ),
+    # ------------------------------------------------------------------
+    
+    # ------------------------------------------------------------------
+    # Base model, multicolor, no augmentation
+    ExperimentSpec(
+        action_mode="so101_ee6d",   
+        base_model="lerobot/xvla-base",     
+        dataset_name="pickplace_multicolor_v1_7p5hz",
+        batch_size=32,  optimizer_lr=1e-4,  steps=12_500,
+    ),
+   # Base model, multicolor, augmented
+    ExperimentSpec(
+        action_mode="so101_ee6d",   
+        base_model="lerobot/xvla-base",     
+        dataset_name="pickplace_multicolor_v1_7p5hz",   
+        enable_augmentation=True,
+        batch_size=32,  optimizer_lr=1e-4,  steps=12_500,
     ),
 ]
 
