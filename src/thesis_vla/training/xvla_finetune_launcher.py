@@ -398,9 +398,21 @@ def resolve_experiment(
     )
 
 
-def prepare_environment() -> dict[str, str]:
+def prepare_environment(workspace_dir: Path) -> dict[str, str]:
     env = os.environ.copy()
     env["PYTHONNOUSERSITE"] = "1"
+    pythonpath_parts: list[str] = []
+    workspace_src = workspace_dir / "src"
+    if workspace_src.exists():
+        pythonpath_parts.append(str(workspace_src))
+    local_lerobot_src = workspace_dir.parent / "repos" / "lerobot" / "src"
+    if local_lerobot_src.exists():
+        pythonpath_parts.append(str(local_lerobot_src))
+    existing_pythonpath = env.get("PYTHONPATH", "").strip()
+    if existing_pythonpath:
+        pythonpath_parts.append(existing_pythonpath)
+    if pythonpath_parts:
+        env["PYTHONPATH"] = ":".join(pythonpath_parts)
 
     user = env.get("USER", "default_user")
     cache_root = RUNTIME_CACHE_DIR / f"xvla_{user}"
@@ -576,7 +588,7 @@ def run_experiments(
     defaults: LaunchConfig,
     experiments: list[ExperimentSpec],
 ) -> None:
-    env = prepare_environment()
+    env = prepare_environment(workspace_dir)
     run_preflight_checks(defaults, experiments)
 
     if not experiments:
