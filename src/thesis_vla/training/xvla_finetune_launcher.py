@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import datetime as dt
+import functools
 import hashlib
 import importlib
 import json
@@ -166,6 +167,22 @@ def repo_slug(repo_id: str) -> str:
 
 def bool_str(value: bool) -> str:
     return "true" if value else "false"
+
+
+@functools.lru_cache(maxsize=1)
+def lerobot_supports_gradient_accumulation() -> bool:
+    """Best-effort check for --gradient_accumulation_steps support in lerobot_train."""
+    try:
+        result = subprocess.run(
+            [sys.executable, "-m", "lerobot.scripts.lerobot_train", "--help"],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        help_text = (result.stdout or "") + "\n" + (result.stderr or "")
+        return "--gradient_accumulation_steps" in help_text
+    except Exception:
+        return False
 
 
 def resolve_model_ref(model_ref: ModelRef, hf_user: str) -> tuple[str, str | None]:
@@ -444,7 +461,6 @@ def build_training_command(experiment: ResolvedExperiment) -> list[str]:
         f"--dataset.image_transforms.enable={bool_str(experiment.enable_augmentation)}",
         f"--dataset.image_transforms.tfs={augmentation_transforms(experiment)}",
         f"--batch_size={experiment.batch_size}",
-        f"--gradient_accumulation_steps={experiment.gradient_accumulation_steps}",
         f"--policy.optimizer_lr={experiment.optimizer_lr}",
         f"--policy.scheduler_decay_lr={experiment.scheduler_decay_lr}",
         f"--steps={experiment.steps}",
@@ -471,6 +487,14 @@ def build_training_command(experiment: ResolvedExperiment) -> list[str]:
         f"--policy.normalization_mapping={experiment.normalization_mapping}",
         f"--policy.enable_gripper_debug_stats={bool_str(experiment.enable_gripper_debug_stats)}",
     ]
+
+    if lerobot_supports_gradient_accumulation():
+        base_cmd.append(f"--gradient_accumulation_steps={experiment.gradient_accumulation_steps}")
+    elif experiment.gradient_accumulation_steps != 1:
+        print(
+            "WARNING: Current lerobot_train does not support --gradient_accumulation_steps. "
+            f"Requested value {experiment.gradient_accumulation_steps} will be ignored."
+        )
 
     if experiment.runtime.launch_mode == "single":
         return base_cmd

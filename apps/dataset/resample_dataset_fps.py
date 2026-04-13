@@ -474,7 +474,7 @@ def main():
     parser.add_argument(
         "--workers",
         type=int,
-        default=min(4, os.cpu_count() or 4),
+        default=min(10, os.cpu_count() or 8),
         help="Number of parallel video workers (default: min(4, cpu_count)).",
     )
     parser.add_argument(
