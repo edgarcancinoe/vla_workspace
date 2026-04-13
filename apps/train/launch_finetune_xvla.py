@@ -127,7 +127,7 @@ EXPERIMENTS = [
 
 ]
 
-EXPERIMENTS = EXPERIMENTS[4]
+EXPERIMENTS = [EXPERIMENTS[4]]
 
 def main() -> None:
     run_experiments(workspace_dir=WORKSPACE_DIR, defaults=DEFAULTS, experiments=EXPERIMENTS)

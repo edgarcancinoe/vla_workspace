@@ -80,6 +80,7 @@ class ExperimentSpec:
     base_model: str | None = None
     action_mode: str | None = None
     normalization_mapping: str | None = None
+    freeze: FreezeConfig | None = None
     freeze_vision_encoder: bool | None = None
     freeze_language_encoder: bool | None = None
     train_policy_transformer: bool | None = None
@@ -194,8 +195,9 @@ def with_overrides(base, **overrides):
 
 
 def merge_defaults(defaults: LaunchConfig, experiment: ExperimentSpec) -> tuple[FreezeConfig, RuntimeConfig]:
+    freeze_base = experiment.freeze if experiment.freeze is not None else defaults.freeze
     freeze = with_overrides(
-        defaults.freeze,
+        freeze_base,
         freeze_vision_encoder=experiment.freeze_vision_encoder,
         freeze_language_encoder=experiment.freeze_language_encoder,
         train_policy_transformer=experiment.train_policy_transformer,
