@@ -23,6 +23,7 @@ class SmolVLAConfig:
     base_policy_path: str = "lerobot/smolvla_base"
     policy_name: str = "smolvla_finetuned_orange_50ep_open_gripper"
     batch_size: int = 64
+    scheduler_decay_lr: float = 1e-5
     steps: int = 25_000
     log_freq: int = 100
     eval_freq: int = -1
@@ -123,6 +124,7 @@ def build_command(config: SmolVLAConfig, workspace_dir: Path) -> tuple[list[str]
         f"--dataset.image_transforms.enable={bool_str(config.enable_augmentation)}",
         f"--dataset.image_transforms.tfs={augmentation_transforms(config)}",
         f"--batch_size={config.batch_size}",
+        f"--policy.scheduler_decay_lr={config.scheduler_decay_lr}",
         f"--steps={config.steps}",
         f"--log_freq={config.log_freq}",
         f"--eval_freq={config.eval_freq}",
@@ -152,6 +154,7 @@ def print_summary(config: SmolVLAConfig, summary: dict[str, str], cmd: list[str]
     print(f"  Dataset:              {summary['dataset_repo_id']}")
     print(f"  Batch Size:           {config.batch_size}")
     print(f"  Steps:                {config.steps}")
+    print(f"  Scheduler Decay LR:   {config.scheduler_decay_lr}")
     print(f"  Save Freq:            {config.save_freq}")
     print(f"  Output Dir:           {summary['output_dir']}")
     print(f"  Job Name:             {summary['job_name']}")

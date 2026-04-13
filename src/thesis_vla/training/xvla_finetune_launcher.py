@@ -49,6 +49,7 @@ class LaunchConfig:
     runtime: RuntimeConfig = RuntimeConfig()
     batch_size: int = 32
     optimizer_lr: float = 1e-4
+    scheduler_decay_lr: float = 2.5e-6
     steps: int = 12_500
     log_freq: int = 500
     eval_freq: int = -1
@@ -85,6 +86,7 @@ class ExperimentSpec:
     train_soft_prompts: bool | None = None
     batch_size: int | None = None
     optimizer_lr: float | None = None
+    scheduler_decay_lr: float | None = None
     steps: int | None = None
     log_freq: int | None = None
     eval_freq: int | None = None
@@ -116,6 +118,7 @@ class ResolvedExperiment:
     runtime: RuntimeConfig
     batch_size: int
     optimizer_lr: float
+    scheduler_decay_lr: float
     steps: int
     log_freq: int
     eval_freq: int
@@ -288,6 +291,11 @@ def resolve_experiment(
         runtime=runtime,
         batch_size=experiment.batch_size if experiment.batch_size is not None else defaults.batch_size,
         optimizer_lr=experiment.optimizer_lr if experiment.optimizer_lr is not None else defaults.optimizer_lr,
+        scheduler_decay_lr=(
+            experiment.scheduler_decay_lr
+            if experiment.scheduler_decay_lr is not None
+            else defaults.scheduler_decay_lr
+        ),
         steps=experiment.steps if experiment.steps is not None else defaults.steps,
         log_freq=experiment.log_freq if experiment.log_freq is not None else defaults.log_freq,
         eval_freq=experiment.eval_freq if experiment.eval_freq is not None else defaults.eval_freq,
@@ -371,6 +379,7 @@ def build_training_command(experiment: ResolvedExperiment) -> list[str]:
         f"--dataset.image_transforms.tfs={augmentation_transforms(experiment)}",
         f"--batch_size={experiment.batch_size}",
         f"--policy.optimizer_lr={experiment.optimizer_lr}",
+        f"--policy.scheduler_decay_lr={experiment.scheduler_decay_lr}",
         f"--steps={experiment.steps}",
         f"--log_freq={experiment.log_freq}",
         f"--eval_freq={experiment.eval_freq}",
