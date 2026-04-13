@@ -18,14 +18,8 @@ lerobot_src = ROOT_DIR.parent / "repos" / "lerobot" / "src"
 if lerobot_src.exists():
     sys.path.insert(0, str(lerobot_src))
 
-from thesis_vla.common.paths import PROJECT_ROOT
-from thesis_vla.training.xvla_finetune_launcher import (
-    ExperimentSpec,
-    FreezeConfig,
-    LaunchConfig,
-    RuntimeConfig,
-    run_experiments,
-)
+from thesis_vla.common.paths import PROJECT_ROOT #type: ignore
+from thesis_vla.training.xvla_finetune_launcher import ExperimentSpec, FreezeConfig, LaunchConfig, RuntimeConfig, run_experiments #type: ignore
 
 WORKSPACE_DIR = PROJECT_ROOT
 
