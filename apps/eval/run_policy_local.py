@@ -154,7 +154,9 @@ CAMERA_CONFIG_MAP = config_data.get("cameras", {})
 
 # --- Policy ---
 # POLICY_PATH = "edgarcancinoe/xvla-base_soarm101_pickplace_10d_7p5hz_resampled_so101_ee6d_a-m_s-m_v1"
-POLICY_PATH = "edgarcancinoe/xvla-base_soarm101_pickplace_10d_7p5hz_resampled_so101_ee6d_a-m_s-m_v1-step-8000"
+POLICY_PATH = "edgarcancinoe/orange196_pickplace_multicolor_v1_7p5hz_so101_ee6d_am_sm_transformer_soft-2dce6242-step-8000"
+
+
 POLICY_TYPE = "xvla" # "xvla" | "smolvla"
 DEVICE      = "mps"  # "cuda" | "mps" | "cpu"
 
@@ -176,7 +178,7 @@ USE_VOICE          = True
 #   -  5: six inferences per second (smoother, more responsive)
 #   -  1: inference every step (smoothest but slowest, only for testing)
 CHUNK_SIZE         = None  # None = use pretrained default (30 for this checkpoint)
-N_ACTION_STEPS     = 18  # Number of control steps to execute before running the next inference chunk. Only for XVLA.
+N_ACTION_STEPS     = 24  # Number of control steps to execute before running the next inference chunk. Only for XVLA.
 
 # --- SmolVLA-specific ---
 MAX_ACTION_TOKENS  = None

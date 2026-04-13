@@ -428,7 +428,7 @@ def prepare_environment(workspace_dir: Path) -> dict[str, str]:
     return env
 
 
-def run_preflight_checks(defaults: LaunchConfig, experiments: Iterable[ExperimentSpec]) -> None:
+def run_preflight_checks(defaults: LaunchConfig, experiments: Iterable[ExperimentSpec], env: dict[str, str]) -> None:
     if os.environ.get("CONDA_DEFAULT_ENV") != "vla":
         print("WARNING: 'vla' conda environment is not activated.")
 
@@ -439,6 +439,22 @@ def run_preflight_checks(defaults: LaunchConfig, experiments: Iterable[Experimen
             "ERROR: lerobot Python package not found.\n"
             "Please install lerobot first or ensure the correct environment is active."
         ) from exc
+
+    # Hard-fail early if thesis_vla is not importable in the subprocess environment.
+    probe = subprocess.run(
+        [sys.executable, "-c", "import thesis_vla"],
+        env=env,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    if probe.returncode != 0:
+        details = (probe.stderr or probe.stdout or "").strip()
+        raise SystemExit(
+            "ERROR: thesis_vla Python package is not importable in the training subprocess environment.\n"
+            "Please verify PYTHONPATH includes your workspace src directory.\n"
+            f"Details: {details}"
+        )
 
     requires_accelerate = any((experiment.launch_mode or defaults.runtime.launch_mode) == "accelerate" for experiment in experiments)
     if requires_accelerate:
@@ -589,7 +605,7 @@ def run_experiments(
     experiments: list[ExperimentSpec],
 ) -> None:
     env = prepare_environment(workspace_dir)
-    run_preflight_checks(defaults, experiments)
+    run_preflight_checks(defaults, experiments, env)
 
     if not experiments:
         print("No experiments configured. Nothing to launch.")

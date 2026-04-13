@@ -9,14 +9,25 @@ Examples:
 
 from __future__ import annotations
 
+import os
 import sys
 from pathlib import Path
 
 ROOT_DIR = Path(__file__).resolve().parents[2]
-sys.path.insert(0, str(ROOT_DIR / "src"))
+workspace_src = ROOT_DIR / "src"
+sys.path.insert(0, str(workspace_src))
 lerobot_src = ROOT_DIR.parent / "repos" / "lerobot" / "src"
 if lerobot_src.exists():
     sys.path.insert(0, str(lerobot_src))
+
+# Ensure spawned training subprocesses inherit thesis_vla importability.
+pythonpath_parts = [str(workspace_src)]
+if lerobot_src.exists():
+    pythonpath_parts.append(str(lerobot_src))
+existing_pythonpath = os.environ.get("PYTHONPATH", "").strip()
+if existing_pythonpath:
+    pythonpath_parts.append(existing_pythonpath)
+os.environ["PYTHONPATH"] = ":".join(pythonpath_parts)
 
 from thesis_vla.common.paths import PROJECT_ROOT #type: ignore
 from thesis_vla.training.xvla_finetune_launcher import ExperimentSpec, FreezeConfig, LaunchConfig, RuntimeConfig, run_experiments #type: ignore
