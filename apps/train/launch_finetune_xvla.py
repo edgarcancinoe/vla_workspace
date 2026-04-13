@@ -37,7 +37,7 @@ DEFAULTS = LaunchConfig(
     runtime=RuntimeConfig(
         launch_mode="single",
         cuda_devices=(1,),
-        num_workers=12,
+        num_workers=4,
         dry_run=False,
     ),
 
