@@ -51,6 +51,7 @@ DEFAULTS = LaunchConfig(
 
     # ------------ Optimization settings ------------
     batch_size=32,
+    gradient_accumulation_steps=1,
     optimizer_lr=1e-4,
     scheduler_decay_lr=1e-5,
     steps=15_000,
@@ -77,11 +78,11 @@ train_all               = FreezeConfig(freeze_vision_encoder=False,     freeze_l
 train_domain_specific   = FreezeConfig(freeze_vision_encoder=True,      freeze_language_encoder=True,   train_policy_transformer=True,  train_soft_prompts=True)
 
 # Base model presets for convenience
-BASE_MODEL = "lerobot/xvla-base"
-BASE_ORANGE_196 = "edgarcancinoe/xvla-base_soarm101_pickplace_10d_7p5hz_resampled_so101_ee6d_a-m_s-m_v1"
+BASE_MODEL = ("lerobot/xvla-base", 'xvla-base')
+BASE_ORANGE_196 = ("edgarcancinoe/xvla-base_soarm101_pickplace_10d_7p5hz_resampled_so101_ee6d_a-m_s-m_v1", "orange196")
 
 # Dataset presets for convenience
-DATASET_ORANGE = "soarm101_pickplace_10d_7p5hz_resampled"
+DATASET_ORANGE = "soarm101_pickplace_10d_7p5hz"
 DATASET_MULTICOLOR = "soarm101_pickplace_multicolor_v1_7p5hz"
 
 

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import csv
+import sys
 from pathlib import Path
 
 import matplotlib
@@ -11,6 +12,15 @@ matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 import numpy as np
 import torch
+
+ROOT_DIR = Path(__file__).resolve().parents[2]
+src_root = ROOT_DIR / "src"
+if str(src_root) not in sys.path:
+    sys.path.insert(0, str(src_root))
+lerobot_src = ROOT_DIR.parent / "repos" / "lerobot" / "src"
+if lerobot_src.exists() and str(lerobot_src) not in sys.path:
+    sys.path.insert(0, str(lerobot_src))
+
 from thesis_vla.common.paths import DATASETS_OUTPUT_DIR, GRIPPER_INSPECTION_DIR
 
 from lerobot.configs.policies import PreTrainedConfig

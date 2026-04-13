@@ -1,20 +1,23 @@
 from __future__ import annotations
 
 import datetime as dt
+import hashlib
 import importlib
 import json
 import os
+import re
 import subprocess
 import sys
 from dataclasses import dataclass, fields, replace
 from pathlib import Path
-from typing import Iterable, Literal
+from typing import Iterable, Literal, TypeAlias
 
 from thesis_vla.common.paths import RUNTIME_CACHE_DIR, TRAIN_OUTPUT_DIR
 
 
 LaunchMode = Literal["single", "accelerate"]
 AugmentationBackend = Literal["custom", "lerobot"]
+ModelRef: TypeAlias = str | tuple[str, str]
 
 
 @dataclass(frozen=True)
@@ -42,12 +45,13 @@ class LaunchConfig:
     version: str = os.environ.get("VERSION", "v1")
     dataset_name: str = "soarm101_pickplace_10d_7p5hz_resampled"
     dataset_revision: str = os.environ.get("DATASET_REVISION", "v3.0")
-    base_model: str = "lerobot/xvla-base"
+    base_model: ModelRef = "lerobot/xvla-base"
     action_mode: str = "so101_ee6d"
     normalization_mapping: str = '{"ACTION": "MEAN_STD", "STATE": "MEAN_STD", "VISUAL": "IDENTITY"}'
     freeze: FreezeConfig = FreezeConfig()
     runtime: RuntimeConfig = RuntimeConfig()
     batch_size: int = 32
+    gradient_accumulation_steps: int = 1
     optimizer_lr: float = 1e-4
     scheduler_decay_lr: float = 2.5e-6
     steps: int = 12_500
@@ -77,7 +81,7 @@ class ExperimentSpec:
     policy_repo_id: str | None = None
     dataset_name: str | None = None
     dataset_revision: str | None = None
-    base_model: str | None = None
+    base_model: ModelRef | None = None
     action_mode: str | None = None
     normalization_mapping: str | None = None
     freeze: FreezeConfig | None = None
@@ -86,6 +90,7 @@ class ExperimentSpec:
     train_policy_transformer: bool | None = None
     train_soft_prompts: bool | None = None
     batch_size: int | None = None
+    gradient_accumulation_steps: int | None = None
     optimizer_lr: float | None = None
     scheduler_decay_lr: float | None = None
     steps: int | None = None
@@ -118,6 +123,7 @@ class ResolvedExperiment:
     freeze: FreezeConfig
     runtime: RuntimeConfig
     batch_size: int
+    gradient_accumulation_steps: int
     optimizer_lr: float
     scheduler_decay_lr: float
     steps: int
@@ -144,6 +150,7 @@ POLICY_TOKENIZER_MAX_LENGTH = 64
 POLICY_MAX_LEN_SEQ = 1024
 DATASET_VIDEO_BACKEND = "pyav"
 RENAME_MAP = '{"observation.images.main": "observation.images.image", "observation.images.secondary": "observation.images.image2"}'
+HF_REPO_ID_MAX_LEN = 96
 
 
 def resolve_hf_repo_id(repo_or_name: str, hf_user: str) -> str:
@@ -159,6 +166,46 @@ def repo_slug(repo_id: str) -> str:
 
 def bool_str(value: bool) -> str:
     return "true" if value else "false"
+
+
+def resolve_model_ref(model_ref: ModelRef, hf_user: str) -> tuple[str, str | None]:
+    """Resolve a model reference into repo_id and optional alias."""
+    if isinstance(model_ref, tuple):
+        repo_or_name, alias = model_ref
+        return resolve_hf_repo_id(repo_or_name, hf_user), alias.strip() if alias else None
+    return resolve_hf_repo_id(model_ref, hf_user), None
+
+
+def sanitize_name_part(part: str) -> str:
+    """Normalize naming tokens for concise, Hub-safe policy names."""
+    cleaned = part.replace("soarm101_", "").replace("soarm101", "")
+    cleaned = re.sub(r"_+", "_", cleaned)
+    cleaned = re.sub(r"-+", "-", cleaned)
+    cleaned = cleaned.strip("_.-")
+    return cleaned
+
+
+def _shorten_repo_name(name: str, max_len: int) -> str:
+    """Shorten a Hub repo name while preserving readability and uniqueness."""
+    if len(name) <= max_len:
+        return name
+    # Keep a readable prefix and add a stable hash suffix to avoid collisions.
+    suffix = hashlib.sha1(name.encode("utf-8")).hexdigest()[:8]
+    keep = max(1, max_len - len(suffix) - 1)
+    trimmed = name[:keep].rstrip("-.")
+    if not trimmed:
+        trimmed = "repo"
+    return f"{trimmed}-{suffix}"
+
+
+def normalize_repo_id(repo_or_name: str, hf_user: str) -> tuple[str, bool]:
+    """Return a Hub-safe repo id and whether it had to be shortened."""
+    repo_id = resolve_hf_repo_id(repo_or_name, hf_user)
+    namespace, name = repo_id.split("/", 1)
+    max_name_len = HF_REPO_ID_MAX_LEN - len(namespace) - 1
+    safe_name = _shorten_repo_name(name, max_name_len)
+    safe_repo_id = f"{namespace}/{safe_name}"
+    return safe_repo_id, safe_repo_id != repo_id
 
 
 def training_mode_suffix(freeze: FreezeConfig) -> str:
@@ -183,7 +230,7 @@ def get_norm_suffix(mapping_str: str) -> str:
         mapping = json.loads(mapping_str)
         action_mode = str(mapping.get("ACTION", "ID")).replace("_", "").lower()[:1]
         state_mode = str(mapping.get("STATE", "ID")).replace("_", "").lower()[:1]
-        return f"a-{action_mode}_s-{state_mode}"
+        return f"a{action_mode}_s{state_mode}"
     except Exception:
         return "custom"
 
@@ -213,7 +260,9 @@ def merge_defaults(defaults: LaunchConfig, experiment: ExperimentSpec) -> tuple[
 
 
 def default_policy_name(
-    defaults: LaunchConfig,
+    version: str,
+    base_model_repo_id: str,
+    base_model_alias: str | None,
     dataset_repo_id: str,
     action_mode: str,
     normalization_mapping: str,
@@ -221,19 +270,20 @@ def default_policy_name(
     enable_augmentation: bool,
     name_suffix: str | None,
 ) -> str:
+    base_part = base_model_alias or repo_slug(base_model_repo_id)
     parts = [
-        repo_slug(defaults.base_model if "/" in defaults.base_model else resolve_hf_repo_id(defaults.base_model, defaults.hf_user)),
-        repo_slug(dataset_repo_id),
-        action_mode,
-        get_norm_suffix(normalization_mapping),
-        training_mode_suffix(freeze),
+        sanitize_name_part(base_part),
+        sanitize_name_part(repo_slug(dataset_repo_id)),
+        sanitize_name_part(action_mode),
+        sanitize_name_part(get_norm_suffix(normalization_mapping)),
+        sanitize_name_part(training_mode_suffix(freeze)),
     ]
     if enable_augmentation:
         parts.append("aug")
     if name_suffix:
-        parts.append(name_suffix)
-    parts.append(defaults.version)
-    return "_".join(parts)
+        parts.append(sanitize_name_part(name_suffix))
+    parts.append(sanitize_name_part(version))
+    return "_".join(part for part in parts if part)
 
 
 def resolve_experiment(
@@ -246,7 +296,8 @@ def resolve_experiment(
 
     dataset_name = experiment.dataset_name or defaults.dataset_name
     dataset_revision = experiment.dataset_revision or defaults.dataset_revision
-    base_model = experiment.base_model or defaults.base_model
+    base_model_ref = experiment.base_model or defaults.base_model
+    base_model_repo_id, base_model_alias = resolve_model_ref(base_model_ref, defaults.hf_user)
     action_mode = experiment.action_mode or defaults.action_mode
     normalization_mapping = experiment.normalization_mapping or defaults.normalization_mapping
     enable_augmentation = (
@@ -267,7 +318,9 @@ def resolve_experiment(
     run_timestamp = timestamp or dt.datetime.now().strftime("%Y%m%d_%H%M%S")
 
     generated_name = experiment.name or default_policy_name(
-        defaults=with_overrides(defaults, base_model=base_model),
+        version=defaults.version,
+        base_model_repo_id=base_model_repo_id,
+        base_model_alias=base_model_alias,
         dataset_repo_id=dataset_repo_id,
         action_mode=action_mode,
         normalization_mapping=normalization_mapping,
@@ -277,7 +330,13 @@ def resolve_experiment(
     )
     job_name = experiment.job_name or f"{generated_name}_{run_timestamp}"
     output_dir = experiment.output_dir or str(TRAIN_OUTPUT_DIR / f"{generated_name}_{run_timestamp}")
-    policy_repo_id = experiment.policy_repo_id or f"{defaults.hf_user}/{generated_name}"
+    requested_policy_repo = experiment.policy_repo_id or f"{defaults.hf_user}/{generated_name}"
+    policy_repo_id, was_shortened = normalize_repo_id(requested_policy_repo, defaults.hf_user)
+    if was_shortened:
+        print(
+            "WARNING: policy.repo_id exceeded Hugging Face length constraints and was shortened to: "
+            f"{policy_repo_id}"
+        )
 
     return ResolvedExperiment(
         name=generated_name,
@@ -286,12 +345,17 @@ def resolve_experiment(
         policy_repo_id=policy_repo_id,
         dataset_repo_id=dataset_repo_id,
         dataset_revision=dataset_revision,
-        base_model=base_model,
+        base_model=base_model_repo_id,
         action_mode=action_mode,
         normalization_mapping=normalization_mapping,
         freeze=freeze,
         runtime=runtime,
         batch_size=experiment.batch_size if experiment.batch_size is not None else defaults.batch_size,
+        gradient_accumulation_steps=(
+            experiment.gradient_accumulation_steps
+            if experiment.gradient_accumulation_steps is not None
+            else defaults.gradient_accumulation_steps
+        ),
         optimizer_lr=experiment.optimizer_lr if experiment.optimizer_lr is not None else defaults.optimizer_lr,
         scheduler_decay_lr=(
             experiment.scheduler_decay_lr
@@ -380,6 +444,7 @@ def build_training_command(experiment: ResolvedExperiment) -> list[str]:
         f"--dataset.image_transforms.enable={bool_str(experiment.enable_augmentation)}",
         f"--dataset.image_transforms.tfs={augmentation_transforms(experiment)}",
         f"--batch_size={experiment.batch_size}",
+        f"--gradient_accumulation_steps={experiment.gradient_accumulation_steps}",
         f"--policy.optimizer_lr={experiment.optimizer_lr}",
         f"--policy.scheduler_decay_lr={experiment.scheduler_decay_lr}",
         f"--steps={experiment.steps}",
@@ -460,6 +525,7 @@ def print_run_summary(index: int, total: int, experiment: ResolvedExperiment, cm
     print(f"  Train Transformer:  {experiment.freeze.train_policy_transformer}")
     print(f"  Train Soft Prompts: {experiment.freeze.train_soft_prompts}")
     print(f"  Batch Size:         {experiment.batch_size}")
+    print(f"  Grad Accum Steps:   {experiment.gradient_accumulation_steps}")
     print(f"  Steps:              {experiment.steps}")
     print(f"  Augmentation:       {experiment.enable_augmentation}")
     print(f"  Aug Backend:        {experiment.augmentation_backend}")
@@ -470,7 +536,11 @@ def print_run_summary(index: int, total: int, experiment: ResolvedExperiment, cm
     print(f"  CUDA Devices:       {experiment.runtime.cuda_devices}")
     if experiment.runtime.launch_mode == "accelerate":
         print(f"  Num Processes:      {num_processes}")
-        print(f"  Effective Batch:    {experiment.batch_size} x {num_processes} = {experiment.batch_size * num_processes}")
+        effective = experiment.batch_size * num_processes * experiment.gradient_accumulation_steps
+        print(
+            "  Effective Batch:    "
+            f"{experiment.batch_size} x {num_processes} x {experiment.gradient_accumulation_steps} = {effective}"
+        )
     print(f"  Dry Run:            {experiment.runtime.dry_run}")
     print("  Command:")
     print(f"    {' '.join(cmd)}")

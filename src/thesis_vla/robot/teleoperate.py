@@ -6,6 +6,15 @@ import rerun as rr
 import numpy as np
 from pathlib import Path
 
+ROOT_DIR = Path(__file__).resolve().parents[3]
+src_root = ROOT_DIR / "src"
+if str(src_root) not in sys.path:
+    sys.path.insert(0, str(src_root))
+
+lerobot_src = ROOT_DIR.parent / "repos" / "lerobot" / "src"
+if lerobot_src.exists() and str(lerobot_src) not in sys.path:
+    sys.path.insert(0, str(lerobot_src))
+
 from thesis_vla.common.paths import ROBOT_CONFIG_PATH
 from thesis_vla.robot.so101_control import SO101Control
 from thesis_vla.vision import camera_calibration

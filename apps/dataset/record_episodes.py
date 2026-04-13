@@ -28,6 +28,12 @@ import numpy as np
 import pandas as pd
 from pathlib import Path
 
+ROOT_DIR = Path(__file__).resolve().parents[2]
+sys.path.insert(0, str(ROOT_DIR / "src"))
+lerobot_src = ROOT_DIR.parent / "repos" / "lerobot" / "src"
+if lerobot_src.exists():
+    sys.path.insert(0, str(lerobot_src))
+
 import pyarrow as pa
 import pyarrow.parquet as pq
 import rerun as rr
@@ -62,7 +68,7 @@ with open(config_path, "r") as f:
 CAMERA_CONFIG_MAP = config_data.get("cameras", {})
 RECTIFY_MAP = {name: info.get("rectify", False) for name, info in CAMERA_CONFIG_MAP.items()}
 
-NUM_EPISODES = 96
+NUM_EPISODES = 144
 
 FPS = 30
 EPISODE_TIME_SEC = 45
@@ -894,7 +900,6 @@ def main():
     args = parser.parse_args()
 
     if START_FROM_SCRATCH:
-        import shutil
         if DATA_DIR.exists():
             shutil.rmtree(DATA_DIR)
 
@@ -939,17 +944,26 @@ def main():
     obs_features = hw_to_dataset_features(robot.observation_features, "observation")
     dataset_features = {**action_features, **obs_features}
 
-    should_resume = RESUME_DATASET and has_local_lerobot_dataset(DATA_DIR)
+    legacy_data_dir = DATA_DIR.parent.parent / "workspace_outputs" / "datasets" / HF_REPO_ID
+    resume_root = DATA_DIR
+    if RESUME_DATASET and not has_local_lerobot_dataset(DATA_DIR) and has_local_lerobot_dataset(legacy_data_dir):
+        print(
+            f"Primary dataset path is not resumable, but found resumable legacy dataset at "
+            f"{legacy_data_dir}. Resuming from legacy path."
+        )
+        resume_root = legacy_data_dir
+
+    should_resume = RESUME_DATASET and has_local_lerobot_dataset(resume_root)
     if RESUME_DATASET and not should_resume:
         print(
-            f"Resume requested, but no complete local dataset exists at {DATA_DIR}. "
+            f"Resume requested, but no complete local dataset exists at {resume_root}. "
             "Creating a new dataset instead."
         )
 
     if should_resume:
-        print(f"Resuming dataset from {DATA_DIR}")
-        revert_dataset_to_6d(DATA_DIR)
-        complete_video_episodes = get_complete_video_episodes(DATA_DIR)
+        print(f"Resuming dataset from {resume_root}")
+        revert_dataset_to_6d(resume_root)
+        complete_video_episodes = get_complete_video_episodes(resume_root)
         if complete_video_episodes is not None:
             print(
                 "Loading only episodes with complete video metadata for resume validation: "
@@ -957,7 +971,7 @@ def main():
             )
         dataset = LeRobotDataset(
             repo_id=f"{HF_USER}/{HF_REPO_ID}",
-            root=DATA_DIR,
+            root=resume_root,
             episodes=complete_video_episodes,
             vcodec=VIDEO_CODEC,
             streaming_encoding=STREAMING_ENCODING,
@@ -968,6 +982,13 @@ def main():
         dataset.start_image_writer(num_threads=4)
         episode_idx = dataset.meta.total_episodes
     else:
+        if DATA_DIR.exists():
+            archived_root = DATA_DIR.parent / f"{DATA_DIR.name}_incomplete_{uuid.uuid4().hex[:8]}"
+            print(
+                f"Existing dataset directory is not resumable. "
+                f"Archiving '{DATA_DIR}' -> '{archived_root}'."
+            )
+            shutil.move(str(DATA_DIR), str(archived_root))
         dataset = LeRobotDataset.create(
             repo_id=f"{HF_USER}/{HF_REPO_ID}",
             fps=FPS,
@@ -1080,21 +1101,22 @@ def main():
         teleop.disconnect()
     encode_pending_videos(dataset)
     dataset.finalize()
+    active_data_dir = Path(dataset.root)
 
     # --- Post-process: convert joints → 6D EEF ------------------------------
     log_say("Converting joint positions to 6D EEF representation...")
-    transform_dataset_to_eef(DATA_DIR, so101)
+    transform_dataset_to_eef(active_data_dir, so101)
 
     # --- Push to hub --------------------------------------------------------
     if args.push:
-        validate_lerobot_dataset_on_disk(DATA_DIR)
+        validate_lerobot_dataset_on_disk(active_data_dir)
         repo_id = f"{HF_USER}/{HF_REPO_ID}"
         print(f"Pushing {repo_id} to the Hugging Face hub...")
         from huggingface_hub import HfApi
         api = HfApi()
         api.create_repo(repo_id=repo_id, repo_type="dataset", exist_ok=True)
         api.upload_folder(
-            folder_path=DATA_DIR,
+            folder_path=active_data_dir,
             repo_id=repo_id,
             repo_type="dataset",
             ignore_patterns=[
@@ -1113,7 +1135,7 @@ def main():
             ],
             commit_message="Sync dataset from clean local source",
         )
-        info_path = DATA_DIR / "meta" / "info.json"
+        info_path = active_data_dir / "meta" / "info.json"
         if info_path.exists():
             with open(info_path) as f:
                 info_dict = json.load(f)

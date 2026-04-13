@@ -5,6 +5,14 @@ from pathlib import Path
 
 import yaml
 
+ROOT_DIR = Path(__file__).resolve().parents[3]
+src_root = ROOT_DIR / "src"
+if str(src_root) not in sys.path:
+    sys.path.insert(0, str(src_root))
+lerobot_src = ROOT_DIR.parent / "repos" / "lerobot" / "src"
+if lerobot_src.exists() and str(lerobot_src) not in sys.path:
+    sys.path.insert(0, str(lerobot_src))
+
 try:
     from lerobot.robots.so101_follower.so101_follower import SO101Follower
     from lerobot.robots.so101_follower.config_so101_follower import SO101FollowerConfig
