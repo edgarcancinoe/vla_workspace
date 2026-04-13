@@ -52,6 +52,7 @@ DEFAULTS = LaunchConfig(
     # ------------ Optimization settings ------------
     batch_size=32,
     optimizer_lr=1e-4,
+    scheduler_decay_lr=1e-5,
     steps=12_500,
 
     # ------- Logging and checkpoint settings -------
