@@ -27,7 +27,7 @@ DEFAULTS = LaunchConfig(
     # ----- General model and database settings ------
     hf_user="edgarcancinoe",
     version="v1",
-    dataset_name="soarm101_pickplace_10d_7p5hz_resampled",
+    dataset_name="soarm101_pickplace_multicolor_v1_7p5hz",
     dataset_revision="v3.0",
     base_model="lerobot/xvla-base",
     normalization_mapping='{"ACTION": "MEAN_STD", "STATE": "MEAN_STD", "VISUAL": "IDENTITY"}',
