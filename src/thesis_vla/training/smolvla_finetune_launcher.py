@@ -7,11 +7,13 @@ import subprocess
 import sys
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Literal
 
 from thesis_vla.common.paths import RUNTIME_CACHE_DIR, TRAIN_OUTPUT_DIR
 
 
 RENAME_MAP = '{"observation.images.wrist": "observation.images.camera1", "observation.images.top": "observation.images.camera2"}'
+AugmentationBackend = Literal["custom", "lerobot"]
 
 
 @dataclass(frozen=True)
@@ -31,6 +33,9 @@ class SmolVLAConfig:
     enable_augmentation: bool = False
     augmentation_degrees: str = "[-2, 2]"
     augmentation_translate: str = "[-0.015, 0.015]"
+    augmentation_backend: AugmentationBackend = "custom"
+    augmentation_enable_photometric: bool = True
+    augmentation_fill_mode: str = "reflect"
     resume: bool = False
     policy_push_to_hub: bool = True
     wandb_enable: bool = True
@@ -102,6 +107,9 @@ def build_command(config: SmolVLAConfig, workspace_dir: Path) -> tuple[list[str]
 
     if config.cuda_device:
         env["CUDA_VISIBLE_DEVICES"] = config.cuda_device
+    env["THESIS_AUGMENTATION_BACKEND"] = config.augmentation_backend
+    env["THESIS_AUG_ENABLE_PHOTOMETRIC"] = bool_str(config.augmentation_enable_photometric)
+    env["THESIS_AUG_FILL_MODE"] = config.augmentation_fill_mode
 
     cmd = [
         sys.executable,
@@ -150,6 +158,10 @@ def print_summary(config: SmolVLAConfig, summary: dict[str, str], cmd: list[str]
     print(f"  Device:               {config.device}")
     print(f"  CUDA_VISIBLE_DEVICES: {summary['cuda_visible_devices']}")
     print(f"  W&B Enabled:          {config.wandb_enable}")
+    print(f"  Augmentation:         {config.enable_augmentation}")
+    print(f"  Aug Backend:          {config.augmentation_backend}")
+    print(f"  Aug Photometric:      {config.augmentation_enable_photometric}")
+    print(f"  Aug Fill Mode:        {config.augmentation_fill_mode}")
     print(f"  Base Policy:          {config.base_policy_path}")
     print(f"  Policy Repo ID:       {summary['policy_repo_id']}")
     print(f"  Push to Hub:          {config.policy_push_to_hub}")

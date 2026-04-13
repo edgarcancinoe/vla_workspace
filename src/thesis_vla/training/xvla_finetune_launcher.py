@@ -14,6 +14,7 @@ from thesis_vla.common.paths import RUNTIME_CACHE_DIR, TRAIN_OUTPUT_DIR
 
 
 LaunchMode = Literal["single", "accelerate"]
+AugmentationBackend = Literal["custom", "lerobot"]
 
 
 @dataclass(frozen=True)
@@ -47,6 +48,7 @@ class LaunchConfig:
     freeze: FreezeConfig = FreezeConfig()
     runtime: RuntimeConfig = RuntimeConfig()
     batch_size: int = 32
+    optimizer_lr: float = 1e-4
     steps: int = 12_500
     log_freq: int = 500
     eval_freq: int = -1
@@ -60,6 +62,9 @@ class LaunchConfig:
     enable_augmentation: bool = False
     augmentation_degrees: str = "[-2.5, 2.5]"
     augmentation_translate: str = "[0.025, 0.025]"
+    augmentation_backend: AugmentationBackend = "custom"
+    augmentation_enable_photometric: bool = True
+    augmentation_fill_mode: str = "reflect"
 
 
 @dataclass(frozen=True)
@@ -79,6 +84,7 @@ class ExperimentSpec:
     train_policy_transformer: bool | None = None
     train_soft_prompts: bool | None = None
     batch_size: int | None = None
+    optimizer_lr: float | None = None
     steps: int | None = None
     log_freq: int | None = None
     eval_freq: int | None = None
@@ -87,6 +93,12 @@ class ExperimentSpec:
     num_workers: int | None = None
     launch_mode: LaunchMode | None = None
     cuda_devices: tuple[int, ...] | None = None
+    enable_augmentation: bool | None = None
+    augmentation_degrees: str | None = None
+    augmentation_translate: str | None = None
+    augmentation_backend: AugmentationBackend | None = None
+    augmentation_enable_photometric: bool | None = None
+    augmentation_fill_mode: str | None = None
 
 
 @dataclass(frozen=True)
@@ -103,6 +115,7 @@ class ResolvedExperiment:
     freeze: FreezeConfig
     runtime: RuntimeConfig
     batch_size: int
+    optimizer_lr: float
     steps: int
     log_freq: int
     eval_freq: int
@@ -116,6 +129,9 @@ class ResolvedExperiment:
     enable_augmentation: bool
     augmentation_degrees: str
     augmentation_translate: str
+    augmentation_backend: AugmentationBackend
+    augmentation_enable_photometric: bool
+    augmentation_fill_mode: str
 
 
 EMPTY_CAMERAS = 1
@@ -197,6 +213,7 @@ def default_policy_name(
     action_mode: str,
     normalization_mapping: str,
     freeze: FreezeConfig,
+    enable_augmentation: bool,
     name_suffix: str | None,
 ) -> str:
     parts = [
@@ -206,7 +223,7 @@ def default_policy_name(
         get_norm_suffix(normalization_mapping),
         training_mode_suffix(freeze),
     ]
-    if defaults.enable_augmentation:
+    if enable_augmentation:
         parts.append("aug")
     if name_suffix:
         parts.append(name_suffix)
@@ -227,6 +244,20 @@ def resolve_experiment(
     base_model = experiment.base_model or defaults.base_model
     action_mode = experiment.action_mode or defaults.action_mode
     normalization_mapping = experiment.normalization_mapping or defaults.normalization_mapping
+    enable_augmentation = (
+        experiment.enable_augmentation
+        if experiment.enable_augmentation is not None
+        else defaults.enable_augmentation
+    )
+    augmentation_degrees = experiment.augmentation_degrees or defaults.augmentation_degrees
+    augmentation_translate = experiment.augmentation_translate or defaults.augmentation_translate
+    augmentation_backend = experiment.augmentation_backend or defaults.augmentation_backend
+    augmentation_enable_photometric = (
+        experiment.augmentation_enable_photometric
+        if experiment.augmentation_enable_photometric is not None
+        else defaults.augmentation_enable_photometric
+    )
+    augmentation_fill_mode = experiment.augmentation_fill_mode or defaults.augmentation_fill_mode
     dataset_repo_id = resolve_hf_repo_id(dataset_name, defaults.hf_user)
     run_timestamp = timestamp or dt.datetime.now().strftime("%Y%m%d_%H%M%S")
 
@@ -236,6 +267,7 @@ def resolve_experiment(
         action_mode=action_mode,
         normalization_mapping=normalization_mapping,
         freeze=freeze,
+        enable_augmentation=enable_augmentation,
         name_suffix=experiment.name_suffix,
     )
     job_name = experiment.job_name or f"{generated_name}_{run_timestamp}"
@@ -255,6 +287,7 @@ def resolve_experiment(
         freeze=freeze,
         runtime=runtime,
         batch_size=experiment.batch_size if experiment.batch_size is not None else defaults.batch_size,
+        optimizer_lr=experiment.optimizer_lr if experiment.optimizer_lr is not None else defaults.optimizer_lr,
         steps=experiment.steps if experiment.steps is not None else defaults.steps,
         log_freq=experiment.log_freq if experiment.log_freq is not None else defaults.log_freq,
         eval_freq=experiment.eval_freq if experiment.eval_freq is not None else defaults.eval_freq,
@@ -265,9 +298,12 @@ def resolve_experiment(
         resume=defaults.resume,
         policy_dtype=defaults.policy_dtype,
         enable_gripper_debug_stats=defaults.enable_gripper_debug_stats,
-        enable_augmentation=defaults.enable_augmentation,
-        augmentation_degrees=defaults.augmentation_degrees,
-        augmentation_translate=defaults.augmentation_translate,
+        enable_augmentation=enable_augmentation,
+        augmentation_degrees=augmentation_degrees,
+        augmentation_translate=augmentation_translate,
+        augmentation_backend=augmentation_backend,
+        augmentation_enable_photometric=augmentation_enable_photometric,
+        augmentation_fill_mode=augmentation_fill_mode,
     )
 
 
@@ -334,6 +370,7 @@ def build_training_command(experiment: ResolvedExperiment) -> list[str]:
         f"--dataset.image_transforms.enable={bool_str(experiment.enable_augmentation)}",
         f"--dataset.image_transforms.tfs={augmentation_transforms(experiment)}",
         f"--batch_size={experiment.batch_size}",
+        f"--policy.optimizer_lr={experiment.optimizer_lr}",
         f"--steps={experiment.steps}",
         f"--log_freq={experiment.log_freq}",
         f"--eval_freq={experiment.eval_freq}",
@@ -389,6 +426,14 @@ def apply_runtime_environment(env: dict[str, str], runtime: RuntimeConfig) -> di
     return updated
 
 
+def apply_experiment_environment(env: dict[str, str], experiment: ResolvedExperiment) -> dict[str, str]:
+    updated = dict(env)
+    updated["THESIS_AUGMENTATION_BACKEND"] = experiment.augmentation_backend
+    updated["THESIS_AUG_ENABLE_PHOTOMETRIC"] = bool_str(experiment.augmentation_enable_photometric)
+    updated["THESIS_AUG_FILL_MODE"] = experiment.augmentation_fill_mode
+    return updated
+
+
 def print_run_summary(index: int, total: int, experiment: ResolvedExperiment, cmd: list[str]) -> None:
     num_processes = len(experiment.runtime.cuda_devices)
     print("\n" + "=" * 88)
@@ -405,6 +450,10 @@ def print_run_summary(index: int, total: int, experiment: ResolvedExperiment, cm
     print(f"  Train Soft Prompts: {experiment.freeze.train_soft_prompts}")
     print(f"  Batch Size:         {experiment.batch_size}")
     print(f"  Steps:              {experiment.steps}")
+    print(f"  Augmentation:       {experiment.enable_augmentation}")
+    print(f"  Aug Backend:        {experiment.augmentation_backend}")
+    print(f"  Aug Photometric:    {experiment.augmentation_enable_photometric}")
+    print(f"  Aug Fill Mode:      {experiment.augmentation_fill_mode}")
     print(f"  Output Dir:         {experiment.output_dir}")
     print(f"  Policy Repo ID:     {experiment.policy_repo_id}")
     print(f"  CUDA Devices:       {experiment.runtime.cuda_devices}")
@@ -437,6 +486,7 @@ def run_experiments(
         resolved = resolve_experiment(workspace_dir=workspace_dir, defaults=defaults, experiment=experiment)
         cmd = build_training_command(resolved)
         runtime_env = apply_runtime_environment(env, resolved.runtime)
+        runtime_env = apply_experiment_environment(runtime_env, resolved)
         print_run_summary(index=index, total=len(experiments), experiment=resolved, cmd=cmd)
 
         if resolved.runtime.dry_run:

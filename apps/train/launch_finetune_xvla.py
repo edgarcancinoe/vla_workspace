@@ -30,41 +30,61 @@ from thesis_vla.training.xvla_finetune_launcher import (
 WORKSPACE_DIR = PROJECT_ROOT
 
 DEFAULTS = LaunchConfig(
+    # ----- General model and database settings ------
     hf_user="edgarcancinoe",
     version="v1",
     dataset_name="soarm101_pickplace_10d_7p5hz_resampled",
     dataset_revision="v3.0",
     base_model="lerobot/xvla-base",
     normalization_mapping='{"ACTION": "MEAN_STD", "STATE": "MEAN_STD", "VISUAL": "IDENTITY"}',
-    freeze=FreezeConfig(
-        freeze_vision_encoder=False,
-        freeze_language_encoder=False,
-        train_policy_transformer=True,
-        train_soft_prompts=True,
-    ),
+
+    # ----------- Runtime/Device settings -----------
     runtime=RuntimeConfig(
         launch_mode="single",
         cuda_devices=(1,),
         num_workers=0,
         dry_run=False,
     ),
+
+    # ---------- Training layers settings -----------
+    freeze=FreezeConfig(
+        freeze_vision_encoder=False,
+        freeze_language_encoder=False,
+        train_policy_transformer=True,
+        train_soft_prompts=True,
+    ),
+
+    # ------------ Optimization settings ------------
     batch_size=32,
+    optimizer_lr=1e-4,
     steps=12_500,
+
+    # ------- Logging and checkpoint settings -------
     log_freq=500,
     eval_freq=-1,
     save_freq=8_000,
     push_every=8_000,
     policy_push_to_hub=True,
     wandb_enable=True,
+
+    # ------------ Augmentation settings ------------
+    enable_augmentation=False,
+    augmentation_degrees="[-2.5, 2.5]",
+    augmentation_translate="[0.025, 0.025]",
+    augmentation_backend="custom",
+    augmentation_enable_photometric=True,
+    augmentation_fill_mode="reflect",
 )
 
-
+# Experiment specs. Edit for overriding settings.
 EXPERIMENTS = [
     ExperimentSpec(
         action_mode="so101_ee6d",
+        enable_augmentation=False,
     ),
     ExperimentSpec(
         action_mode="so101_joint",
+        enable_augmentation=False,
     ),
 ]
 
