@@ -72,44 +72,62 @@ DEFAULTS = LaunchConfig(
     augmentation_fill_mode="reflect",
 )
 
-# Experiment specs. Edit for overriding settings.
+# FreezeConfig presets for convenience
+train_all               = FreezeConfig(freeze_vision_encoder=False,     freeze_language_encoder=False,  train_policy_transformer=True,  train_soft_prompts=True)
+train_domain_specific   = FreezeConfig(freeze_vision_encoder=True,      freeze_language_encoder=True,   train_policy_transformer=True,  train_soft_prompts=True)
+
+# Base model presets for convenience
+BASE_MODEL = "lerobot/xvla-base"
+BASE_ORANGE_196 = "edgarcancinoe/xvla-base_soarm101_pickplace_10d_7p5hz_resampled_so101_ee6d_a-m_s-m_v1"
+
+# Dataset presets for convenience
+DATASET_ORANGE = "soarm101_pickplace_10d_7p5hz_resampled"
+DATASET_MULTICOLOR = "pickplace_multicolor_v1_7p5hz"
+
+
+# Experiment specs.
 EXPERIMENTS = [
+    # Simple Orange
     # ------------------------------------------------------------------
-    # [Base][Orange196][NoAug][32, 1e-4, 15_000][Enc_Vis, Enc_Lang, PolicyTransf, SoftPrompts]
+    # 0: [Base ->      Orange196]  [NoAug] [train_all]
     ExperimentSpec(
         action_mode="so101_ee6d",   
-        base_model="lerobot/xvla-base",    
-        dataset_name="soarm101_pickplace_10d_7p5hz_resampled", 
-        batch_size=32,  optimizer_lr=1e-4,  steps=15_000,
+        base_model=BASE_MODEL,    dataset_name=DATASET_ORANGE, 
+        batch_size=32,  optimizer_lr=1e-4,  steps=15_000,  scheduler_decay_lr=1e-5,
     ),
-    # [Base][Orange196][Aug][32, 1e-4, 15_000][Enc_Vis, Enc_Lang, PolicyTransf, SoftPrompts]
+    # 1: [Base ->      Orange196]  [Aug]   [train_all]
     ExperimentSpec(
         action_mode="so101_ee6d",   
-        base_model="lerobot/xvla-base",     
-        dataset_name="soarm101_pickplace_10d_7p5hz_resampled",  
-        enable_augmentation=True,
-        batch_size=32,  optimizer_lr=1e-4,  steps=15_000,
+        base_model=BASE_MODEL,     dataset_name=DATASET_ORANGE,     enable_augmentation=True,
+        batch_size=32,  optimizer_lr=1e-4,  steps=15_000,  scheduler_decay_lr=1e-5,
     ),
     # ------------------------------------------------------------------
     
+    # Multicolor
     # ------------------------------------------------------------------
-    # Base model, multicolor, no augmentation
+    # 2: [Base ->      Multicolor] [NoAug] [train_all]
     ExperimentSpec(
         action_mode="so101_ee6d",   
-        base_model="lerobot/xvla-base",     
-        dataset_name="pickplace_multicolor_v1_7p5hz",
-        batch_size=32,  optimizer_lr=1e-4,  steps=12_500,
+        base_model=BASE_ORANGE_196,     dataset_name=DATASET_MULTICOLOR,
+        batch_size=32,  optimizer_lr=1e-4,  steps=15_000,  scheduler_decay_lr=1e-5,
     ),
-   # Base model, multicolor, augmented
+    # 3: [Orange196 -> Multicolor] [NoAug] [train_all]
     ExperimentSpec(
         action_mode="so101_ee6d",   
-        base_model="lerobot/xvla-base",     
-        dataset_name="pickplace_multicolor_v1_7p5hz",   
-        enable_augmentation=True,
-        batch_size=32,  optimizer_lr=1e-4,  steps=12_500,
+        base_model=BASE_ORANGE_196,     dataset_name=DATASET_MULTICOLOR,
+        batch_size=32,  optimizer_lr=1e-4,  steps=15_000,  scheduler_decay_lr=1e-5,
     ),
+    # 4: [Orange196 -> Multicolor] [NoAug] [train_domain_specific]
+    ExperimentSpec(
+        action_mode="so101_ee6d",   
+        base_model=BASE_ORANGE_196,     dataset_name=DATASET_MULTICOLOR,
+        batch_size=32,  optimizer_lr=1e-4,  steps=15_000,  scheduler_decay_lr=1e-5,
+        freeze=train_domain_specific
+    ),
+
 ]
 
+EXPERIMENTS = EXPERIMENTS[4]
 
 def main() -> None:
     run_experiments(workspace_dir=WORKSPACE_DIR, defaults=DEFAULTS, experiments=EXPERIMENTS)
