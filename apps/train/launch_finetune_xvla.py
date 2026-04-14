@@ -47,7 +47,7 @@ DEFAULTS = LaunchConfig(
     # ----------- Runtime/Device settings -----------
     runtime=RuntimeConfig(
         launch_mode="single",
-        cuda_devices=(1,),
+        cuda_devices=(2,),
         num_workers=4,
         dry_run=False,
     ),
@@ -70,8 +70,8 @@ DEFAULTS = LaunchConfig(
     # ------- Logging and checkpoint settings -------
     log_freq=500,
     eval_freq=-1,
-    save_freq=8_000,
-    push_every=8_000,
+    save_freq=15_000,
+    push_every=15_000,
     policy_push_to_hub=True,
     wandb_enable=True,
 
@@ -105,13 +105,13 @@ EXPERIMENTS = [
     ExperimentSpec(
         action_mode="so101_ee6d",   
         base_model=BASE_MODEL,    dataset_name=DATASET_ORANGE,  dataset_revision="main", 
-        batch_size=32,  optimizer_lr=1e-4,  steps=15_000,  scheduler_decay_lr=1e-5,
+        batch_size=4,  optimizer_lr=1e-4,  steps=45_000,  scheduler_decay_lr=1e-5, gradient_accumulation_steps=8,
     ),
     # 1: [Base ->      Orange196]  [Aug]   [train_all]
     ExperimentSpec(
         action_mode="so101_ee6d",   
         base_model=BASE_MODEL,     dataset_name=DATASET_ORANGE, dataset_revision="main",  enable_augmentation=True,
-        batch_size=32,  optimizer_lr=1e-4,  steps=15_000,  scheduler_decay_lr=1e-5,
+        batch_size=4,  optimizer_lr=1e-4,  steps=45_000,  scheduler_decay_lr=1e-5, gradient_accumulation_steps=8,
     ),
     # ------------------------------------------------------------------
     
@@ -120,26 +120,26 @@ EXPERIMENTS = [
     # 2: [Base ->      Multicolor] [NoAug] [train_all]
     ExperimentSpec(
         action_mode="so101_ee6d",   
-        base_model=BASE_ORANGE_196,     dataset_name=DATASET_MULTICOLOR,
-        batch_size=8,  optimizer_lr=1e-4,  steps=15_000,  scheduler_decay_lr=1e-5, gradient_accumulation_steps=4
+        base_model=BASE_MODEL,     dataset_name=DATASET_MULTICOLOR,
+        batch_size=16,  optimizer_lr=1e-4,  steps=45_000,  scheduler_decay_lr=1e-5, gradient_accumulation_steps=2,
     ),
-    # 3: [Orange196 -> Multicolor] [NoAug] [train_all]              (RUNNING)
+    # 3: [Orange196 -> Multicolor] [NoAug] [train_all]              
     ExperimentSpec(
         action_mode="so101_ee6d",   
         base_model=BASE_ORANGE_196,     dataset_name=DATASET_MULTICOLOR,
-        batch_size=32,  optimizer_lr=1e-4,  steps=15_000,  scheduler_decay_lr=1e-5,
+        batch_size=32,  optimizer_lr=1e-4,  steps=45_000,  scheduler_decay_lr=1e-5, gradient_accumulation_steps=1,  
     ),
-    # 4: [Orange196 -> Multicolor] [NoAug] [train_domain_specific]  (RUNNING)
+    # 4: [Orange196 -> Multicolor] [NoAug] [train_domain_specific]  
     ExperimentSpec(
         action_mode="so101_ee6d",   
         base_model=BASE_ORANGE_196,     dataset_name=DATASET_MULTICOLOR,
-        batch_size=32,  optimizer_lr=1e-4,  steps=15_000,  scheduler_decay_lr=1e-5,
+        batch_size=32,  optimizer_lr=1e-4,  steps=45_000,  scheduler_decay_lr=1e-5, gradient_accumulation_steps=1,
         freeze=train_domain_specific
     ),
 
 ]
 
-EXPERIMENTS = [EXPERIMENTS[1]]
+EXPERIMENTS = [EXPERIMENTS[2]]
 
 def main() -> None:
     run_experiments(workspace_dir=WORKSPACE_DIR, defaults=DEFAULTS, experiments=EXPERIMENTS)
