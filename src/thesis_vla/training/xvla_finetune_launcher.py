@@ -171,16 +171,23 @@ def bool_str(value: bool) -> str:
 
 @functools.lru_cache(maxsize=1)
 def lerobot_supports_gradient_accumulation() -> bool:
-    """Best-effort check for --gradient_accumulation_steps support in lerobot_train."""
+    """Best-effort check for gradient accumulation support in lerobot train config."""
     try:
+        # Probe config dataclass directly instead of parsing --help output, which can vary.
         result = subprocess.run(
-            [sys.executable, "-m", "lerobot.scripts.lerobot_train", "--help"],
+            [
+                sys.executable,
+                "-c",
+                (
+                    "from lerobot.configs.train import TrainPipelineConfig as C; "
+                    "print('ok' if 'gradient_accumulation_steps' in C.__dataclass_fields__ else 'no')"
+                ),
+            ],
             capture_output=True,
             text=True,
             check=False,
         )
-        help_text = (result.stdout or "") + "\n" + (result.stderr or "")
-        return "--gradient_accumulation_steps" in help_text
+        return result.returncode == 0 and "ok" in (result.stdout or "")
     except Exception:
         return False
 
@@ -252,6 +259,29 @@ def get_norm_suffix(mapping_str: str) -> str:
         return "custom"
 
 
+def _normalize_mode_name(value: str) -> str:
+    return str(value).replace("-", "_").strip().upper()
+
+
+def validate_mean_std_normalization(mapping_str: str) -> None:
+    """Enforce ACTION/STATE MEAN_STD normalization for XVLA finetuning."""
+    try:
+        mapping = json.loads(mapping_str)
+    except json.JSONDecodeError as exc:
+        raise ValueError(
+            "policy.normalization_mapping must be valid JSON. "
+            f"Received: {mapping_str!r}"
+        ) from exc
+
+    action_mode = _normalize_mode_name(mapping.get("ACTION", ""))
+    state_mode = _normalize_mode_name(mapping.get("STATE", ""))
+    if action_mode != "MEAN_STD" or state_mode != "MEAN_STD":
+        raise ValueError(
+            "XVLA finetuning requires mean/std normalization for ACTION and STATE. "
+            f"Received ACTION={action_mode or '<missing>'}, STATE={state_mode or '<missing>'}."
+        )
+
+
 def with_overrides(base, **overrides):
     valid = {field.name for field in fields(base)}
     payload = {key: value for key, value in overrides.items() if key in valid and value is not None}
@@ -317,6 +347,7 @@ def resolve_experiment(
     base_model_repo_id, base_model_alias = resolve_model_ref(base_model_ref, defaults.hf_user)
     action_mode = experiment.action_mode or defaults.action_mode
     normalization_mapping = experiment.normalization_mapping or defaults.normalization_mapping
+    validate_mean_std_normalization(normalization_mapping)
     enable_augmentation = (
         experiment.enable_augmentation
         if experiment.enable_augmentation is not None
