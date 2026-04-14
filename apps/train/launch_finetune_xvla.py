@@ -16,14 +16,19 @@ from pathlib import Path
 ROOT_DIR = Path(__file__).resolve().parents[2]
 workspace_src = ROOT_DIR / "src"
 sys.path.insert(0, str(workspace_src))
-lerobot_src = ROOT_DIR.parent / "repos" / "lerobot" / "src"
-if lerobot_src.exists():
-    sys.path.insert(0, str(lerobot_src))
+lerobot_src_candidates = [
+    ROOT_DIR / "lerobot" / "src",               # monorepo layout on cluster
+    ROOT_DIR.parent / "repos" / "lerobot" / "src",  # split repos layout
+]
+for lerobot_src in lerobot_src_candidates:
+    if lerobot_src.exists():
+        sys.path.insert(0, str(lerobot_src))
 
 # Ensure spawned training subprocesses inherit thesis_vla importability.
 pythonpath_parts = [str(workspace_src)]
-if lerobot_src.exists():
-    pythonpath_parts.append(str(lerobot_src))
+for lerobot_src in lerobot_src_candidates:
+    if lerobot_src.exists():
+        pythonpath_parts.append(str(lerobot_src))
 existing_pythonpath = os.environ.get("PYTHONPATH", "").strip()
 if existing_pythonpath:
     pythonpath_parts.append(existing_pythonpath)
