@@ -436,9 +436,13 @@ def prepare_environment(workspace_dir: Path) -> dict[str, str]:
     workspace_src = workspace_dir / "src"
     if workspace_src.exists():
         pythonpath_parts.append(str(workspace_src))
-    local_lerobot_src = workspace_dir.parent / "repos" / "lerobot" / "src"
-    if local_lerobot_src.exists():
-        pythonpath_parts.append(str(local_lerobot_src))
+    lerobot_src_candidates = [
+        workspace_dir / "lerobot" / "src",             # monorepo layout on cluster
+        workspace_dir.parent / "repos" / "lerobot" / "src",  # split repos layout
+    ]
+    for local_lerobot_src in lerobot_src_candidates:
+        if local_lerobot_src.exists():
+            pythonpath_parts.append(str(local_lerobot_src))
     existing_pythonpath = env.get("PYTHONPATH", "").strip()
     if existing_pythonpath:
         pythonpath_parts.append(existing_pythonpath)
@@ -545,15 +549,8 @@ def build_training_command(experiment: ResolvedExperiment) -> list[str]:
         f"--policy.max_len_seq={POLICY_MAX_LEN_SEQ}",
         f"--policy.normalization_mapping={experiment.normalization_mapping}",
         f"--policy.enable_gripper_debug_stats={bool_str(experiment.enable_gripper_debug_stats)}",
+        f"--gradient_accumulation_steps={experiment.gradient_accumulation_steps}",
     ]
-
-    if lerobot_supports_gradient_accumulation():
-        base_cmd.append(f"--gradient_accumulation_steps={experiment.gradient_accumulation_steps}")
-    elif experiment.gradient_accumulation_steps != 1:
-        print(
-            "WARNING: Current lerobot_train does not support --gradient_accumulation_steps. "
-            f"Requested value {experiment.gradient_accumulation_steps} will be ignored."
-        )
 
     if experiment.runtime.launch_mode == "single":
         return base_cmd
