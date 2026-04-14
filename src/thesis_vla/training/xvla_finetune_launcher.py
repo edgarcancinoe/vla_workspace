@@ -464,8 +464,12 @@ def prepare_environment(workspace_dir: Path) -> dict[str, str]:
 
 
 def run_preflight_checks(defaults: LaunchConfig, experiments: Iterable[ExperimentSpec], env: dict[str, str]) -> None:
-    if os.environ.get("CONDA_DEFAULT_ENV") != "vla":
-        print("WARNING: 'vla' conda environment is not activated.")
+    active_env = os.environ.get("CONDA_DEFAULT_ENV", "")
+    if not active_env.startswith("vla"):
+        print(
+            "WARNING: expected a VLA conda environment (e.g. 'vla' or 'vla2'). "
+            f"Current env: '{active_env or 'none'}'."
+        )
 
     try:
         importlib.import_module("lerobot")
