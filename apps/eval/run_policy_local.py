@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 import sys
+import time
 import yaml
 import numpy as np
 from functools import partial
@@ -218,6 +219,22 @@ USE_RERUN                      = True  # Set True to enable Rerun telemetry
 # before committing to execution.  Robot is still connected for reading state.
 DRY_RUN                        = False
 
+# --- EXECUTION SMOOTHING (Strategy 1 + 4) -----------------------------------
+# All toggles default OFF so current behavior is preserved unless enabled.
+# Strategy 1: EMA smoothing in MOTOR command space.
+ENABLE_EMA_SMOOTHING           = False
+EMA_ALPHA_MOTOR                = 0.35
+EMA_ALPHA_GRIPPER              = 0.25
+EMA_RESET_ON_EPISODE_START     = True
+
+# Strategy 4: interpolation between successive MOTOR commands.
+ENABLE_INTERPOLATION           = False
+INTERP_SUBSTEPS                = 3
+INTERP_MIN_DELTA_MOTOR         = 0.0
+INTERP_APPLY_TO_GRIPPER        = False
+INTERP_KEEP_CONTROL_FPS_BUDGET = True
+INTERP_MIN_SLEEP_S             = 0.0005
+
 # ─── State feature names (must match training dataset schema) ────────────────
 EEF_STATE_NAMES = list(get_so101_slice_spec("so101_ee6d").names)
 
@@ -346,9 +363,18 @@ def set_custom_send_action(robot, so101: SO101Control = None, viz=None, dry_run=
     gr_idx = so101.JOINT_NAMES.index("gripper")
     _step = [0]
     _last_mode = [None]
+    _last_cmd_motor = [None]
+    _ema_motor_state = [None]
 
     if dry_run:
         print("[!] DRY RUN enabled — robot will NOT receive any commands.")
+    print(
+        "[x] Runtime smoothing config | "
+        f"EMA(enabled={ENABLE_EMA_SMOOTHING}, alpha_motor={EMA_ALPHA_MOTOR}, alpha_gripper={EMA_ALPHA_GRIPPER}, "
+        f"reset_on_episode={EMA_RESET_ON_EPISODE_START}) | "
+        f"Interp(enabled={ENABLE_INTERPOLATION}, substeps={INTERP_SUBSTEPS}, min_delta={INTERP_MIN_DELTA_MOTOR}, "
+        f"apply_gripper={INTERP_APPLY_TO_GRIPPER}, keep_fps_budget={INTERP_KEEP_CONTROL_FPS_BUDGET})"
+    )
 
     def _viz_update(motor_vals):
         """Update robot pose AND draw EEF axes at the gripper frame."""
@@ -357,6 +383,62 @@ def set_custom_send_action(robot, so101: SO101Control = None, viz=None, dry_run=
         viz.display(so101.motor_to_rad(motor_vals))
         T = so101.fk(motor_vals)
         viz.add_axes("eef_axes", T[:3, 3], T[:3, :3], length=0.04)
+
+    def _reset_smoothing_state(seed_motor=None):
+        if seed_motor is None:
+            _last_cmd_motor[0] = None
+            _ema_motor_state[0] = None
+            return
+        seed = np.asarray(seed_motor, dtype=np.float64).copy()
+        _last_cmd_motor[0] = seed.copy()
+        _ema_motor_state[0] = seed.copy()
+
+    def _apply_ema(target_motor):
+        target = np.asarray(target_motor, dtype=np.float64)
+        if not ENABLE_EMA_SMOOTHING:
+            return target.copy()
+        if _ema_motor_state[0] is None:
+            _ema_motor_state[0] = target.copy()
+            return target.copy()
+        prev = _ema_motor_state[0]
+        smoothed = prev.copy()
+        for idx in range(len(smoothed)):
+            alpha = EMA_ALPHA_GRIPPER if idx == gr_idx else EMA_ALPHA_MOTOR
+            smoothed[idx] = alpha * target[idx] + (1.0 - alpha) * prev[idx]
+        _ema_motor_state[0] = smoothed.copy()
+        return smoothed
+
+    def _build_interpolation_waypoints(start_motor, end_motor):
+        start = np.asarray(start_motor, dtype=np.float64)
+        end = np.asarray(end_motor, dtype=np.float64)
+        if not ENABLE_INTERPOLATION:
+            return [end]
+        n_substeps = max(1, int(INTERP_SUBSTEPS))
+        if n_substeps <= 1:
+            return [end]
+        if np.max(np.abs(end - start)) < float(INTERP_MIN_DELTA_MOTOR):
+            return [end]
+
+        waypoints = []
+        for i in range(1, n_substeps + 1):
+            alpha = i / n_substeps
+            wp = start + alpha * (end - start)
+            if not INTERP_APPLY_TO_GRIPPER and i < n_substeps:
+                wp[gr_idx] = start[gr_idx]
+            waypoints.append(wp)
+        return waypoints
+
+    def _dispatch_motor_command(motor_vals, **kwargs):
+        motor_dict = {f"{n}.pos": float(motor_vals[i]) for i, n in enumerate(so101.JOINT_NAMES)}
+        if dry_run:
+            _viz_update(motor_vals)
+            robot._virtual_motor = np.asarray(motor_vals, dtype=np.float64).copy()
+            return motor_dict
+        _viz_update(motor_vals)
+        return base_action_func(motor_dict, **kwargs)
+
+    # Expose a reset hook so episode transitions can re-seed smoothing state.
+    robot._xvla_reset_exec_smoothing_state = _reset_smoothing_state
 
     def patched_send_action(action, **kwargs):
         _step[0] += 1
@@ -405,16 +487,31 @@ def set_custom_send_action(robot, so101: SO101Control = None, viz=None, dry_run=
 
         # Case: actions are in motor space
         if is_motor:
-            motor_vals = np.array([float(action.get(f"{n}.pos", 0.0)) for n in so101.JOINT_NAMES])
+            target_motor = np.array([float(action.get(f"{n}.pos", 0.0)) for n in so101.JOINT_NAMES], dtype=np.float64)
             if log_every:
-                DBG.send(f"Sending MOTOR command [{len(motor_vals)}D]: " +
-                         "  ".join(f"{n}={motor_vals[i]:+.1f}°" for i, n in enumerate(so101.JOINT_NAMES)))
-            if dry_run:
-                _viz_update(motor_vals)
-                robot._virtual_motor = motor_vals
-                return action
-            _viz_update(motor_vals)
-            return base_action_func(action, **kwargs)
+                DBG.send(f"Sending MOTOR target [{len(target_motor)}D]: " +
+                         "  ".join(f"{n}={target_motor[i]:+.1f}°" for i, n in enumerate(so101.JOINT_NAMES)))
+            source_motor = _last_cmd_motor[0] if _last_cmd_motor[0] is not None else current_motor
+            smoothed_motor = _apply_ema(target_motor)
+            waypoints = _build_interpolation_waypoints(source_motor, smoothed_motor)
+
+            sent_action = None
+            if INTERP_KEEP_CONTROL_FPS_BUDGET and len(waypoints) > 1:
+                step_budget_s = (1.0 / max(float(CONTROL_FPS), 1e-6)) / len(waypoints)
+                next_tick_t = time.perf_counter()
+                for i, wp in enumerate(waypoints):
+                    sent_action = _dispatch_motor_command(wp, **kwargs)
+                    if i < len(waypoints) - 1:
+                        next_tick_t += step_budget_s
+                        sleep_s = next_tick_t - time.perf_counter()
+                        if sleep_s > INTERP_MIN_SLEEP_S:
+                            time.sleep(sleep_s)
+            else:
+                for wp in waypoints:
+                    sent_action = _dispatch_motor_command(wp, **kwargs)
+
+            _last_cmd_motor[0] = np.asarray(waypoints[-1], dtype=np.float64).copy()
+            return sent_action
 
         # Case: actions are in EEF space (xyz + 6D Orientation + Gripper)
         # Keys produced by make_robot_action from EEF action_features: "x.pos", "y.pos", ...
@@ -460,20 +557,33 @@ def set_custom_send_action(robot, so101: SO101Control = None, viz=None, dry_run=
 
         if log_every:
             DBG.grip(f"gripper: {gripper_val:.4f}°")
-        motor_dict = {f"{n}.pos": float(target_motor[i]) for i, n in enumerate(so101.JOINT_NAMES)}
+        source_motor = _last_cmd_motor[0] if _last_cmd_motor[0] is not None else current_motor
+        smoothed_motor = _apply_ema(target_motor)
+        waypoints = _build_interpolation_waypoints(source_motor, smoothed_motor)
 
         if log_every:
-            DBG.send(f"Dispatching to robot [{len(motor_dict)}D motor dict]:")
-            for k, v in motor_dict.items():
-                DBG.send(f"  {k:30s} = {v:+.2f}°")
+            DBG.send(f"Dispatching MOTOR trajectory ({len(waypoints)} waypoint(s)):")
+            final_motor = waypoints[-1]
+            for i, n in enumerate(so101.JOINT_NAMES):
+                DBG.send(f"  {n+'.pos':30s} = {float(final_motor[i]):+.2f}°")
 
-        if dry_run:
-            _viz_update(target_motor)
-            robot._virtual_motor = target_motor
-            return motor_dict
+        sent_action = None
+        if INTERP_KEEP_CONTROL_FPS_BUDGET and len(waypoints) > 1:
+            step_budget_s = (1.0 / max(float(CONTROL_FPS), 1e-6)) / len(waypoints)
+            next_tick_t = time.perf_counter()
+            for i, wp in enumerate(waypoints):
+                sent_action = _dispatch_motor_command(wp, **kwargs)
+                if i < len(waypoints) - 1:
+                    next_tick_t += step_budget_s
+                    sleep_s = next_tick_t - time.perf_counter()
+                    if sleep_s > INTERP_MIN_SLEEP_S:
+                        time.sleep(sleep_s)
+        else:
+            for wp in waypoints:
+                sent_action = _dispatch_motor_command(wp, **kwargs)
 
-        _viz_update(target_motor)
-        return base_action_func(motor_dict, **kwargs)
+        _last_cmd_motor[0] = np.asarray(waypoints[-1], dtype=np.float64).copy()
+        return sent_action
 
     robot.send_action = patched_send_action
 
@@ -909,6 +1019,8 @@ def main():
     # Patch robot for observation and action
     set_custom_get_observation(robot, so101=so101, include_eef_state=INCLUDE_EEF_STATE, dry_run=DRY_RUN)
     set_custom_send_action(robot, so101=so101, viz=viz, dry_run=DRY_RUN)
+    if hasattr(robot, "_xvla_reset_exec_smoothing_state"):
+        robot._xvla_reset_exec_smoothing_state()
     # Trajectory viz is patched BEFORE the delay wrapper so it sits closest to
     # the original select_action — it draws the chunk immediately after inference.
     # Extract action names from the "action" feature entry (hw_to_dataset_features returns a
@@ -925,6 +1037,8 @@ def main():
         # Move to home pose before episode
         log_say("Moving to home pose...")
         so101.reset_to_home(robot, duration_s=HOME_DURATION_S, fps=HOME_FPS, viz=viz)
+        if EMA_RESET_ON_EPISODE_START and hasattr(robot, "_xvla_reset_exec_smoothing_state"):
+            robot._xvla_reset_exec_smoothing_state(so101.read_motor_real(robot))
         
         log_say(f"Running inference, recording eval episode {episode_idx + 1} of {NUM_EPISODES}")
 
