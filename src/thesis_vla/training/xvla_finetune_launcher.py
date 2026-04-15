@@ -314,15 +314,23 @@ def default_policy_name(
     action_mode: str,
     normalization_mapping: str,
     freeze: FreezeConfig,
+    runtime: RuntimeConfig,
+    batch_size: int,
+    gradient_accumulation_steps: int,
     enable_augmentation: bool,
     name_suffix: str | None,
 ) -> str:
+    num_processes = len(runtime.cuda_devices) if runtime.launch_mode == "accelerate" else 1
+    effective_batch = batch_size * max(1, gradient_accumulation_steps) * num_processes
     base_part = base_model_alias or repo_slug(base_model_repo_id)
     parts = [
         sanitize_name_part(base_part),
         sanitize_name_part(repo_slug(dataset_repo_id)),
         sanitize_name_part(action_mode),
         sanitize_name_part(get_norm_suffix(normalization_mapping)),
+        sanitize_name_part(f"b{batch_size}"),
+        sanitize_name_part(f"ga{gradient_accumulation_steps}"),
+        sanitize_name_part(f"eb{effective_batch}"),
         sanitize_name_part(training_mode_suffix(freeze)),
     ]
     if enable_augmentation:
@@ -373,6 +381,13 @@ def resolve_experiment(
         action_mode=action_mode,
         normalization_mapping=normalization_mapping,
         freeze=freeze,
+        runtime=runtime,
+        batch_size=experiment.batch_size if experiment.batch_size is not None else defaults.batch_size,
+        gradient_accumulation_steps=(
+            experiment.gradient_accumulation_steps
+            if experiment.gradient_accumulation_steps is not None
+            else defaults.gradient_accumulation_steps
+        ),
         enable_augmentation=enable_augmentation,
         name_suffix=experiment.name_suffix,
     )
