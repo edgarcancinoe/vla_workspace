@@ -132,7 +132,8 @@ EXPERIMENTS = [
     ExperimentSpec(
         action_mode="so101_ee6d",   
         base_model=BASE_ORANGE_196,     dataset_name=DATASET_MULTICOLOR,
-        batch_size=32,  optimizer_lr=1e-4,  steps=15_000,  scheduler_decay_lr=1e-5,
+        # Equivalent effective batch of prior bs32, ga2 run (single GPU): eb64
+        batch_size=64,  gradient_accumulation_steps=1,  optimizer_lr=1e-4,  steps=15_000,  scheduler_decay_lr=1e-5,
     ),
     # 4: [Orange196 -> Multicolor] [NoAug] [train_domain_specific]  (RUNNING)
     ExperimentSpec(
