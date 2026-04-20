@@ -410,14 +410,19 @@ def _import_lerobot_dataset():
 
         return LeRobotDataset
     except ModuleNotFoundError:
-        repo_src = Path(__file__).resolve().parents[2] / "repos" / "lerobot" / "src"
-        if repo_src.exists():
-            repo_src_str = str(repo_src)
-            if repo_src_str not in sys.path:
-                sys.path.insert(0, repo_src_str)
-            from lerobot.datasets.lerobot_dataset import LeRobotDataset
+        script_path = Path(__file__).resolve()
+        candidate_paths = [
+            script_path.parents[2] / "repos" / "lerobot" / "src",  # repo-local layout
+            script_path.parents[3] / "repos" / "lerobot" / "src",  # sibling layout (this workspace)
+        ]
+        for repo_src in candidate_paths:
+            if repo_src.exists():
+                repo_src_str = str(repo_src)
+                if repo_src_str not in sys.path:
+                    sys.path.insert(0, repo_src_str)
+                from lerobot.datasets.lerobot_dataset import LeRobotDataset
 
-            return LeRobotDataset
+                return LeRobotDataset
         raise
 
 

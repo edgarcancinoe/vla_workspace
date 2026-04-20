@@ -5,6 +5,7 @@
 *.swp
 *.swo
 *~
+.cache/
 
 # Python
 __pycache__/
