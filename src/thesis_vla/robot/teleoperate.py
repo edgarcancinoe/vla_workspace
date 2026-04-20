@@ -168,7 +168,7 @@ try:
             print(f"  Z: {pos[2]:8.4f} m")
             print(f"  Orientation (Euler xyz): Roll={euler[0]:.2f}°, Pitch={euler[1]:.2f}°, Yaw={euler[2]:.2f}°")
         
-        rr.set_time_sequence("step", step)
+        rr.set_time("step", sequence=step)
         
         log_rerun_data(observation=observation, action=action)
 

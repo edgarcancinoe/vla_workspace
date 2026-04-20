@@ -1,10 +1,18 @@
 #!/usr/bin/env python3
+import atexit
+import json
+import os
+import select
 import sys
+import termios
+import threading
 import time
+import tty
 import yaml
 import numpy as np
 from functools import partial
 from pathlib import Path
+import pandas as pd
 
 ROOT_DIR = Path(__file__).resolve().parents[2]
 src_root = ROOT_DIR / "src"
@@ -20,6 +28,7 @@ from lerobot.utils.utils import log_say as lerobot_log_say
 from lerobot.processor import make_default_processors
 from lerobot.scripts.lerobot_record import record_loop
 from lerobot.datasets.utils import hw_to_dataset_features
+from lerobot.datasets.utils import load_episodes, update_chunk_file_indices
 from lerobot.datasets.lerobot_dataset import LeRobotDataset
 from lerobot.utils.visualization_utils import init_rerun
 from lerobot.utils.control_utils import init_keyboard_listener
@@ -37,6 +46,7 @@ from thesis_vla.inference.xvla_runtime import (
     sync_xvla_policy_config,
 )
 from thesis_vla.robot.so101_control import SO101Control
+from huggingface_hub import HfApi
 
 # DEBUG UTILITIES
 # ============================================================================
@@ -154,14 +164,14 @@ HOME_POSE = config_data["robot"].get("home_pose", {})
 CAMERA_CONFIG_MAP = config_data.get("cameras", {})
 
 # --- Policy ---
-# POLICY_PATH = "edgarcancinoe/xvla-base_soarm101_pickplace_10d_7p5hz_resampled_so101_ee6d_a-m_s-m_v1"
-POLICY_PATH = "edgarcancinoe/orange196_pickplace_multicolor_v1_7p5hz_so101_ee6d_am_sm_transformer_soft-2dce6242-step-8000"
-
-
+POLICY_PATH = "edgarcancinoe/orange196_pickplace_multicolor_v1_7p5hz_so101_ee6d_am_sm_full_adapt_v1-step-15000"
+POLICY_PATH = "edgarcancinoe/orange196_pickplace_multicolor_v1_7p5hz_so101_ee6d_am_sm_full_adapt_v1"
+# POLICY_PATH = "edgarcancinoe/orange196_pickplace_multicolor_v1_7p5hz_so101_ee6d_am_sm_b32_ga2_eb64_tra-c05dc8ed-step-15000"
+# POLICY_PATH = "edgarcancinoe/orange196_pickplace_multicolor_v1_7p5hz_so101_ee6d_am_sm_full_adapt_v1_bs32_ga2_45k"
 POLICY_TYPE = "xvla" # "xvla" | "smolvla"
 DEVICE      = "mps"  # "cuda" | "mps" | "cpu"
 
-TASK_DESCRIPTION = "Pick up orange cube and place inside white box."
+TASK_DESCRIPTION = "Pick up red cube and place inside white box."
 POLICY_PIPELINE = None
 
 # --- Voice ---
@@ -179,11 +189,11 @@ USE_VOICE          = True
 #   -  5: six inferences per second (smoother, more responsive)
 #   -  1: inference every step (smoothest but slowest, only for testing)
 CHUNK_SIZE         = None  # None = use pretrained default (30 for this checkpoint)
-N_ACTION_STEPS     = 24  # Number of control steps to execute before running the next inference chunk. Only for XVLA.
+N_ACTION_STEPS     = 30  # Number of control steps to execute before running the next inference chunk. Only for XVLA.
 
 # --- SmolVLA-specific ---
 MAX_ACTION_TOKENS  = None
-POLICY_DELAY       = 0.2
+POLICY_DELAY       = 0.1
 
 # --- XVLA-specific ---
 NUM_XVLA_OBS_STEPS         = 1
@@ -191,7 +201,7 @@ BINARY_GRIPPER_INFERENCE   = False
 
 # --- Evaluation & Dataset ---
 NUM_EPISODES               = 5
-CONTROL_FPS                = 7.5
+CONTROL_FPS                = 15
 CAMERA_FPS                 = 30
 EPISODE_TIME_SEC           = 600
 HF_USER                    = "edgarcancinoe"
@@ -200,6 +210,23 @@ DATA_DIR                   = DATASETS_OUTPUT_DIR / EVAL_DATASET_NAME
 START_FROM_SCRATCH         = True
 RESUME_DATASET             = False
 OVERWRITE_DATASET          = True  # Set True to delete and recreate the dataset on every run
+AUTO_PUSH_TO_HUB           = True
+HF_UPLOAD_MAX_RETRIES      = 3
+HF_UPLOAD_RETRY_BACKOFF_S  = 3.0
+HF_UPLOAD_IGNORE_PATTERNS  = [
+    ".cache/**",
+    "**/.cache/**",
+    ".DS_Store",
+    "**/.DS_Store",
+]
+HF_UPLOAD_DELETE_PATTERNS  = [
+    "data/**",
+    "meta/**",
+    "videos/**",
+    "images/**",
+    "tmp*",
+    "tmp*/**",
+]
 
 # --- Robot & Setup
 ACTIVE_XVLA_RENAME_MAP = {}
@@ -268,6 +295,328 @@ def init_meshcat():
     except Exception as e:
         print(f"[!] Meshcat init failed, continuing without visualization: {e}")
         return None
+
+class TerminalKeyboardListener:
+    """Fallback keyboard listener for terminals where pynput cannot see arrow keys."""
+
+    def __init__(self, events: dict):
+        self.events = events
+        self._fd: int | None = None
+        self._stop = threading.Event()
+        self._thread: threading.Thread | None = None
+        self._old_termios = None
+
+    def start(self) -> bool:
+        if not sys.stdin.isatty():
+            print("Terminal keyboard fallback disabled: stdin is not a TTY.", flush=True)
+            return False
+
+        self._fd = sys.stdin.fileno()
+        self._old_termios = termios.tcgetattr(self._fd)
+        tty.setcbreak(self._fd)
+        self._thread = threading.Thread(target=self._run, daemon=True)
+        self._thread.start()
+        atexit.register(self.stop)
+        return True
+
+    def stop(self) -> None:
+        self._stop.set()
+        if self._old_termios is not None:
+            termios.tcsetattr(sys.stdin.fileno(), termios.TCSADRAIN, self._old_termios)
+            self._old_termios = None
+
+    def _read_char(self, timeout_s: float = 0.05) -> str | None:
+        if self._fd is None:
+            return None
+        readable, _, _ = select.select([self._fd], [], [], timeout_s)
+        if not readable:
+            return None
+        return os.read(self._fd, 1).decode(errors="ignore")
+
+    def _read_escape_sequence(self) -> str:
+        sequence = "\x1b"
+        for _ in range(8):
+            char = self._read_char(timeout_s=0.15)
+            if char is None:
+                break
+            sequence += char
+            if char.isalpha() or char == "~":
+                break
+        return sequence
+
+    def _handle_key(self, key: str) -> None:
+        if key in ("\x1b[C", "\x1bOC") or key.endswith("C"):
+            print("Right arrow key pressed. Exiting loop...", flush=True)
+            self.events["exit_early"] = True
+        elif key in ("\x1b[D", "\x1bOD") or key.endswith("D"):
+            print("Left arrow key pressed. Re-recording episode...", flush=True)
+            self.events["rerecord_episode"] = True
+            self.events["exit_early"] = True
+        elif key in ("\x1b", "q", "Q"):
+            print("Stop key pressed. Stopping...", flush=True)
+            self.events["stop_recording"] = True
+            self.events["exit_early"] = True
+        elif key in ("r", "R"):
+            print("r pressed. Re-recording episode...", flush=True)
+            self.events["rerecord_episode"] = True
+            self.events["exit_early"] = True
+        elif key in ("\n", "\r", " "):
+            print("Skip key pressed. Exiting loop...", flush=True)
+            self.events["exit_early"] = True
+
+    def _run(self) -> None:
+        while not self._stop.is_set():
+            char = self._read_char()
+            if char is None:
+                continue
+
+            if char == "\x1b":
+                self._handle_key(self._read_escape_sequence())
+            else:
+                self._handle_key(char)
+
+
+def init_eval_keyboard_controls() -> tuple[object | None, dict, TerminalKeyboardListener | None]:
+    listener, events = init_keyboard_listener()
+    terminal_listener = TerminalKeyboardListener(events)
+    if terminal_listener.start():
+        print(
+            "Keyboard controls enabled: right/space/enter=next, left/r=re-record, esc/q=stop. "
+            "Keep this terminal focused if arrow keys are not captured globally."
+        )
+    else:
+        terminal_listener = None
+    return listener, events, terminal_listener
+
+
+def _is_missing(value) -> bool:
+    if value is None:
+        return True
+    try:
+        return bool(pd.isna(value))
+    except (TypeError, ValueError):
+        return False
+
+
+def get_episodes_missing_video_metadata(dataset: LeRobotDataset) -> list[int]:
+    missing = []
+    video_keys = list(dataset.meta.video_keys)
+    if not video_keys or dataset.meta.episodes is None:
+        return missing
+
+    for ep in dataset.meta.episodes:
+        ep_idx = int(ep["episode_index"])
+        for video_key in video_keys:
+            key = f"videos/{video_key}/chunk_index"
+            if key not in ep or _is_missing(ep[key]):
+                missing.append(ep_idx)
+                break
+    return missing
+
+
+def _episode_image_dir(dataset: LeRobotDataset, video_key: str, ep_idx: int) -> Path:
+    return dataset.root / "images" / video_key / f"episode-{ep_idx:06d}"
+
+
+def _episode_has_video_images(dataset: LeRobotDataset, video_key: str, ep_idx: int) -> bool:
+    image_dir = _episode_image_dir(dataset, video_key, ep_idx)
+    return image_dir.exists() and any(image_dir.glob("*.png"))
+
+
+def _missing_image_keys(dataset: LeRobotDataset, ep_idx: int) -> list[str]:
+    return [
+        video_key
+        for video_key in dataset.meta.video_keys
+        if not _episode_has_video_images(dataset, video_key, ep_idx)
+    ]
+
+
+def _write_episode_video_metadata(dataset: LeRobotDataset, ep_idx: int, metadata: dict) -> None:
+    for parquet_path in sorted((dataset.root / "meta" / "episodes").rglob("*.parquet")):
+        df = pd.read_parquet(parquet_path)
+        mask = df["episode_index"] == ep_idx
+        if not mask.any():
+            continue
+        for key, value in metadata.items():
+            if key == "episode_index":
+                continue
+            df.loc[mask, key] = value
+        df.to_parquet(parquet_path)
+    dataset.meta.episodes = load_episodes(dataset.root)
+
+
+def _next_video_file_indices(dataset: LeRobotDataset, video_key: str) -> tuple[int, int]:
+    last_chunk_idx = -1
+    last_file_idx = -1
+
+    if dataset.meta.episodes is not None:
+        for ep in dataset.meta.episodes:
+            chunk_key = f"videos/{video_key}/chunk_index"
+            file_key = f"videos/{video_key}/file_index"
+            if chunk_key in ep and file_key in ep and not _is_missing(ep[chunk_key]) and not _is_missing(ep[file_key]):
+                ck = int(ep[chunk_key])
+                fk = int(ep[file_key])
+                if (ck, fk) > (last_chunk_idx, last_file_idx):
+                    last_chunk_idx, last_file_idx = ck, fk
+
+    video_root = dataset.root / "videos" / video_key
+    if video_root.exists():
+        for mp4 in video_root.rglob("file-*.mp4"):
+            chunk_part = mp4.parent.name
+            file_part = mp4.stem
+            if chunk_part.startswith("chunk-") and file_part.startswith("file-"):
+                ck = int(chunk_part.split("-")[1])
+                fk = int(file_part.split("-")[1])
+                if (ck, fk) > (last_chunk_idx, last_file_idx):
+                    last_chunk_idx, last_file_idx = ck, fk
+
+    if last_chunk_idx < 0:
+        return 0, 0
+
+    return update_chunk_file_indices(last_chunk_idx, last_file_idx, dataset.meta.chunks_size)
+
+
+def _save_episode_video_as_new_file(dataset: LeRobotDataset, video_key: str, ep_idx: int) -> dict:
+    ep_path = dataset._encode_temporary_episode_video(video_key, ep_idx)
+    chunk_idx, file_idx = _next_video_file_indices(dataset, video_key)
+    new_path = dataset.root / dataset.meta.video_path.format(
+        video_key=video_key,
+        chunk_index=chunk_idx,
+        file_index=file_idx,
+    )
+    new_path.parent.mkdir(parents=True, exist_ok=True)
+    os.replace(ep_path, new_path)
+    try:
+        os.rmdir(ep_path.parent)
+    except OSError:
+        pass
+
+    ep_len = 0.0
+    for ep in dataset.meta.episodes or []:
+        if int(ep.get("episode_index", -1)) == int(ep_idx):
+            ep_len = float(ep.get("length", 0))
+            break
+    duration = ep_len / float(max(dataset.fps, 1))
+    return {
+        f"videos/{video_key}/chunk_index": chunk_idx,
+        f"videos/{video_key}/file_index": file_idx,
+        f"videos/{video_key}/from_timestamp": 0.0,
+        f"videos/{video_key}/to_timestamp": duration,
+    }
+
+
+def encode_missing_video_metadata(dataset: LeRobotDataset, episode_indices: list[int]) -> None:
+    for ep_idx in episode_indices:
+        missing_image_keys = _missing_image_keys(dataset, ep_idx)
+        if missing_image_keys:
+            raise RuntimeError(
+                f"Cannot repair episode {ep_idx}: missing image frames for {missing_image_keys}."
+            )
+
+        metadata = {"episode_index": ep_idx}
+        for video_key in dataset.meta.video_keys:
+            metadata.update(_save_episode_video_as_new_file(dataset, video_key, ep_idx))
+        _write_episode_video_metadata(dataset, ep_idx, metadata)
+
+
+def recover_missing_eval_videos(dataset: LeRobotDataset) -> None:
+    dataset.meta._close_writer()
+    dataset.meta.episodes = load_episodes(dataset.root)
+    missing_episodes = get_episodes_missing_video_metadata(dataset)
+    if missing_episodes:
+        print(f"[repair] Missing video metadata detected for episodes: {missing_episodes}")
+        encode_missing_video_metadata(dataset, missing_episodes)
+        dataset.meta.episodes = load_episodes(dataset.root)
+
+
+def validate_lerobot_dataset_on_disk(root: Path) -> None:
+    info_path = root / "meta" / "info.json"
+    episodes_dir = root / "meta" / "episodes"
+    if not info_path.exists():
+        raise RuntimeError(f"Missing metadata file: {info_path}")
+    if not episodes_dir.exists():
+        raise RuntimeError(f"Missing episodes directory: {episodes_dir}")
+
+    with open(info_path) as f:
+        info = json.load(f)
+
+    episode_files = sorted(episodes_dir.rglob("*.parquet"))
+    if not episode_files:
+        raise RuntimeError(f"No episode parquet files found in {episodes_dir}")
+
+    episode_df = pd.concat([pd.read_parquet(p) for p in episode_files], ignore_index=True)
+    if episode_df.empty:
+        raise RuntimeError("Episode parquet exists but contains no rows.")
+
+    n = int(info.get("total_episodes", 0))
+    rows = len(episode_df)
+    if n > 0 and rows != n:
+        raise RuntimeError(f"Episode count mismatch: info.total_episodes={n}, rows={rows}")
+
+    for _, row in episode_df.iterrows():
+        data_path = (
+            root
+            / "data"
+            / f"chunk-{int(row['data/chunk_index']):03d}"
+            / f"file-{int(row['data/file_index']):03d}.parquet"
+        )
+        if not data_path.exists():
+            raise RuntimeError(f"Missing referenced data parquet: {data_path}")
+
+    video_features = [k for k, v in info.get("features", {}).items() if v.get("dtype") == "video"]
+    for video_key in video_features:
+        chunk_col = f"videos/{video_key}/chunk_index"
+        file_col = f"videos/{video_key}/file_index"
+        if chunk_col not in episode_df.columns or file_col not in episode_df.columns:
+            raise RuntimeError(f"Missing video metadata columns for key '{video_key}'")
+        if episode_df[chunk_col].isna().any() or episode_df[file_col].isna().any():
+            raise RuntimeError(f"Missing video metadata values for key '{video_key}'")
+        for _, row in episode_df.iterrows():
+            video_path = (
+                root
+                / "videos"
+                / video_key
+                / f"chunk-{int(row[chunk_col]):03d}"
+                / f"file-{int(row[file_col]):03d}.mp4"
+            )
+            if not video_path.exists():
+                raise RuntimeError(f"Missing referenced video file: {video_path}")
+
+    print(f"[OK] Dataset on disk looks sane: episodes={n}, rows={rows}")
+
+
+def push_eval_dataset_to_hub(
+    data_dir: Path,
+    repo_id: str,
+    max_retries: int = HF_UPLOAD_MAX_RETRIES,
+    retry_backoff_s: float = HF_UPLOAD_RETRY_BACKOFF_S,
+) -> None:
+    api = HfApi()
+    api.create_repo(repo_id=repo_id, repo_type="dataset", exist_ok=True)
+
+    last_error = None
+    for attempt in range(1, max_retries + 1):
+        try:
+            print(f"[push] Upload attempt {attempt}/{max_retries} -> {repo_id}")
+            api.upload_folder(
+                folder_path=data_dir,
+                repo_id=repo_id,
+                repo_type="dataset",
+                ignore_patterns=HF_UPLOAD_IGNORE_PATTERNS,
+                delete_patterns=HF_UPLOAD_DELETE_PATTERNS,
+                commit_message="Sync evaluation dataset from local run",
+            )
+            print(f"[push] Successfully pushed {repo_id}")
+            return
+        except Exception as e:
+            last_error = e
+            print(f"[push] Attempt {attempt} failed: {e}")
+            if attempt < max_retries:
+                sleep_s = retry_backoff_s * attempt
+                print(f"[push] Retrying in {sleep_s:.1f}s...")
+                time.sleep(sleep_s)
+
+    raise RuntimeError(f"Failed to push dataset after {max_retries} attempts: {last_error}") from last_error
 
 # > Custom get_observation():
 #   1. Rectify images based on config
@@ -939,151 +1288,176 @@ def main():
     so101        = SO101Control(urdf_path=URDF_PATH, wrist_roll_offset=WRIST_ROLL_OFFSET, home_pose=HOME_POSE)
     robot_config = SO100FollowerConfig(id=ROBOT_NAME, cameras=CAMERAS, port=FOLLOWER_PORT, calibration_dir=Path(CALIBRATION_DIR))
     robot        = SO100Follower(robot_config)
-    
-    # Policy Object
-    policy, INCLUDE_EEF_STATE = get_policy(POLICY_TYPE, POLICY_PATH, DEVICE)
-    action_slice_spec = None
-    if POLICY_TYPE == "xvla":
-        action_slice_spec = get_so101_slice_spec(getattr(policy.config, "action_mode", None))
-        if action_slice_spec is None:
-            raise ValueError(
-                f"Unsupported XVLA action_mode in checkpoint config: {getattr(policy.config, 'action_mode', None)!r}"
-            )
+    dataset = None
+    terminal_keyboard_listener = None
+    _keyboard_listener = None
+    should_attempt_push = False
+    repo_id = f"{HF_USER}/{EVAL_DATASET_NAME}"
 
-    # Configure the dataset features.
-    # XVLA uses the checkpoint action_mode as the source of truth for both action
-    # and observation.state schemas so record_loop emits robot actions with the
-    # correct key names and the preprocessor sees the expected proprio format.
-    if action_slice_spec is not None:
-        mode_feature_spec = {
-            "dtype": "float32",
-            "shape": (action_slice_spec.real_dim,),
-            "names": list(action_slice_spec.feature_names(suffix=".pos")),
-        }
-        action_features = {"action": mode_feature_spec}
-        obs_features = hw_to_dataset_features(robot.observation_features, "observation")
-        obs_features["observation.state"] = mode_feature_spec
-    else:
-        action_features = hw_to_dataset_features(robot.action_features, "action")
-        obs_features = hw_to_dataset_features(robot.observation_features, "observation")
-    
-    dataset_features = {**action_features, **obs_features}
+    try:
+        # Policy Object
+        policy, INCLUDE_EEF_STATE = get_policy(POLICY_TYPE, POLICY_PATH, DEVICE)
+        action_slice_spec = None
+        if POLICY_TYPE == "xvla":
+            action_slice_spec = get_so101_slice_spec(getattr(policy.config, "action_mode", None))
+            if action_slice_spec is None:
+                raise ValueError(
+                    f"Unsupported XVLA action_mode in checkpoint config: {getattr(policy.config, 'action_mode', None)!r}"
+                )
 
-    # ── DEBUG: print full feature map ──────────────────────────────────────────
-    DBG.divider("white", "DATASET FEATURE MAP")
-    for k, v in action_features.items():
-        shape = v.get('shape', '?') if isinstance(v, dict) else '?'
-        names = v.get('names', []) if isinstance(v, dict) else []
-        DBG.info(f"  [action ] {k}: shape={shape}  names={names}")
-    for k, v in obs_features.items():
-        shape = v.get('shape', '?') if isinstance(v, dict) else '?'
-        names = v.get('names', []) if isinstance(v, dict) else []
-        DBG.info(f"  [obs    ] {k}: shape={shape}  names={names}")
-    DBG.info(f"Total dataset_features: {list(dataset_features.keys())}")
-
-    # Dataset Object
-    dataset, episode_idx = get_dataset(dataset_features, robot.name)
-    if POLICY_TYPE == "xvla":
-        global ACTIVE_XVLA_RENAME_MAP
-        ACTIVE_XVLA_RENAME_MAP = resolve_xvla_rename_map(dataset.meta.camera_keys)
-        if not ACTIVE_XVLA_RENAME_MAP:
-            raise ValueError(
-                "Unable to resolve XVLA rename_map from dataset camera keys: "
-                f"{dataset.meta.camera_keys}"
-            )
-        sync_xvla_policy_config(policy, dataset.meta, ACTIVE_XVLA_RENAME_MAP)
-        DBG.pre(f"XVLA rename_map: {ACTIVE_XVLA_RENAME_MAP}")
-        DBG.pre(f"XVLA input features: {list(policy.config.input_features.keys())}")
-
-    # Build preprocessor and postprocessor for policy inference
-    preprocessor, postprocessor = get_policy_processors(policy=policy, dataset=dataset, pipeline_key=POLICY_PIPELINE)
-
-    # Meshcat visualization (optional — gracefully disabled if unavailable)
-    viz = init_meshcat() if USE_MESHCAT_VIZ else None
-
-    # Start inference and episode recording
-    # ============================================================================
-
-    # Initialize the keyboard listener and (optionally) rerun visualization
-    _, events = init_keyboard_listener()
-    if USE_RERUN:
-        import uuid
-        init_rerun(session_name=f"inference_evaluation_{uuid.uuid4().hex[:8]}")
-
-    # Create robot processors (required by record_loop)
-    teleop_action_processor, robot_action_processor, robot_observation_processor = make_default_processors()
-
-    # Connect the robot
-    robot.connect()
-
-    # Patch robot for observation and action
-    set_custom_get_observation(robot, so101=so101, include_eef_state=INCLUDE_EEF_STATE, dry_run=DRY_RUN)
-    set_custom_send_action(robot, so101=so101, viz=viz, dry_run=DRY_RUN)
-    if hasattr(robot, "_xvla_reset_exec_smoothing_state"):
-        robot._xvla_reset_exec_smoothing_state()
-    # Trajectory viz is patched BEFORE the delay wrapper so it sits closest to
-    # the original select_action — it draws the chunk immediately after inference.
-    # Extract action names from the "action" feature entry (hw_to_dataset_features returns a
-    # single "action" key, not individual "action.joint.pos" flat keys)
-    action_names = dataset_features.get("action", {}).get("names", [])
-    set_trajectory_visualization(policy, so101=so101, viz=viz, postprocessor=postprocessor, action_names=action_names)
-    set_custom_select_action(policy, POLICY_DELAY)
-
-    if not robot.is_connected:
-        raise ValueError("Robot is not connected!")
-
-    log_say("Starting inference evaluation loop...")
-    while episode_idx < NUM_EPISODES and not events["stop_recording"]:
-        # Move to home pose before episode
-        log_say("Moving to home pose...")
-        so101.reset_to_home(robot, duration_s=HOME_DURATION_S, fps=HOME_FPS, viz=viz)
-        if EMA_RESET_ON_EPISODE_START and hasattr(robot, "_xvla_reset_exec_smoothing_state"):
-            robot._xvla_reset_exec_smoothing_state(so101.read_motor_real(robot))
-        
-        log_say(f"Running inference, recording eval episode {episode_idx + 1} of {NUM_EPISODES}")
-
-        # Run the policy inference loop
-        record_loop(
-            robot=robot,
-            events=events,
-            fps=CONTROL_FPS,
-            teleop_action_processor=teleop_action_processor,
-            robot_action_processor=robot_action_processor,
-            robot_observation_processor=robot_observation_processor,
-            policy=policy,
-            preprocessor=preprocessor,
-            postprocessor=postprocessor,
-            dataset=dataset,
-            control_time_s=EPISODE_TIME_SEC,
-            single_task=TASK_DESCRIPTION,
-            display_data=True,
-        )
-
-        # Handle re-recording
-        if events["rerecord_episode"]:
-            log_say("Re-recording episode")
-            events["rerecord_episode"] = False
-            events["exit_early"] = False
-            dataset.clear_episode_buffer()
-            continue
-
-        # Save the episode
-        if len(dataset.episode_buffer) > 0:
-            dataset.save_episode(parallel_encoding=False)
-            episode_idx += 1
+        # Configure the dataset features.
+        if action_slice_spec is not None:
+            mode_feature_spec = {
+                "dtype": "float32",
+                "shape": (action_slice_spec.real_dim,),
+                "names": list(action_slice_spec.feature_names(suffix=".pos")),
+            }
+            action_features = {"action": mode_feature_spec}
+            obs_features = hw_to_dataset_features(robot.observation_features, "observation")
+            obs_features["observation.state"] = mode_feature_spec
         else:
-            print("No frames recorded in episode buffer. Skipping save.")
+            action_features = hw_to_dataset_features(robot.action_features, "action")
+            obs_features = hw_to_dataset_features(robot.observation_features, "observation")
 
-    # Clean up
-    log_say("Stop recording")
-    robot.disconnect()
-    dataset.finalize()
-    
-    # Push to hub
-    log_say(f"Pushing evaluation dataset to hub: {HF_USER}/{EVAL_DATASET_NAME}")
-    dataset.push_to_hub()
-    
-    log_say("Inference evaluation complete!")
+        dataset_features = {**action_features, **obs_features}
+
+        DBG.divider("white", "DATASET FEATURE MAP")
+        for k, v in action_features.items():
+            shape = v.get('shape', '?') if isinstance(v, dict) else '?'
+            names = v.get('names', []) if isinstance(v, dict) else []
+            DBG.info(f"  [action ] {k}: shape={shape}  names={names}")
+        for k, v in obs_features.items():
+            shape = v.get('shape', '?') if isinstance(v, dict) else '?'
+            names = v.get('names', []) if isinstance(v, dict) else []
+            DBG.info(f"  [obs    ] {k}: shape={shape}  names={names}")
+        DBG.info(f"Total dataset_features: {list(dataset_features.keys())}")
+
+        dataset, episode_idx = get_dataset(dataset_features, robot.name)
+        if POLICY_TYPE == "xvla":
+            global ACTIVE_XVLA_RENAME_MAP
+            ACTIVE_XVLA_RENAME_MAP = resolve_xvla_rename_map(dataset.meta.camera_keys)
+            if not ACTIVE_XVLA_RENAME_MAP:
+                raise ValueError(
+                    "Unable to resolve XVLA rename_map from dataset camera keys: "
+                    f"{dataset.meta.camera_keys}"
+                )
+            sync_xvla_policy_config(policy, dataset.meta, ACTIVE_XVLA_RENAME_MAP)
+            DBG.pre(f"XVLA rename_map: {ACTIVE_XVLA_RENAME_MAP}")
+            DBG.pre(f"XVLA input features: {list(policy.config.input_features.keys())}")
+
+        preprocessor, postprocessor = get_policy_processors(
+            policy=policy,
+            dataset=dataset,
+            pipeline_key=POLICY_PIPELINE,
+        )
+        viz = init_meshcat() if USE_MESHCAT_VIZ else None
+
+        _keyboard_listener, events, terminal_keyboard_listener = init_eval_keyboard_controls()
+        if USE_RERUN:
+            import uuid
+            init_rerun(session_name=f"inference_evaluation_{uuid.uuid4().hex[:8]}")
+
+        teleop_action_processor, robot_action_processor, robot_observation_processor = make_default_processors()
+
+        robot.connect()
+        set_custom_get_observation(robot, so101=so101, include_eef_state=INCLUDE_EEF_STATE, dry_run=DRY_RUN)
+        set_custom_send_action(robot, so101=so101, viz=viz, dry_run=DRY_RUN)
+        if hasattr(robot, "_xvla_reset_exec_smoothing_state"):
+            robot._xvla_reset_exec_smoothing_state()
+        action_names = dataset_features.get("action", {}).get("names", [])
+        set_trajectory_visualization(
+            policy,
+            so101=so101,
+            viz=viz,
+            postprocessor=postprocessor,
+            action_names=action_names,
+        )
+        set_custom_select_action(policy, POLICY_DELAY)
+
+        if not robot.is_connected:
+            raise ValueError("Robot is not connected!")
+
+        log_say("Starting inference evaluation loop...")
+        while episode_idx < NUM_EPISODES and not events["stop_recording"]:
+            log_say("Moving to home pose...")
+            so101.reset_to_home(robot, duration_s=HOME_DURATION_S, fps=HOME_FPS, viz=viz)
+            if EMA_RESET_ON_EPISODE_START and hasattr(robot, "_xvla_reset_exec_smoothing_state"):
+                robot._xvla_reset_exec_smoothing_state(so101.read_motor_real(robot))
+
+            log_say(f"Running inference, recording eval episode {episode_idx + 1} of {NUM_EPISODES}")
+            record_loop(
+                robot=robot,
+                events=events,
+                fps=CONTROL_FPS,
+                teleop_action_processor=teleop_action_processor,
+                robot_action_processor=robot_action_processor,
+                robot_observation_processor=robot_observation_processor,
+                policy=policy,
+                preprocessor=preprocessor,
+                postprocessor=postprocessor,
+                dataset=dataset,
+                control_time_s=EPISODE_TIME_SEC,
+                single_task=TASK_DESCRIPTION,
+                display_data=True,
+            )
+
+            if events["rerecord_episode"]:
+                log_say("Re-recording episode")
+                events["rerecord_episode"] = False
+                events["exit_early"] = False
+                dataset.clear_episode_buffer()
+                continue
+
+            try:
+                if len(dataset.episode_buffer) > 0:
+                    dataset.save_episode(parallel_encoding=False)
+                    episode_idx += 1
+                else:
+                    print("No frames recorded in episode buffer. Skipping save.")
+            except Exception as save_error:
+                print(f"[save] Failed to save episode {episode_idx}: {save_error}")
+                dataset.clear_episode_buffer()
+                raise
+
+        should_attempt_push = AUTO_PUSH_TO_HUB and not DRY_RUN
+    except Exception as e:
+        print(f"[fatal] Evaluation run failed: {e}")
+        should_attempt_push = False
+        raise
+    finally:
+        log_say("Stop recording")
+        if terminal_keyboard_listener is not None:
+            terminal_keyboard_listener.stop()
+        if robot.is_connected:
+            try:
+                robot.disconnect()
+            except Exception as disconnect_error:
+                print(f"[cleanup] Robot disconnect failed: {disconnect_error}")
+
+        if dataset is not None:
+            try:
+                recover_missing_eval_videos(dataset)
+            except Exception as recover_error:
+                print(f"[repair] Recovery failed; push will be skipped: {recover_error}")
+                should_attempt_push = False
+
+            try:
+                dataset.finalize()
+            except Exception as finalize_error:
+                print(f"[finalize] Dataset finalize failed; push will be skipped: {finalize_error}")
+                should_attempt_push = False
+
+            if should_attempt_push:
+                try:
+                    validate_lerobot_dataset_on_disk(Path(dataset.root))
+                    log_say(f"Pushing evaluation dataset to hub: {repo_id}")
+                    push_eval_dataset_to_hub(Path(dataset.root), repo_id=repo_id)
+                except Exception as push_error:
+                    print(f"[push] Skipping push due to validation/upload failure: {push_error}")
+            else:
+                print("[push] Auto-push skipped (disabled, dry run, or dataset not healthy).")
+
+        log_say("Inference evaluation complete!")
 
 if __name__ == "__main__":
     main()

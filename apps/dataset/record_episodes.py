@@ -68,12 +68,13 @@ with open(config_path, "r") as f:
 CAMERA_CONFIG_MAP = config_data.get("cameras", {})
 RECTIFY_MAP = {name: info.get("rectify", False) for name, info in CAMERA_CONFIG_MAP.items()}
 
-NUM_EPISODES = 144
+NUM_EPISODES = 80
 
 FPS = 30
-EPISODE_TIME_SEC = 45
+EPISODE_TIME_SEC = 60
 RESET_TIME_SEC = 10
-TASK_DESCRIPTION = "Pick up blue cube and place inside white box."
+# TASK_DESCRIPTION = "Pick up orange cube and place inside white box."
+TASK_DESCRIPTION = "Pick the cloth by a visible corner and drop the cloth into the box."
 VIDEO_CODEC = "h264"
 STREAMING_ENCODING = True
 BATCH_VIDEO_ENCODING = True
@@ -81,7 +82,7 @@ ENCODER_QUEUE_MAXSIZE = 120
 ENCODER_THREADS = 8
 
 HF_USER = "edgarcancinoe"
-HF_REPO_ID = "soarm101_pickplace_multicolor_v1"
+HF_REPO_ID = "soarm101_square_cloth_corner_to_box"
 
 START_FROM_SCRATCH = False
 RESUME_DATASET = True
