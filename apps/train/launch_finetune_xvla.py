@@ -80,6 +80,12 @@ DEFAULTS = LaunchConfig(
     policy_push_to_hub=True,
     wandb_enable=True,
     wandb_project="lerobot",
+    validation_enable=False,
+    validation_split_ratio=0.1,
+    validation_freq=5_000,
+    validation_max_batches=10,
+    validation_seed=1337,
+    validation_metric="loss",
 
     # ------------ Augmentation settings ------------
     enable_augmentation=False,
