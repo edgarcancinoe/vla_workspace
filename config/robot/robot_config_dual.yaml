@@ -1,0 +1,76 @@
+robot_id: dual_follower
+leader_id: dual_leader
+
+robot_a:
+  name: robot_1
+  port: /dev/cu.usbmodem5AAF2202301
+  urdf_path: "/Users/edgarcancino/Documents/Academic/EMAI Thesis/repos/SO-ARM100/Simulation/SO101/so101_new_calib.urdf"
+  calibration_dir: "/Users/edgarcancino/Documents/Academic/EMAI Thesis/vla_workspace/.cache/calibration"
+  wrist_roll_offset: -90.0
+  home_pose:
+    shoulder_pan.pos: 0.0
+    shoulder_lift.pos: -100.0
+    elbow_flex.pos: 100.0
+    wrist_flex.pos: 50.0
+    wrist_roll.pos: -90.0
+    gripper.pos: 0.0
+  cameras:
+    main:
+      id: 0
+      rectify: false
+      width: 640
+      height: 480
+      fps: 30
+    robot_1:
+      id: 1
+      rectify: false
+      width: 640
+      height: 480
+      fps: 30
+
+leader_a:
+  name: leader_1
+  port: /dev/cu.usbmodem5AAF2181531
+
+robot_b:
+  name: robot_7
+  port: /dev/cu.usbmodem5AB90655421
+  urdf_path: "/Users/edgarcancino/Documents/Academic/EMAI Thesis/repos/SO-ARM100/Simulation/SO101/so101_new_calib.urdf"
+  calibration_dir: "/Users/edgarcancino/Documents/Academic/EMAI Thesis/vla_workspace/.cache/calibration"
+  wrist_roll_offset: -90.0
+  home_pose:
+    shoulder_pan.pos: 0.0
+    shoulder_lift.pos: -100.0
+    elbow_flex.pos: 100.0
+    wrist_flex.pos: 50.0
+    wrist_roll.pos: -90.0
+    gripper.pos: 0.0
+  cameras:
+    robot_7:
+      id: 2
+      rectify: false
+      width: 640
+      height: 480
+      fps: 30
+
+leader_b:
+  name: leader_7
+  port: /dev/tty.usbmodem5AAF2198491
+
+dataset:
+  hf_user: edgarcancinoe
+  hf_repo_id: soarm101_dual_dataset
+  task_description: "Dual-arm teleoperation task."
+  fps: 30
+  num_episodes: 50
+  episode_time_sec: 60
+  reset_time_sec: 10
+  display_data: true
+  resume: true
+  video_codec: h264
+  streaming_encoding: true
+  batch_encoding_size: 1
+  image_writer_threads: 4
+  calibrate: false
+  skip_recording: false
+  push_to_hub: false

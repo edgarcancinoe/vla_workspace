@@ -79,6 +79,7 @@ DEFAULTS = LaunchConfig(
     push_every=15_000,
     policy_push_to_hub=True,
     wandb_enable=True,
+    wandb_project="lerobot",
 
     # ------------ Augmentation settings ------------
     enable_augmentation=False,
@@ -87,6 +88,11 @@ DEFAULTS = LaunchConfig(
     augmentation_backend="custom",
     augmentation_enable_photometric=True,
     augmentation_fill_mode="reflect",
+    mix_enabled=False,
+    mix_base_repo_id=None,
+    mix_new_repo_id=None,
+    mix_new_repeat=1,
+    mix_output_repo_id=None,
 )
 
 # FreezeConfig presets for convenience
@@ -107,7 +113,7 @@ DATASET_CLOTH_DROP = "soarm101_square_cloth_corner_to_box_7p5hz"
 CUBE_EXPERIMENTS = [
     # Simple Orange
     # ------------------------------------------------------------------
-    # 0: [Base ->      Orange196]  [NoAug] [train_all]                  
+    # 0: [Base ->      Orange196]  [NoAug] [train_all]
     ExperimentSpec(
         action_mode="so101_ee6d",   
         base_model=BASE_MODEL,    dataset_name=DATASET_ORANGE,  dataset_revision="main", 
@@ -164,7 +170,28 @@ CLOTH_EXPERIMENTS = [
         batch_size=32,      optimizer_lr=1e-4,  steps=40_000,  scheduler_decay_lr=1e-5, gradient_accumulation_steps=2,
         save_freq=25_000,   push_every=25_000,
         freeze=train_domain_specific
+    ),    # ------------------------------------------------------------------
+
+    # OOD adaptation (safe default): mix base fixed-location data with boosted random-placement data.
+    # 6: [Orange196 -> mixed(base + 4x random)] [NoAug] [train_all] [stable lr/steps]
+    ExperimentSpec(
+        action_mode="so101_ee6d",
+        base_model=BASE_ORANGE_196,
+        dataset_name=DATASET_ORANGE,  # fallback base if mix_base_repo_id is not set
+        dataset_revision="main",
+        mix_enabled=True,
+        mix_base_repo_id=DATASET_ORANGE,
+        mix_new_repo_id=DATASET_MULTICOLOR,
+        mix_new_repeat=4,
+        mix_output_repo_id="soarm101_pickplace_ood_mix_orange_multicolor_r4",
+        batch_size=32,
+        optimizer_lr=3e-5,
+        steps=12_000,
+        scheduler_decay_lr=1e-5,
+        gradient_accumulation_steps=2,
+        enable_augmentation=False,
     ),
+
 ]
 
 EXPERIMENTS = [CUBE_EXPERIMENTS[0]]

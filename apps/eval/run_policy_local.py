@@ -166,12 +166,20 @@ CAMERA_CONFIG_MAP = config_data.get("cameras", {})
 # --- Policy ---
 POLICY_PATH = "edgarcancinoe/orange196_pickplace_multicolor_v1_7p5hz_so101_ee6d_am_sm_full_adapt_v1-step-15000"
 POLICY_PATH = "edgarcancinoe/orange196_pickplace_multicolor_v1_7p5hz_so101_ee6d_am_sm_full_adapt_v1"
-# POLICY_PATH = "edgarcancinoe/orange196_pickplace_multicolor_v1_7p5hz_so101_ee6d_am_sm_b32_ga2_eb64_tra-c05dc8ed-step-15000"
+
+# Trained SP
+# POLICY_PATH = "edgarcancinoe/orange196_pickplace_multicolor_v1_7p5hz_so101_ee6d_am_sm_b32_ga2_eb64_tra-c05dc8ed"
+
 # POLICY_PATH = "edgarcancinoe/orange196_pickplace_multicolor_v1_7p5hz_so101_ee6d_am_sm_full_adapt_v1_bs32_ga2_45k"
+POLICY_PATH = "edgarcancinoe/orange196_square_cloth_corner_to_box_7p5hz_so101_ee6d_am_sm_b32_ga2_eb64_-b4889dfe" 
+
+""
 POLICY_TYPE = "xvla" # "xvla" | "smolvla"
 DEVICE      = "mps"  # "cuda" | "mps" | "cpu"
 
-TASK_DESCRIPTION = "Pick up red cube and place inside white box."
+# TASK_DESCRIPTION = "Pick up red cube and place inside white box."
+TASK_DESCRIPTION = "Pick the cloth by a visible corner and drop the cloth into the box."
+
 POLICY_PIPELINE = None
 
 # --- Voice ---
@@ -203,7 +211,7 @@ BINARY_GRIPPER_INFERENCE   = False
 NUM_EPISODES               = 5
 CONTROL_FPS                = 15
 CAMERA_FPS                 = 30
-EPISODE_TIME_SEC           = 600
+EPISODE_TIME_SEC           = 90
 HF_USER                    = "edgarcancinoe"
 EVAL_DATASET_NAME          = "eval_" + POLICY_PATH.split("/")[-1] 
 DATA_DIR                   = DATASETS_OUTPUT_DIR / EVAL_DATASET_NAME
