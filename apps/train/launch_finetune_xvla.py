@@ -52,7 +52,7 @@ DEFAULTS = LaunchConfig(
     # ----------- Runtime/Device settings -----------
     runtime=RuntimeConfig(
         launch_mode="single", # single / accelerate
-        cuda_devices=(4,),
+        cuda_devices=(3,),
         num_workers=4,
         dry_run=False,
     ),
@@ -70,13 +70,13 @@ DEFAULTS = LaunchConfig(
     gradient_accumulation_steps=1,
     optimizer_lr=1e-4,
     scheduler_decay_lr=1e-5,
-    steps=15_000,
+    steps=30_000,
 
     # ------- Logging and checkpoint settings -------
     log_freq=500,
     eval_freq=-1,
-    save_freq=15_000,
-    push_every=15_000,
+    save_freq=30_000,
+    push_every=30_000,
     policy_push_to_hub=True,
     wandb_enable=True,
     wandb_project="lerobot",
@@ -123,7 +123,7 @@ CUBE_EXPERIMENTS = [
     ExperimentSpec(
         action_mode="so101_ee6d",   
         base_model=BASE_MODEL,     dataset_name=DATASET_ORANGE, dataset_revision="main",  enable_augmentation=True,
-        batch_size=32,  optimizer_lr=1e-4,  steps=45_000,  scheduler_decay_lr=1e-5, gradient_accumulation_steps=2,
+        batch_size=32,  optimizer_lr=1e-4,  steps=30_000,  scheduler_decay_lr=1e-5, gradient_accumulation_steps=2,
     ),
     # ------------------------------------------------------------------
     
@@ -191,7 +191,6 @@ CLOTH_EXPERIMENTS = [
         gradient_accumulation_steps=2,
         enable_augmentation=False,
     ),
-
 ]
 
 EXPERIMENTS = [CUBE_EXPERIMENTS[0]]
