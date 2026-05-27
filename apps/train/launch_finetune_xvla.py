@@ -79,6 +79,7 @@ DEFAULTS = LaunchConfig(
     push_every=15_000,
     policy_push_to_hub=True,
     wandb_enable=True,
+    wandb_project="lerobot",
 
     # ------------ Augmentation settings ------------
     enable_augmentation=False,
@@ -87,6 +88,11 @@ DEFAULTS = LaunchConfig(
     augmentation_backend="custom",
     augmentation_enable_photometric=True,
     augmentation_fill_mode="reflect",
+    mix_enabled=False,
+    mix_base_repo_id=None,
+    mix_new_repo_id=None,
+    mix_new_repeat=1,
+    mix_output_repo_id=None,
 )
 
 # FreezeConfig presets for convenience
@@ -106,7 +112,7 @@ DATASET_MULTICOLOR = "soarm101_pickplace_multicolor_v1_7p5hz"
 EXPERIMENTS = [
     # Simple Orange
     # ------------------------------------------------------------------
-    # 0: [Base ->      Orange196]  [NoAug] [train_all]                  
+    # 0: [Base ->      Orange196]  [NoAug] [train_all]
     ExperimentSpec(
         action_mode="so101_ee6d",   
         base_model=BASE_MODEL,    dataset_name=DATASET_ORANGE,  dataset_revision="main", 
@@ -147,10 +153,31 @@ EXPERIMENTS = [
         base_model=BASE_ORANGE_196,     dataset_name=DATASET_MULTICOLOR,
         batch_size=32,  optimizer_lr=1e-4,  steps=45_000,  scheduler_decay_lr=1e-5, gradient_accumulation_steps=2,
     ),
+    # ------------------------------------------------------------------
+
+    # OOD adaptation (safe default): mix base fixed-location data with boosted random-placement data.
+    # 6: [Orange196 -> mixed(base + 4x random)] [NoAug] [train_all] [stable lr/steps]
+    ExperimentSpec(
+        action_mode="so101_ee6d",
+        base_model=BASE_ORANGE_196,
+        dataset_name=DATASET_ORANGE,  # fallback base if mix_base_repo_id is not set
+        dataset_revision="main",
+        mix_enabled=True,
+        mix_base_repo_id=DATASET_ORANGE,
+        mix_new_repo_id=DATASET_MULTICOLOR,
+        mix_new_repeat=4,
+        mix_output_repo_id="soarm101_pickplace_ood_mix_orange_multicolor_r4",
+        batch_size=32,
+        optimizer_lr=3e-5,
+        steps=12_000,
+        scheduler_decay_lr=1e-5,
+        gradient_accumulation_steps=2,
+        enable_augmentation=False,
+    ),
 
 ]
 
-EXPERIMENTS = [EXPERIMENTS[0]]
+EXPERIMENTS = [EXPERIMENTS[6]]
 
 def main() -> None:
     run_experiments(workspace_dir=WORKSPACE_DIR, defaults=DEFAULTS, experiments=EXPERIMENTS)

@@ -7,6 +7,7 @@ import importlib
 import json
 import os
 import re
+import shutil
 import subprocess
 import sys
 from dataclasses import dataclass, fields, replace
@@ -62,6 +63,7 @@ class LaunchConfig:
     push_every: int = 8_000
     policy_push_to_hub: bool = True
     wandb_enable: bool = True
+    wandb_project: str = "lerobot"
     resume: bool = False
     policy_dtype: str = "bfloat16"
     enable_gripper_debug_stats: bool = True
@@ -71,6 +73,11 @@ class LaunchConfig:
     augmentation_backend: AugmentationBackend = "custom"
     augmentation_enable_photometric: bool = True
     augmentation_fill_mode: str = "reflect"
+    mix_enabled: bool = False
+    mix_base_repo_id: str | None = None
+    mix_new_repo_id: str | None = None
+    mix_new_repeat: int = 1
+    mix_output_repo_id: str | None = None
 
 
 @dataclass(frozen=True)
@@ -99,6 +106,7 @@ class ExperimentSpec:
     eval_freq: int | None = None
     save_freq: int | None = None
     push_every: int | None = None
+    wandb_project: str | None = None
     num_workers: int | None = None
     launch_mode: LaunchMode | None = None
     cuda_devices: tuple[int, ...] | None = None
@@ -108,6 +116,11 @@ class ExperimentSpec:
     augmentation_backend: AugmentationBackend | None = None
     augmentation_enable_photometric: bool | None = None
     augmentation_fill_mode: str | None = None
+    mix_enabled: bool | None = None
+    mix_base_repo_id: str | None = None
+    mix_new_repo_id: str | None = None
+    mix_new_repeat: int | None = None
+    mix_output_repo_id: str | None = None
 
 
 @dataclass(frozen=True)
@@ -134,6 +147,7 @@ class ResolvedExperiment:
     push_every: int
     policy_push_to_hub: bool
     wandb_enable: bool
+    wandb_project: str
     resume: bool
     policy_dtype: str
     enable_gripper_debug_stats: bool
@@ -143,6 +157,11 @@ class ResolvedExperiment:
     augmentation_backend: AugmentationBackend
     augmentation_enable_photometric: bool
     augmentation_fill_mode: str
+    mix_enabled: bool
+    mix_base_repo_id: str | None
+    mix_new_repo_id: str | None
+    mix_new_repeat: int
+    mix_output_repo_id: str | None
 
 
 EMPTY_CAMERAS = 1
@@ -259,6 +278,24 @@ def get_norm_suffix(mapping_str: str) -> str:
         return "custom"
 
 
+def default_mix_output_repo_id(
+    hf_user: str,
+    base_repo_id: str,
+    new_repo_id: str,
+    repeat: int,
+) -> str:
+    base_slug = sanitize_name_part(repo_slug(base_repo_id))
+    new_slug = sanitize_name_part(repo_slug(new_repo_id))
+    proposed = f"{hf_user}/mix_{base_slug}_{new_slug}_r{repeat}"
+    normalized_repo_id, was_shortened = normalize_repo_id(proposed, hf_user)
+    if was_shortened:
+        print(
+            "WARNING: mix_output_repo_id exceeded Hugging Face length constraints and was shortened to: "
+            f"{normalized_repo_id}"
+        )
+    return normalized_repo_id
+
+
 def _normalize_mode_name(value: str) -> str:
     return str(value).replace("-", "_").strip().upper()
 
@@ -370,8 +407,47 @@ def resolve_experiment(
         else defaults.augmentation_enable_photometric
     )
     augmentation_fill_mode = experiment.augmentation_fill_mode or defaults.augmentation_fill_mode
+    mix_enabled = experiment.mix_enabled if experiment.mix_enabled is not None else defaults.mix_enabled
+    mix_base_repo_id: str | None = None
+    mix_new_repo_id: str | None = None
+    mix_new_repeat = (
+        experiment.mix_new_repeat
+        if experiment.mix_new_repeat is not None
+        else defaults.mix_new_repeat
+    )
+    mix_output_repo_id: str | None = None
     dataset_repo_id = resolve_hf_repo_id(dataset_name, defaults.hf_user)
     run_timestamp = timestamp or dt.datetime.now().strftime("%Y%m%d_%H%M%S")
+
+    if mix_enabled:
+        base_candidate = experiment.mix_base_repo_id or defaults.mix_base_repo_id or dataset_repo_id
+        new_candidate = experiment.mix_new_repo_id or defaults.mix_new_repo_id
+        if not new_candidate:
+            raise ValueError(
+                "mix_enabled=true requires mix_new_repo_id in defaults or experiment spec."
+            )
+        if mix_new_repeat < 1:
+            raise ValueError(f"mix_new_repeat must be >= 1, got {mix_new_repeat}")
+
+        mix_base_repo_id = resolve_hf_repo_id(base_candidate, defaults.hf_user)
+        mix_new_repo_id = resolve_hf_repo_id(new_candidate, defaults.hf_user)
+        mix_output_candidate = experiment.mix_output_repo_id or defaults.mix_output_repo_id
+        if mix_output_candidate:
+            mix_output_repo_id, was_shortened = normalize_repo_id(
+                mix_output_candidate, defaults.hf_user
+            )
+            if was_shortened:
+                print(
+                    "WARNING: mix_output_repo_id exceeded Hugging Face length constraints and was shortened to: "
+                    f"{mix_output_repo_id}"
+                )
+        else:
+            mix_output_repo_id = default_mix_output_repo_id(
+                hf_user=defaults.hf_user,
+                base_repo_id=mix_base_repo_id,
+                new_repo_id=mix_new_repo_id,
+                repeat=mix_new_repeat,
+            )
 
     generated_name = experiment.name or default_policy_name(
         version=defaults.version,
@@ -432,6 +508,7 @@ def resolve_experiment(
         push_every=experiment.push_every if experiment.push_every is not None else defaults.push_every,
         policy_push_to_hub=defaults.policy_push_to_hub,
         wandb_enable=defaults.wandb_enable,
+        wandb_project=experiment.wandb_project or defaults.wandb_project,
         resume=defaults.resume,
         policy_dtype=defaults.policy_dtype,
         enable_gripper_debug_stats=defaults.enable_gripper_debug_stats,
@@ -441,6 +518,11 @@ def resolve_experiment(
         augmentation_backend=augmentation_backend,
         augmentation_enable_photometric=augmentation_enable_photometric,
         augmentation_fill_mode=augmentation_fill_mode,
+        mix_enabled=mix_enabled,
+        mix_base_repo_id=mix_base_repo_id,
+        mix_new_repo_id=mix_new_repo_id,
+        mix_new_repeat=mix_new_repeat,
+        mix_output_repo_id=mix_output_repo_id,
     )
 
 
@@ -554,6 +636,7 @@ def build_training_command(experiment: ResolvedExperiment) -> list[str]:
         f"--job_name={experiment.job_name}",
         f"--policy.device={experiment.runtime.device}",
         f"--wandb.enable={bool_str(experiment.wandb_enable)}",
+        f"--wandb.project={experiment.wandb_project}",
         f"--num_workers={experiment.runtime.num_workers}",
         f"--resume={bool_str(experiment.resume)}",
         f"--policy.dtype={experiment.policy_dtype}",
@@ -630,6 +713,12 @@ def print_run_summary(index: int, total: int, experiment: ResolvedExperiment, cm
     print(f"  Aug Backend:        {experiment.augmentation_backend}")
     print(f"  Aug Photometric:    {experiment.augmentation_enable_photometric}")
     print(f"  Aug Fill Mode:      {experiment.augmentation_fill_mode}")
+    print(f"  Mix Enabled:        {experiment.mix_enabled}")
+    if experiment.mix_enabled:
+        print(f"  Mix Base Dataset:   {experiment.mix_base_repo_id}")
+        print(f"  Mix New Dataset:    {experiment.mix_new_repo_id}")
+        print(f"  Mix New Repeat:     {experiment.mix_new_repeat}")
+        print(f"  Mix Output Dataset: {experiment.mix_output_repo_id}")
     print(f"  Output Dir:         {experiment.output_dir}")
     print(f"  Policy Repo ID:     {experiment.policy_repo_id}")
     print(f"  CUDA Devices:       {experiment.runtime.cuda_devices}")
@@ -644,6 +733,80 @@ def print_run_summary(index: int, total: int, experiment: ResolvedExperiment, cm
     print("  Command:")
     print(f"    {' '.join(cmd)}")
     print("=" * 88)
+
+
+def build_mixed_dataset_if_needed(
+    experiment: ResolvedExperiment,
+    env: dict[str, str],
+) -> ResolvedExperiment:
+    if not experiment.mix_enabled:
+        return experiment
+
+    if not experiment.mix_base_repo_id or not experiment.mix_new_repo_id or not experiment.mix_output_repo_id:
+        raise ValueError(
+            "mix_enabled=true requires mix_base_repo_id, mix_new_repo_id, and mix_output_repo_id to be resolved."
+        )
+
+    dataset_root = Path(env["HF_LEROBOT_HOME"])
+    merged_local_dir = dataset_root / experiment.mix_output_repo_id
+    if merged_local_dir.exists():
+        print(f"Removing existing mixed dataset at {merged_local_dir}")
+        shutil.rmtree(merged_local_dir)
+
+    merge_sources = [experiment.mix_base_repo_id] + [experiment.mix_new_repo_id] * experiment.mix_new_repeat
+    merge_sources_arg = json.dumps(merge_sources)
+    merge_cmd = [
+        sys.executable,
+        "-m",
+        "lerobot.scripts.lerobot_edit_dataset",
+        f"--repo_id={experiment.mix_output_repo_id}",
+        "--operation.type=merge",
+        f"--operation.repo_ids={merge_sources_arg}",
+        f"--root={dataset_root}",
+        "--push_to_hub=false",
+    ]
+    print(
+        "Building mixed dataset: "
+        f"base={experiment.mix_base_repo_id}, new={experiment.mix_new_repo_id} x{experiment.mix_new_repeat}, "
+        f"output={experiment.mix_output_repo_id}"
+    )
+    print(f"  Merge command: {' '.join(merge_cmd)}")
+    merge_exit_code = subprocess.call(merge_cmd, env=env)
+    if merge_exit_code != 0:
+        raise SystemExit(
+            f"Failed to create mixed dataset '{experiment.mix_output_repo_id}' "
+            f"(exit code {merge_exit_code})."
+        )
+
+    from lerobot.datasets.lerobot_dataset import LeRobotDataset
+
+    print("Verifying mixed dataset integrity...")
+    base_ds = LeRobotDataset(experiment.mix_base_repo_id, root=dataset_root)
+    new_ds = LeRobotDataset(experiment.mix_new_repo_id, root=dataset_root)
+    mixed_ds = LeRobotDataset(experiment.mix_output_repo_id, root=dataset_root)
+    expected_episodes = base_ds.num_episodes + new_ds.num_episodes * experiment.mix_new_repeat
+    if mixed_ds.num_episodes != expected_episodes:
+        raise RuntimeError(
+            "Mixed dataset episode count mismatch: "
+            f"expected {expected_episodes}, got {mixed_ds.num_episodes}."
+        )
+
+    base_features = set(base_ds.features.keys())
+    mixed_features = set(mixed_ds.features.keys())
+    if mixed_features != base_features:
+        missing = sorted(base_features - mixed_features)
+        extra = sorted(mixed_features - base_features)
+        raise RuntimeError(
+            "Mixed dataset feature mismatch against base dataset. "
+            f"Missing: {missing}. Extra: {extra}."
+        )
+
+    print(
+        "Mixed dataset verified: "
+        f"episodes={mixed_ds.num_episodes}, frames={mixed_ds.num_frames}, features={len(mixed_ds.features)}."
+    )
+
+    return replace(experiment, dataset_repo_id=experiment.mix_output_repo_id, dataset_revision="main")
 
 
 def run_experiments(
@@ -664,6 +827,7 @@ def run_experiments(
 
     for index, experiment in enumerate(experiments, start=1):
         resolved = resolve_experiment(workspace_dir=workspace_dir, defaults=defaults, experiment=experiment)
+        resolved = build_mixed_dataset_if_needed(resolved, env)
         cmd = build_training_command(resolved)
         runtime_env = apply_runtime_environment(env, resolved.runtime)
         runtime_env = apply_experiment_environment(runtime_env, resolved)
