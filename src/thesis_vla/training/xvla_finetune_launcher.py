@@ -64,6 +64,12 @@ class LaunchConfig:
     policy_push_to_hub: bool = True
     wandb_enable: bool = True
     wandb_project: str = "lerobot"
+    validation_enable: bool = False
+    validation_split_ratio: float = 0.1
+    validation_freq: int = 1_000
+    validation_max_batches: int = 10
+    validation_seed: int = 1337
+    validation_metric: str = "loss"
     resume: bool = False
     policy_dtype: str = "bfloat16"
     enable_gripper_debug_stats: bool = True
@@ -107,6 +113,12 @@ class ExperimentSpec:
     save_freq: int | None = None
     push_every: int | None = None
     wandb_project: str | None = None
+    validation_enable: bool | None = None
+    validation_split_ratio: float | None = None
+    validation_freq: int | None = None
+    validation_max_batches: int | None = None
+    validation_seed: int | None = None
+    validation_metric: str | None = None
     num_workers: int | None = None
     launch_mode: LaunchMode | None = None
     cuda_devices: tuple[int, ...] | None = None
@@ -148,6 +160,12 @@ class ResolvedExperiment:
     policy_push_to_hub: bool
     wandb_enable: bool
     wandb_project: str
+    validation_enable: bool
+    validation_split_ratio: float
+    validation_freq: int
+    validation_max_batches: int
+    validation_seed: int
+    validation_metric: str
     resume: bool
     policy_dtype: str
     enable_gripper_debug_stats: bool
@@ -509,6 +527,32 @@ def resolve_experiment(
         policy_push_to_hub=defaults.policy_push_to_hub,
         wandb_enable=defaults.wandb_enable,
         wandb_project=experiment.wandb_project or defaults.wandb_project,
+        validation_enable=(
+            experiment.validation_enable
+            if experiment.validation_enable is not None
+            else defaults.validation_enable
+        ),
+        validation_split_ratio=(
+            experiment.validation_split_ratio
+            if experiment.validation_split_ratio is not None
+            else defaults.validation_split_ratio
+        ),
+        validation_freq=(
+            experiment.validation_freq
+            if experiment.validation_freq is not None
+            else defaults.validation_freq
+        ),
+        validation_max_batches=(
+            experiment.validation_max_batches
+            if experiment.validation_max_batches is not None
+            else defaults.validation_max_batches
+        ),
+        validation_seed=(
+            experiment.validation_seed
+            if experiment.validation_seed is not None
+            else defaults.validation_seed
+        ),
+        validation_metric=experiment.validation_metric or defaults.validation_metric,
         resume=defaults.resume,
         policy_dtype=defaults.policy_dtype,
         enable_gripper_debug_stats=defaults.enable_gripper_debug_stats,
@@ -637,6 +681,12 @@ def build_training_command(experiment: ResolvedExperiment) -> list[str]:
         f"--policy.device={experiment.runtime.device}",
         f"--wandb.enable={bool_str(experiment.wandb_enable)}",
         f"--wandb.project={experiment.wandb_project}",
+        f"--validation.enable={bool_str(experiment.validation_enable)}",
+        f"--validation.split_ratio={experiment.validation_split_ratio}",
+        f"--validation.freq={experiment.validation_freq}",
+        f"--validation.max_batches={experiment.validation_max_batches}",
+        f"--validation.seed={experiment.validation_seed}",
+        f"--validation.metric={experiment.validation_metric}",
         f"--num_workers={experiment.runtime.num_workers}",
         f"--resume={bool_str(experiment.resume)}",
         f"--policy.dtype={experiment.policy_dtype}",
@@ -713,6 +763,13 @@ def print_run_summary(index: int, total: int, experiment: ResolvedExperiment, cm
     print(f"  Aug Backend:        {experiment.augmentation_backend}")
     print(f"  Aug Photometric:    {experiment.augmentation_enable_photometric}")
     print(f"  Aug Fill Mode:      {experiment.augmentation_fill_mode}")
+    print(f"  Validation:         {experiment.validation_enable}")
+    if experiment.validation_enable:
+        print(f"  Val Split Ratio:    {experiment.validation_split_ratio}")
+        print(f"  Val Frequency:      {experiment.validation_freq}")
+        print(f"  Val Max Batches:    {experiment.validation_max_batches}")
+        print(f"  Val Seed:           {experiment.validation_seed}")
+        print(f"  Val Metric:         {experiment.validation_metric}")
     print(f"  Mix Enabled:        {experiment.mix_enabled}")
     if experiment.mix_enabled:
         print(f"  Mix Base Dataset:   {experiment.mix_base_repo_id}")
