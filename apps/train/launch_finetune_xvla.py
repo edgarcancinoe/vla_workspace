@@ -79,7 +79,13 @@ DEFAULTS = LaunchConfig(
     push_every=30_000,
     policy_push_to_hub=True,
     wandb_enable=True,
-    wandb_project="lerobot",
+    wandb_project="xvla-cubes",
+    validation_enable=True,
+    validation_split_ratio=0.1,
+    validation_freq=5_000,
+    validation_max_batches=10,
+    validation_seed=1337,
+    validation_metric="loss",
 
     # ------------ Augmentation settings ------------
     enable_augmentation=False,
@@ -193,7 +199,7 @@ CLOTH_EXPERIMENTS = [
     ),
 ]
 
-EXPERIMENTS = [CUBE_EXPERIMENTS[0]]
+EXPERIMENTS = CUBE_EXPERIMENTS[0:2]
 
 def main() -> None:
     run_experiments(workspace_dir=WORKSPACE_DIR, defaults=DEFAULTS, experiments=EXPERIMENTS)
