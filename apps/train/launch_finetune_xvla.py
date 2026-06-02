@@ -35,7 +35,7 @@ if existing_pythonpath:
 os.environ["PYTHONPATH"] = ":".join(pythonpath_parts)
 
 from thesis_vla.common.paths import PROJECT_ROOT #type: ignore
-from thesis_vla.training.xvla_finetune_launcher import ExperimentSpec, FreezeConfig, LaunchConfig, RuntimeConfig, run_experiments #type: ignore
+from thesis_vla.training.xvla_finetune_launcher import AdaptationConfig, ExperimentSpec, FreezeConfig, LaunchConfig, RuntimeConfig, run_experiments #type: ignore
 
 WORKSPACE_DIR = PROJECT_ROOT
 
@@ -105,6 +105,12 @@ DEFAULTS = LaunchConfig(
 train_all               = FreezeConfig(freeze_vision_encoder=False,     freeze_language_encoder=False,  train_policy_transformer=True,  train_soft_prompts=True)
 train_domain_specific   = FreezeConfig(freeze_vision_encoder=True,      freeze_language_encoder=True,   train_policy_transformer=True,  train_soft_prompts=True)
 
+# Adaptation presets for convenience
+adapt_joint             = AdaptationConfig(mode="joint", freeze_steps=1_000, warmup_steps=2_000, learning_coef=1.0)
+adapt_staged            = AdaptationConfig(mode="staged_prompt_warmup", freeze_steps=1_000, warmup_steps=2_000, learning_coef=1.0)
+# Switch all experiments between staged and joint by changing this single line.
+EXPERIMENT_ADAPTATION   = adapt_staged
+
 # Base model presets for convenience
 BASE_MODEL = ("lerobot/xvla-base", 'xvla-base')
 BASE_ORANGE_196 = ("edgarcancinoe/xvla-base_soarm101_pickplace_10d_7p5hz_resampled_so101_ee6d_a-m_s-m_v1", "orange196")
@@ -123,12 +129,14 @@ CUBE_EXPERIMENTS = [
     ExperimentSpec(
         action_mode="so101_ee6d",   
         base_model=BASE_MODEL,    dataset_name=DATASET_ORANGE,  dataset_revision="main", 
+        adaptation=EXPERIMENT_ADAPTATION,
         batch_size=32,  optimizer_lr=1e-4,  steps=30_000,  scheduler_decay_lr=1e-5, gradient_accumulation_steps=1,
     ),
     # 1: [Base ->      Orange196]  [Aug]   [train_all]                      (RUNNING)
     ExperimentSpec(
         action_mode="so101_ee6d",   
         base_model=BASE_MODEL,     dataset_name=DATASET_ORANGE, dataset_revision="main",  enable_augmentation=True,
+        adaptation=EXPERIMENT_ADAPTATION,
         batch_size=32,  optimizer_lr=1e-4,  steps=30_000,  scheduler_decay_lr=1e-5, gradient_accumulation_steps=2,
     ),
     # ------------------------------------------------------------------
@@ -159,6 +167,7 @@ CUBE_EXPERIMENTS = [
     ExperimentSpec(
         action_mode="so101_ee6d",   
         base_model=BASE_MODEL,     dataset_name=DATASET_MULTICOLOR,
+        adaptation=EXPERIMENT_ADAPTATION,
         batch_size=8,  optimizer_lr=1e-4,  steps=100_000,  scheduler_decay_lr=1e-5, gradient_accumulation_steps=1,
         push_every=50_000,
         freeze=train_domain_specific
@@ -172,18 +181,21 @@ CUBE_EXPERIMENTS = [
     ExperimentSpec(
         action_mode="so101_ee6d",   
         base_model=BASE_ORANGE_196,     dataset_name=DATASET_MULTICOLOR,
+        adaptation=EXPERIMENT_ADAPTATION,
         batch_size=32,  optimizer_lr=1e-4,  steps=30_000,  scheduler_decay_lr=1e-5, gradient_accumulation_steps=2,  
     ),
     # 5: [Orange196 -> Multicolor] [NoAug] [train_all] [bs64]               
     ExperimentSpec(
         action_mode="so101_ee6d",   
         base_model=BASE_ORANGE_196,     dataset_name=DATASET_MULTICOLOR,
+        adaptation=EXPERIMENT_ADAPTATION,
         batch_size=32,  optimizer_lr=1e-4,  steps=45_000,  scheduler_decay_lr=1e-5, gradient_accumulation_steps=2,
     ),
     # 6: [Orange196 -> Multicolor] [NoAug] [domain-specific] [bs64]           
     ExperimentSpec(
         action_mode="so101_ee6d",   
         base_model=BASE_ORANGE_196,     dataset_name=DATASET_MULTICOLOR,
+        adaptation=EXPERIMENT_ADAPTATION,
         batch_size=32,  optimizer_lr=1e-4,  steps=45_000,  scheduler_decay_lr=1e-5, gradient_accumulation_steps=2,
         freeze=train_domain_specific
     ),
@@ -193,6 +205,7 @@ CLOTH_EXPERIMENTS = [
     ExperimentSpec(
         action_mode="so101_ee6d",   
         base_model=BASE_ORANGE_196,     dataset_name=DATASET_CLOTH_DROP,
+        adaptation=EXPERIMENT_ADAPTATION,
         batch_size=32,  optimizer_lr=1e-4,  steps=30_000,  scheduler_decay_lr=1e-5, gradient_accumulation_steps=2,
         save_freq=25_000,   push_every=25_000,
         freeze=train_domain_specific
@@ -210,6 +223,7 @@ CLOTH_EXPERIMENTS = [
     ExperimentSpec(
         action_mode="so101_ee6d",   
         base_model=BASE_MODEL,          dataset_name=DATASET_CLOTH_DROP,
+        adaptation=EXPERIMENT_ADAPTATION,
         batch_size=32,      optimizer_lr=1e-4,  steps=30_000,  scheduler_decay_lr=1e-5, gradient_accumulation_steps=2,
         save_freq=25_000,   push_every=25_000,
     ),
@@ -222,6 +236,7 @@ CLOTH_EXPERIMENTS = [
         base_model=BASE_ORANGE_196,
         dataset_name=DATASET_ORANGE,  # fallback base if mix_base_repo_id is not set
         dataset_revision="main",
+        adaptation=EXPERIMENT_ADAPTATION,
         mix_enabled=True,
         mix_base_repo_id=DATASET_ORANGE,
         mix_new_repo_id=DATASET_MULTICOLOR,

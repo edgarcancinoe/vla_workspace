@@ -1,9 +1,20 @@
+from pathlib import Path
+import sys
+
+ROOT_DIR = Path(__file__).resolve().parents[2]
+src_root = ROOT_DIR / "src"
+if str(src_root) not in sys.path:
+    sys.path.insert(0, str(src_root))
+lerobot_src = ROOT_DIR.parent / "repos" / "lerobot" / "src"
+if lerobot_src.exists() and str(lerobot_src) not in sys.path:
+    sys.path.insert(0, str(lerobot_src))
+
 import cv2
 from lerobot.cameras.opencv.configuration_opencv import OpenCVCameraConfig
 from lerobot.cameras.opencv.camera_opencv import OpenCVCamera
 from lerobot.cameras.configs import ColorMode, Cv2Rotation
 
-CAMERA_INDICES = [0,1]   # Add more indices if needed, e.g. [0, 1]
+CAMERA_INDICES = [0,1,]   # Add more indices if needed, e.g. [0, 1]
 res = (640, 480)
 cameras = []
 

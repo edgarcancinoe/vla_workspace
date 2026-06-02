@@ -34,14 +34,17 @@ from lerobot.utils.visualization_utils import init_rerun
 from lerobot.utils.control_utils import init_keyboard_listener
 from lerobot.policies.xvla.action_contract import get_so101_slice_spec
 from lerobot.policies.xvla.utils import mat_to_rotate6d
-from lerobot.policies.factory import make_pre_post_processors
 from lerobot.cameras.opencv.configuration_opencv import OpenCVCameraConfig
 from lerobot.robots.so100_follower.so100_follower import SO100Follower
 from lerobot.robots.so100_follower.config_so100_follower import SO100FollowerConfig
 
 from thesis_vla.vision import camera_calibration
+from thesis_vla.inference.runtime_policy import (
+    RuntimePolicyOverrides,
+    build_runtime_policy_processors,
+    load_runtime_policy,
+)
 from thesis_vla.inference.xvla_runtime import (
-    make_xvla_runtime_processors,
     resolve_xvla_rename_map,
     sync_xvla_policy_config,
 )
@@ -171,14 +174,39 @@ POLICY_PATH = "edgarcancinoe/orange196_pickplace_multicolor_v1_7p5hz_so101_ee6d_
 # POLICY_PATH = "edgarcancinoe/orange196_pickplace_multicolor_v1_7p5hz_so101_ee6d_am_sm_b32_ga2_eb64_tra-c05dc8ed"
 
 # POLICY_PATH = "edgarcancinoe/orange196_pickplace_multicolor_v1_7p5hz_so101_ee6d_am_sm_full_adapt_v1_bs32_ga2_45k"
-POLICY_PATH = "edgarcancinoe/orange196_square_cloth_corner_to_box_7p5hz_so101_ee6d_am_sm_b32_ga2_eb64_-b4889dfe" 
+# POLICY_PATH = "edgarcancinoe/orange196_square_cloth_corner_to_box_7p5hz_so101_ee6d_am_sm_b32_ga2_eb64_-b4889dfe" 
+
+
+# 1 JUNE
+# POLICY_PATH = "edgarcancinoe/xvla-base_pickplace_multicolor_v1_7p5hz_so101_ee6d_am_sm_b8_ga1_eb16_tran-be792c2a"                
+# POLICY_PATH = "edgarcancinoe/xvla-base_pickplace_multicolor_v1_7p5hz_so101_ee6d_am_sm_b8_ga1_eb16_tran-be792c2a-step-50000"      
+
+# POLICY_PATH = "edgarcancinoe/xvla-base_pickplace_10d_7p5hz_so101_ee6d_am_sm_b32_ga2_eb64_full_adapt_aug_v1"                       TRASH
+# POLICY_PATH = "edgarcancinoe/xvla-base_pickplace_multicolor_v1_7p5hz_so101_ee6d_am_sm_b8_ga1_eb16_full_adapt_v1"                  TRASH
+
+# POLICY_PATH = "edgarcancinoe/orange196_pickplace_multicolor_v1_7p5hz_so101_ee6d_am_sm_full_adapt_v1"
+# POLICY_PATH = "edgarcancinoe/orange196_square_cloth_corner_to_box_7p5hz_so101_ee6d_am_sm_b32_ga2_eb64_-b4889dfe" 
+# POLICY_PATH = "edgarcancinoe/xvla-base_pickplace_multicolor_v1_7p5hz_so101_ee6d_am_sm_b32_ga1_eb64_tra-655333cc"                  TRASH
+# POLICY_PATH = "edgarcancinoe/xvla-base_pickplace_multicolor_v1_7p5hz_so101_ee6d_am_sm_b16_ga2_eb64_ful-ad908ed8"                  TRASH
+# POLICY_PATH = "edgarcancinoe/xvla-base_pickplace_10d_7p5hz_so101_ee6d_am_sm_b16_ga2_eb32_full_adapt_v1"                           TRASH
+# POLICY_PATH = "edgarcancinoe/xvla-base_pickplace_10d_7p5hz_so101_ee6d_am_sm_b32_ga1_eb32_full_adapt_v1"                           TRASH
+
+# OLDER TRYING
+# POLICY_PATH = "edgarcancinoe/xvla-base_pickplace_10d_7p5hz_so101_ee6d_am_sm_b16_ga2_eb64_full_adapt_v1"
+# POLICY_PATH = "edgarcancinoe/orange196_pickplace_multicolor_v1_7p5hz_so101_ee6d_am_sm_b32_ga2_eb64_tra-c05dc8ed"
+# POLICY_PATH = "edgarcancinoe/orange196_pickplace_multicolor_v1_7p5hz_so101_ee6d_am_sm_full_adapt_v1"
+# POLICY_PATH = "edgarcancinoe/xvla-base_pickplace_multicolor_v1_7p5hz_so101_ee6d_am_sm_full_adapt_v1"
+# POLICY_PATH = "edgarcancinoe/xvla-base_pickplace_10d_7p5hz_so101_ee6d_am_sm_full_adapt_v1"
+
+# POLICY_PATH = "edgarcancinoe/orange196_square_cloth_corner_to_box_7p5hz_so101_ee6d_am_sm_b32_ga2_eb64_-b4889dfe"
+# POLICY_PATH = "edgarcancinoe/xvla-base_square_cloth_corner_to_box_7p5hz_so101_ee6d_am_sm_b32_ga2_eb64_-1c3ebca5"
 
 ""
 POLICY_TYPE = "xvla" # "xvla" | "smolvla"
 DEVICE      = "mps"  # "cuda" | "mps" | "cpu"
 
-# TASK_DESCRIPTION = "Pick up red cube and place inside white box."
-TASK_DESCRIPTION = "Pick the cloth by a visible corner and drop the cloth into the box."
+TASK_DESCRIPTION = "Pick up blue cube and place inside white box."
+# TASK_DESCRIPTION = "Pick the cloth by a visible corner and drop the cloth into the box."
 
 POLICY_PIPELINE = None
 
@@ -209,7 +237,7 @@ BINARY_GRIPPER_INFERENCE   = False
 
 # --- Evaluation & Dataset ---
 NUM_EPISODES               = 5
-CONTROL_FPS                = 15
+CONTROL_FPS                = 7.5
 CAMERA_FPS                 = 30
 EPISODE_TIME_SEC           = 90
 HF_USER                    = "edgarcancinoe"
@@ -1162,30 +1190,16 @@ def get_policy_processors(policy, dataset, pipeline_key: str | None = None):
 
     if pipeline_key == "xvla_default":
         print(f"[x] Using XVLA runtime pipeline: {pipeline_key}")
-        preprocessor, postprocessor = make_xvla_runtime_processors(
-            policy=policy,
-            pretrained_path=POLICY_PATH,
-            device=DEVICE,
-            rename_map=ACTIVE_XVLA_RENAME_MAP,
-        )
-        return preprocessor, postprocessor
-
-    # Default behavior: load processors from pretrained checkpoint
-    print(f"[x] Using default/factory processors (Device: {DEVICE})")
-    if policy.config.type == "xvla":
-        preprocessor, postprocessor = make_xvla_runtime_processors(
-            policy=policy,
-            pretrained_path=POLICY_PATH,
-            device=DEVICE,
-            rename_map=ACTIVE_XVLA_RENAME_MAP,
-        )
     else:
-        preprocessor, postprocessor = make_pre_post_processors(
-            policy_cfg=policy.config,
-            pretrained_path=POLICY_PATH,
-            dataset_stats=stats,
-            preprocessor_overrides={"device_processor": {"device": DEVICE}},
-        )
+        print(f"[x] Using shared runtime processors (Device: {DEVICE})")
+    preprocessor, postprocessor = build_runtime_policy_processors(
+        policy=policy,
+        pretrained_path=POLICY_PATH,
+        device=DEVICE,
+        rename_map=ACTIVE_XVLA_RENAME_MAP,
+        stats=stats,
+        use_dataset_stats=False,
+    )
     DBG.pre(f"Preprocessor type : {type(preprocessor).__name__}")
     DBG.post(f"Postprocessor type: {type(postprocessor).__name__}")
 
@@ -1202,35 +1216,23 @@ def get_policy(policy_type: str, path: str, device: str):
     after construction has NO effect on model internals like
     model.chunk_size or model.action_space.
     """
-    from lerobot.policies.factory import get_policy_class
-    from lerobot.configs.policies import PreTrainedConfig
-
     print(f"[x] Loading policy {path} ({policy_type}) on {device}")
-    policy_cls = get_policy_class(policy_type)
-
-    INCLUDE_EEF_STATE = False
+    policy, INCLUDE_EEF_STATE = load_runtime_policy(
+        policy_type=policy_type,
+        pretrained_path=path,
+        device=device,
+        overrides=RuntimePolicyOverrides(
+            chunk_size=CHUNK_SIZE,
+            n_action_steps=N_ACTION_STEPS,
+            max_action_tokens=MAX_ACTION_TOKENS,
+            num_xvla_obs_steps=NUM_XVLA_OBS_STEPS,
+            binary_gripper_inference=BINARY_GRIPPER_INFERENCE,
+        ),
+    )
 
     if policy_type == "xvla":
-        # ── Step 1: Load config first, keep the checkpoint's XVLA contract, THEN construct ──
-        config = PreTrainedConfig.from_pretrained(path)
-        config.device = device  # Ensure model lands on the right device
-
-        # Apply chunk/action-step overrides (None = keep pretrained default)
-        if CHUNK_SIZE is not None:
-            config.chunk_size = CHUNK_SIZE
-        if N_ACTION_STEPS is not None:
-            config.n_action_steps = N_ACTION_STEPS
-
-        config.n_obs_steps = NUM_XVLA_OBS_STEPS
-        config.binary_gripper_inference = BINARY_GRIPPER_INFERENCE
-
-        # ── Step 2: Construct model with the correct config ──
-        policy = policy_cls.from_pretrained(path, config=config, device=device)
-        INCLUDE_EEF_STATE = (getattr(policy.config, "action_mode", None) == "so101_ee6d")
-
-        # ── Step 3: Post-creation verification ──
         action_space_name = type(policy.model.action_space).__name__
-        norm_mode = config.normalization_mapping.get("ACTION", "?")
+        norm_mode = policy.config.normalization_mapping.get("ACTION", "?")
         print("[x] XVLA loaded successfully:")
         print(f"    model.chunk_size    = {policy.model.chunk_size}")
         print(f"    config.chunk_size   = {policy.config.chunk_size}")
@@ -1247,22 +1249,6 @@ def get_policy(policy_type: str, path: str, device: str):
             f"config.chunk_size={policy.config.chunk_size}. "
             f"Config override was not applied before model construction!"
         )
-
-    elif policy_type == "smolvla":
-        policy = policy_cls.from_pretrained(path, device=device)
-        if CHUNK_SIZE is not None and hasattr(policy.config, "chunk_size"):
-            policy.config.chunk_size = CHUNK_SIZE
-        if N_ACTION_STEPS is not None and hasattr(policy.config, "n_action_steps"):
-            policy.config.n_action_steps = N_ACTION_STEPS
-        if MAX_ACTION_TOKENS:
-            policy.config.max_action_tokens = MAX_ACTION_TOKENS
-
-    else:
-        policy = policy_cls.from_pretrained(path, device=device)
-        if CHUNK_SIZE is not None and hasattr(policy.config, "chunk_size"):
-            policy.config.chunk_size = CHUNK_SIZE
-        if N_ACTION_STEPS is not None and hasattr(policy.config, "n_action_steps"):
-            policy.config.n_action_steps = N_ACTION_STEPS
 
     policy.reset()
     return policy, INCLUDE_EEF_STATE

@@ -1,0 +1,40 @@
+policy_type: xvla
+pretrained_name_or_path: edgarcancinoe/orange196_pickplace_multicolor_v1_7p5hz_so101_ee6d_am_sm_full_adapt_v1
+server_address: 127.0.0.1:8080
+policy_device: mps
+client_device: cpu
+actions_per_chunk: 30
+chunk_size_threshold: 0.5
+task: "Pick up blue cube and place inside white box."
+task_prompts:
+  - "Pick up blue cube and place inside white box."
+  - "Pick up orange cube and place inside white box."
+num_episodes: null
+control_fps: 7.5
+camera_fps: 30
+episode_time_s: 90
+home_duration_s: 5
+home_fps: 7.5
+dry_run: false
+use_rerun: false
+use_meshcat_viz: false
+hf_user: edgarcancinoe
+eval_dataset_name: ""
+dataset_root: /Users/edgarcancino/Documents/Academic/EMAI Thesis/vla_workspace/runtime/outputs/datasets
+start_from_scratch: true
+resume_dataset: false
+overwrite_dataset: true
+auto_push_to_hub: false
+use_voice: true
+enable_ema_smoothing: false
+ema_alpha_motor: 0.35
+ema_alpha_gripper: 0.25
+ema_reset_on_episode_start: true
+enable_interpolation: false
+interp_substeps: 3
+interp_min_delta_motor: 0.0
+interp_apply_to_gripper: false
+interp_keep_control_fps_budget: true
+interp_min_sleep_s: 0.0005
+hf_upload_max_retries: 3
+hf_upload_retry_backoff_s: 3.0

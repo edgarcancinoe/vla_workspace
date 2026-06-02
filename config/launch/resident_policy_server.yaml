@@ -1,0 +1,13 @@
+host: 127.0.0.1
+port: 8080
+fps: 8
+inference_latency: 0.033
+obs_queue_timeout: 1.0
+policy_type: xvla
+pretrained_name_or_path: edgarcancinoe/orange196_pickplace_multicolor_v1_7p5hz_so101_ee6d_am_sm_full_adapt_v1
+policy_device: mps
+chunk_size: null
+n_action_steps: 30
+max_action_tokens: null
+num_xvla_obs_steps: 1
+binary_gripper_inference: false

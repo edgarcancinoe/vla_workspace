@@ -14,6 +14,8 @@ RUNTIME_ROOT = PROJECT_ROOT / "runtime"
 ROBOT_CONFIG_PATH = CONFIG_ROOT / "robot" / "robot_config.yaml"
 LAUNCH_CLIENT_CONFIG_PATH = CONFIG_ROOT / "launch" / "launch_client.yaml"
 LAUNCH_SERVER_CONFIG_PATH = CONFIG_ROOT / "launch" / "launch_server.yaml"
+LAUNCH_RESIDENT_EVAL_CONFIG_PATH = CONFIG_ROOT / "launch" / "resident_eval_client.yaml"
+LAUNCH_RESIDENT_SERVER_CONFIG_PATH = CONFIG_ROOT / "launch" / "resident_policy_server.yaml"
 
 RUNTIME_LOGS_DIR = RUNTIME_ROOT / "logs"
 RUNTIME_OUTPUTS_DIR = RUNTIME_ROOT / "outputs"
@@ -41,4 +43,3 @@ def ensure_runtime_dirs() -> None:
         CAPTURED_IMAGES_DIR,
     ):
         path.mkdir(parents=True, exist_ok=True)
-

@@ -19,6 +19,7 @@ from thesis_vla.common.paths import RUNTIME_CACHE_DIR, TRAIN_OUTPUT_DIR
 
 LaunchMode = Literal["single", "accelerate"]
 AugmentationBackend = Literal["custom", "lerobot"]
+AdaptationMode = Literal["joint", "staged_prompt_warmup"]
 ModelRef: TypeAlias = str | tuple[str, str]
 
 
@@ -42,6 +43,14 @@ class RuntimeConfig:
 
 
 @dataclass(frozen=True)
+class AdaptationConfig:
+    mode: AdaptationMode = "joint"
+    freeze_steps: int = 1_000
+    warmup_steps: int = 2_000
+    learning_coef: float = 1.0
+
+
+@dataclass(frozen=True)
 class LaunchConfig:
     hf_user: str = os.environ.get("HF_USER", "edgarcancinoe")
     version: str = os.environ.get("VERSION", "v1")
@@ -51,6 +60,7 @@ class LaunchConfig:
     action_mode: str = "so101_ee6d"
     normalization_mapping: str = '{"ACTION": "MEAN_STD", "STATE": "MEAN_STD", "VISUAL": "IDENTITY"}'
     freeze: FreezeConfig = FreezeConfig()
+    adaptation: AdaptationConfig = AdaptationConfig()
     runtime: RuntimeConfig = RuntimeConfig()
     batch_size: int = 32
     gradient_accumulation_steps: int = 1
@@ -99,10 +109,15 @@ class ExperimentSpec:
     action_mode: str | None = None
     normalization_mapping: str | None = None
     freeze: FreezeConfig | None = None
+    adaptation: AdaptationConfig | None = None
     freeze_vision_encoder: bool | None = None
     freeze_language_encoder: bool | None = None
     train_policy_transformer: bool | None = None
     train_soft_prompts: bool | None = None
+    adaptation_mode: AdaptationMode | None = None
+    freeze_steps: int | None = None
+    warmup_steps: int | None = None
+    learning_coef: float | None = None
     batch_size: int | None = None
     gradient_accumulation_steps: int | None = None
     optimizer_lr: float | None = None
@@ -147,6 +162,7 @@ class ResolvedExperiment:
     action_mode: str
     normalization_mapping: str
     freeze: FreezeConfig
+    adaptation: AdaptationConfig
     runtime: RuntimeConfig
     batch_size: int
     gradient_accumulation_steps: int
@@ -343,7 +359,7 @@ def with_overrides(base, **overrides):
     return replace(base, **payload)
 
 
-def merge_defaults(defaults: LaunchConfig, experiment: ExperimentSpec) -> tuple[FreezeConfig, RuntimeConfig]:
+def merge_defaults(defaults: LaunchConfig, experiment: ExperimentSpec) -> tuple[FreezeConfig, RuntimeConfig, AdaptationConfig]:
     freeze_base = experiment.freeze if experiment.freeze is not None else defaults.freeze
     freeze = with_overrides(
         freeze_base,
@@ -358,7 +374,31 @@ def merge_defaults(defaults: LaunchConfig, experiment: ExperimentSpec) -> tuple[
         cuda_devices=experiment.cuda_devices,
         num_workers=experiment.num_workers,
     )
-    return freeze, runtime
+    adaptation_base = experiment.adaptation if experiment.adaptation is not None else defaults.adaptation
+    adaptation = with_overrides(
+        adaptation_base,
+        mode=experiment.adaptation_mode,
+        freeze_steps=experiment.freeze_steps,
+        warmup_steps=experiment.warmup_steps,
+        learning_coef=experiment.learning_coef,
+    )
+    if adaptation.mode not in {"joint", "staged_prompt_warmup"}:
+        raise ValueError(f"Unsupported adaptation mode: {adaptation.mode}")
+    if adaptation.freeze_steps < 0 or adaptation.warmup_steps < 0:
+        raise ValueError("freeze_steps and warmup_steps must be >= 0.")
+    if adaptation.learning_coef <= 0:
+        raise ValueError("learning_coef must be > 0.")
+    if adaptation.mode == "staged_prompt_warmup":
+        staged_freeze = FreezeConfig(
+            freeze_vision_encoder=False,
+            freeze_language_encoder=False,
+            train_policy_transformer=True,
+            train_soft_prompts=True,
+        )
+        if freeze != staged_freeze:
+            print("WARNING: staged_prompt_warmup overrides static freeze flags to keep later-stage training enabled.")
+            freeze = staged_freeze
+    return freeze, runtime, adaptation
 
 
 def default_policy_name(
@@ -369,6 +409,7 @@ def default_policy_name(
     action_mode: str,
     normalization_mapping: str,
     freeze: FreezeConfig,
+    adaptation: AdaptationConfig,
     runtime: RuntimeConfig,
     batch_size: int,
     gradient_accumulation_steps: int,
@@ -390,6 +431,8 @@ def default_policy_name(
     ]
     if enable_augmentation:
         parts.append("aug")
+    if adaptation.mode != "joint":
+        parts.append("stagedpw")
     if name_suffix:
         parts.append(sanitize_name_part(name_suffix))
     parts.append(sanitize_name_part(version))
@@ -402,7 +445,7 @@ def resolve_experiment(
     experiment: ExperimentSpec,
     timestamp: str | None = None,
 ) -> ResolvedExperiment:
-    freeze, runtime = merge_defaults(defaults, experiment)
+    freeze, runtime, adaptation = merge_defaults(defaults, experiment)
 
     dataset_name = experiment.dataset_name or defaults.dataset_name
     dataset_revision = experiment.dataset_revision or defaults.dataset_revision
@@ -475,6 +518,7 @@ def resolve_experiment(
         action_mode=action_mode,
         normalization_mapping=normalization_mapping,
         freeze=freeze,
+        adaptation=adaptation,
         runtime=runtime,
         batch_size=experiment.batch_size if experiment.batch_size is not None else defaults.batch_size,
         gradient_accumulation_steps=(
@@ -506,6 +550,7 @@ def resolve_experiment(
         action_mode=action_mode,
         normalization_mapping=normalization_mapping,
         freeze=freeze,
+        adaptation=adaptation,
         runtime=runtime,
         batch_size=experiment.batch_size if experiment.batch_size is not None else defaults.batch_size,
         gradient_accumulation_steps=(
@@ -696,6 +741,10 @@ def build_training_command(experiment: ResolvedExperiment) -> list[str]:
         f"--policy.freeze_language_encoder={bool_str(experiment.freeze.freeze_language_encoder)}",
         f"--policy.train_policy_transformer={bool_str(experiment.freeze.train_policy_transformer)}",
         f"--policy.train_soft_prompts={bool_str(experiment.freeze.train_soft_prompts)}",
+        f"--policy.adaptation_mode={experiment.adaptation.mode}",
+        f"--policy.freeze_steps={experiment.adaptation.freeze_steps}",
+        f"--policy.warmup_steps={experiment.adaptation.warmup_steps}",
+        f"--policy.learning_coef={experiment.adaptation.learning_coef}",
         f"--policy.num_image_views={POLICY_NUM_IMAGE_VIEWS}",
         f"--policy.tokenizer_max_length={POLICY_TOKENIZER_MAX_LENGTH}",
         f"--policy.max_len_seq={POLICY_MAX_LEN_SEQ}",
@@ -756,6 +805,10 @@ def print_run_summary(index: int, total: int, experiment: ResolvedExperiment, cm
     print(f"  Freeze Language:    {experiment.freeze.freeze_language_encoder}")
     print(f"  Train Transformer:  {experiment.freeze.train_policy_transformer}")
     print(f"  Train Soft Prompts: {experiment.freeze.train_soft_prompts}")
+    print(f"  Adaptation Mode:    {experiment.adaptation.mode}")
+    print(f"  Freeze Steps:       {experiment.adaptation.freeze_steps}")
+    print(f"  Warmup Steps:       {experiment.adaptation.warmup_steps}")
+    print(f"  Learning Coef:      {experiment.adaptation.learning_coef}")
     print(f"  Batch Size:         {experiment.batch_size}")
     print(f"  Grad Accum Steps:   {experiment.gradient_accumulation_steps}")
     print(f"  Steps:              {experiment.steps}")
