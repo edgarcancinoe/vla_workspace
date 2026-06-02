@@ -20,12 +20,14 @@ from thesis_vla.common.paths import DATASETS_OUTPUT_DIR, ROBOT_CONFIG_PATH
 from thesis_vla.vision import camera_calibration
 
 HF_USER = "edgarcancinoe"
+
 SOURCE_DATASETS = [
-    f"{HF_USER}/soarm101_pickup_orange",
-    f"{HF_USER}/soarm101_pick_cubes_place_box"
+    "edgarcancinoe/soarm101_pickplace_multicolor_ood_v1_7p5hz",
+    "edgarcancinoe/soarm101_pickplace_multicolor_v1_7p5hz",
 ]
-TARGET_DATASET = f"{HF_USER}/soarm101_pickplace"
-TARGET_ROOT = DATASETS_OUTPUT_DIR / "soarm101_pickplace"
+TARGET_DATASET = "edgarcancinoe/pickplace-multicolor_7p5hz"
+TARGET_ROOT = DATASETS_OUTPUT_DIR / "pickplace-multicolor_7p5hz"
+
 
 # Load config to check if rectification is globally enabled (optional, but good practice)
 CONFIG_PATH = ROBOT_CONFIG_PATH
@@ -33,8 +35,8 @@ with open(CONFIG_PATH, "r") as f:
     config_data = yaml.safe_load(f)
 
 # Allow overrides if needed, but defaults to config
-RECTIFY_TOP = config_data.get("rectification", {}).get("top", True)
-RECTIFY_WRIST = config_data.get("rectification", {}).get("wrist", True)
+RECTIFY_TOP = False#config_data.get("rectification", {}).get("top", True)
+RECTIFY_WRIST = False#config_data.get("rectification", {}).get("wrist", True)
 
 def main():
     log_say(f"Starting merge and rectification into {TARGET_DATASET}")
@@ -45,10 +47,9 @@ def main():
     
     for source_repo in SOURCE_DATASETS:
         log_say(f"Processing source: {source_repo}")
-        
-        # Load source dataset with pyav to avoid torchcodec issues
-        source_ds = LeRobotDataset(source_repo, video_backend="pyav")
-        
+        local_name = source_repo.split("/")[-1]
+        source_root = DATASETS_OUTPUT_DIR / local_name
+        source_ds = LeRobotDataset(source_repo, root=source_root, revision="v3.0", video_backend="pyav")
         if target_dataset is None:
             # Initialize target dataset using features from the first source
             if TARGET_ROOT.exists():

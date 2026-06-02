@@ -35,7 +35,7 @@ if existing_pythonpath:
 os.environ["PYTHONPATH"] = ":".join(pythonpath_parts)
 
 from thesis_vla.common.paths import PROJECT_ROOT #type: ignore
-from thesis_vla.training.xvla_finetune_launcher import ExperimentSpec, FreezeConfig, LaunchConfig, RuntimeConfig, run_experiments #type: ignore
+from thesis_vla.training.xvla_finetune_launcher import AdaptationConfig, ExperimentSpec, FreezeConfig, LaunchConfig, RuntimeConfig, run_experiments #type: ignore
 
 WORKSPACE_DIR = PROJECT_ROOT
 
@@ -63,6 +63,12 @@ DEFAULTS = LaunchConfig(
         freeze_language_encoder=False,
         train_policy_transformer=True,
         train_soft_prompts=True,
+    ),
+    adaptation=AdaptationConfig(
+        mode="staged_prompt_warmup",
+        freeze_steps=1_000,
+        warmup_steps=2_000,
+        learning_coef=1.0,
     ),
 
     # ------------ Optimization settings ------------
