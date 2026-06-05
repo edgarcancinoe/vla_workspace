@@ -12,14 +12,15 @@ from pathlib import Path
 from typing import Any
 
 ROOT_DIR = Path(__file__).resolve().parents[2]
-workspace_src = ROOT_DIR / "src"
-if str(workspace_src) not in sys.path:
-    sys.path.insert(0, str(workspace_src))
-lerobot_src_candidates = [ROOT_DIR / "lerobot" / "src", ROOT_DIR.parent / "repos" / "lerobot" / "src"]
-for lerobot_src in lerobot_src_candidates:
-    if lerobot_src.exists() and str(lerobot_src) not in sys.path:
-        sys.path.insert(0, str(lerobot_src))
+workspace_src = str(ROOT_DIR / "src")
+if workspace_src in sys.path: sys.path.remove(workspace_src)
+sys.path.insert(0, workspace_src)
 
+lerobot_src_candidates = [ROOT_DIR / "lerobot" / "src", ROOT_DIR.parent / "repos" / "lerobot" / "src"]
+for lerobot_src in reversed([str(p) for p in lerobot_src_candidates if p.exists()]):
+    if lerobot_src in sys.path: sys.path.remove(lerobot_src)
+    sys.path.insert(0, lerobot_src)
+    
 from lerobot.configs.train import TRAIN_CONFIG_NAME, TrainPipelineConfig
 from lerobot.configs.default import ValidationConfig
 from lerobot.configs.types import FeatureType
@@ -51,17 +52,18 @@ from lerobot.utils.utils import auto_select_torch_device, get_safe_torch_device
 CHECKPOINTS: list[str | dict[str, str]] = [
     # "/abs/path/to/run/checkpoints/010000/pretrained_model",
     # {"name": "run_010000", "checkpoint": "/abs/path/to/run/checkpoints/010000/pretrained_model"},
+    "edgarcancinoe/orange196_pickplace_multicolor_v1_7p5hz_so101_ee6d_am_sm_b32_ga2_eb64_tra-c05dc8ed",
+    "/home/jose/EMAI-Thesis/vla_workspace/runtime/outputs/train/orange196_pickplace-multicolor_7p5hz_so101_ee6d_am_sm_b16_ga2_eb64_full_adapt_stagedpw_v1_20260603_110808/checkpoints/005000",
+    "/home/jose/EMAI-Thesis/vla_workspace/runtime/outputs/train/orange196_pickplace-multicolor_7p5hz_so101_ee6d_am_sm_b16_ga2_eb64_full_adapt_stagedpw_v1_20260603_110808/checkpoints/030000",
+    "/home/jose/EMAI-Thesis/vla_workspace/runtime/outputs/train/orange196_pickplace-multicolor_7p5hz_so101_ee6d_am_sm_b16_ga2_eb64_full_adapt_stagedpw_v1_20260603_110808/checkpoints/050000"
 ]
-CUDA_VISIBLE_DEVICES = ""
-DEVICE = "auto"
-BATCH_SIZE = None
-NUM_WORKERS = None
-MAX_BATCHES = None
+
+DEVICE = "cuda"
+BATCH_SIZE = 32
+NUM_WORKERS = 2
+MAX_BATCHES = 10
 OUTPUT_JSON = ""
 PROGRESS_EVERY = 10
-
-if CUDA_VISIBLE_DEVICES not in (None, ""):
-    os.environ["CUDA_VISIBLE_DEVICES"] = str(CUDA_VISIBLE_DEVICES)
 
 import torch
 
