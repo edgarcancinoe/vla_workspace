@@ -209,7 +209,11 @@ POLICY_PATH = "edgarcancinoe/xvla-base_pickplace-multicolor_7p5hz_so101_ee6d_am_
 
 # POLICY_PATH = "edgarcancinoe/orange196_pickplace-multicolor_7p5hz_so101_ee6d_am_sm_b16_ga2_eb64_full_a-2fa29795-step-30000"
 
-TASK_DESCRIPTION = "Pick up orange cube and place inside white box."
+
+POLICY_PATH = "/home/jose/EMAI-Thesis/vla_workspace/runtime/outputs/train/orange196_cloth-corner-fold_7p5hz_so101_ee6d_am_sm_b16_ga1_eb32_full_adapt_stagedpw_v1_20260604_142207/checkpoints/064000"
+# TASK_DESCRIPTION = "Pick up orange cube and place inside white box."
+TASK_DESCRIPTION = "Pick up a visible corner of the cloth and fold it over to the opposite side."
+
 
 
 EVAL_DATASET_NAME = "eval_orange196_multicolor-orange50k64bs"

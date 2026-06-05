@@ -52,14 +52,15 @@ from lerobot.utils.utils import auto_select_torch_device, get_safe_torch_device
 CHECKPOINTS: list[str | dict[str, str]] = [
     # "/abs/path/to/run/checkpoints/010000/pretrained_model",
     # {"name": "run_010000", "checkpoint": "/abs/path/to/run/checkpoints/010000/pretrained_model"},
-    # "edgarcancinoe/orange196_pickplace_multicolor_v1_7p5hz_so101_ee6d_am_sm_b32_ga2_eb64_tra-c05dc8ed",
-    # "/home/jose/EMAI-Thesis/vla_workspace/runtime/outputs/train/orange196_pickplace-multicolor_7p5hz_so101_ee6d_am_sm_b16_ga2_eb64_full_adapt_stagedpw_v1_20260603_110808",
-    "/home/jose/EMAI-Thesis/vla_workspace/runtime/outputs/train/orange196_pickplace-multicolor_7p5hz_so101_ee6d_am_sm_b16_ga2_eb64_full_adapt_stagedpw_v1_20260604_141258"
+    "edgarcancinoe/orange196_pickplace_multicolor_v1_7p5hz_so101_ee6d_am_sm_b32_ga2_eb64_tra-c05dc8ed",
+    "/home/jose/EMAI-Thesis/vla_workspace/runtime/outputs/train/orange196_pickplace-multicolor_7p5hz_so101_ee6d_am_sm_b16_ga2_eb64_full_adapt_stagedpw_v1_20260603_110808/checkpoints/005000",
+    "/home/jose/EMAI-Thesis/vla_workspace/runtime/outputs/train/orange196_pickplace-multicolor_7p5hz_so101_ee6d_am_sm_b16_ga2_eb64_full_adapt_stagedpw_v1_20260603_110808/checkpoints/030000",
+    "/home/jose/EMAI-Thesis/vla_workspace/runtime/outputs/train/orange196_pickplace-multicolor_7p5hz_so101_ee6d_am_sm_b16_ga2_eb64_full_adapt_stagedpw_v1_20260603_110808/checkpoints/050000"
 ]
 
 DEVICE = "cuda"
-BATCH_SIZE = 64
-NUM_WORKERS = None
+BATCH_SIZE = 32
+NUM_WORKERS = 2
 MAX_BATCHES = 10
 OUTPUT_JSON = ""
 PROGRESS_EVERY = 10
