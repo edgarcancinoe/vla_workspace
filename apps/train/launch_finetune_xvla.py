@@ -39,6 +39,13 @@ from thesis_vla.training.xvla_finetune_launcher import AdaptationConfig, Experim
 
 WORKSPACE_DIR = PROJECT_ROOT
 
+RUNTIME_CONFIG = RuntimeConfig(
+    launch_mode="accelerate", # single / accelerate
+    cuda_devices=(2,3),
+    num_workers=2,
+    dry_run=False,
+)
+
 DEFAULTS = LaunchConfig(
     # ----- General model and database settings ------
     hf_user="edgarcancinoe",
@@ -50,12 +57,7 @@ DEFAULTS = LaunchConfig(
     action_mode="so101_ee6d", # so101_ee6d / so101_joint
 
     # ----------- Runtime/Device settings -----------
-    runtime=RuntimeConfig(
-        launch_mode="accelerate", # single / accelerate
-        cuda_devices=(0,1),
-        num_workers=4,
-        dry_run=False,
-    ),
+    runtime=RUNTIME_CONFIG,
 
     # ---------- Training layers settings -----------
     freeze=FreezeConfig(
@@ -73,13 +75,13 @@ DEFAULTS = LaunchConfig(
     steps=30_000,
 
     # ------- Logging and checkpoint settings -------
-    log_freq=500,
+    log_freq=400,
     eval_freq=-1,
-    save_freq=30_000,
-    push_every=30_000,
+    save_freq=15_000,
+    push_every=15_000,
     policy_push_to_hub=True,
     wandb_enable=True,
-    wandb_project="xvla-cubes",
+    wandb_project="xvla-cubes-staged",
     validation_enable=True,
     validation_split_ratio=0.1,
     validation_freq=5_000,
@@ -106,10 +108,8 @@ train_all               = FreezeConfig(freeze_vision_encoder=False,     freeze_l
 train_domain_specific   = FreezeConfig(freeze_vision_encoder=True,      freeze_language_encoder=True,   train_policy_transformer=True,  train_soft_prompts=True)
 
 # Adaptation presets for convenience
-adapt_joint             = AdaptationConfig(mode="joint", freeze_steps=1_000, warmup_steps=2_000, learning_coef=1.0)
-adapt_staged            = AdaptationConfig(mode="staged_prompt_warmup", freeze_steps=1_000, warmup_steps=2_000, learning_coef=1.0)
-# Switch all experiments between staged and joint by changing this single line.
-EXPERIMENT_ADAPTATION   = adapt_staged
+ADAPT_JOINT            = AdaptationConfig(mode="joint", freeze_steps=1_000, warmup_steps=2_000, learning_coef=0.1)
+ADAPT_STAGED           = AdaptationConfig(mode="staged_prompt_warmup", freeze_steps=1_000, warmup_steps=2_000, learning_coef=0.1)
 
 # Base model presets for convenience
 BASE_MODEL = ("lerobot/xvla-base", 'xvla-base')
@@ -119,139 +119,87 @@ BASE_ORANGE_196 = ("edgarcancinoe/xvla-base_soarm101_pickplace_10d_7p5hz_resampl
 DATASET_ORANGE = "soarm101_pickplace_10d_7p5hz"
 DATASET_MULTICOLOR = "soarm101_pickplace_multicolor_v1_7p5hz"
 
-DATASET_CLOTH_DROP = "soarm101_square_cloth_corner_to_box_7p5hz"
+
+DATASET_MULTICOLOR = "pickplace-multicolor_7p5hz"
+DATASET_CLOTH_FOLD = "cloth-corner-fold_7p5hz"
+DATASET_CLOTH_DROP = "cloth-corner-box_7p5hz"
+
 
 # Experiment specs.
-CUBE_EXPERIMENTS = [
+ORANGE_CUBE = [
+    # ------------------------------------------------------------------
     # Simple Orange
+    # Using xvla-base and staged training
     # ------------------------------------------------------------------
-    # 0: [Base ->      Orange196]  [NoAug] [train_all]                      (RUNNING)
+    # 0: [Base ->      Orange196]  [NoAug] [train_all]                      (NOT RUN)
     ExperimentSpec(
         action_mode="so101_ee6d",   
-        base_model=BASE_MODEL,    dataset_name=DATASET_ORANGE,  dataset_revision="main", 
-        adaptation=EXPERIMENT_ADAPTATION,
-        batch_size=32,  optimizer_lr=1e-4,  steps=30_000,  scheduler_decay_lr=1e-5, gradient_accumulation_steps=1,
-    ),
-    # 1: [Base ->      Orange196]  [Aug]   [train_all]                      (RUNNING)
-    ExperimentSpec(
-        action_mode="so101_ee6d",   
-        base_model=BASE_MODEL,     dataset_name=DATASET_ORANGE, dataset_revision="main",  enable_augmentation=True,
-        adaptation=EXPERIMENT_ADAPTATION,
-        batch_size=32,  optimizer_lr=1e-4,  steps=30_000,  scheduler_decay_lr=1e-5, gradient_accumulation_steps=2,
-    ),
+        base_model=BASE_MODEL,    
+        dataset_name=DATASET_ORANGE,  dataset_revision="main",
+        adaptation=ADAPT_STAGED,
+        batch_size=32,  gradient_accumulation_steps=1, optimizer_lr=1e-4,  steps=30_000,  scheduler_decay_lr=1e-5, 
+        enable_augmentation=False, 
+    )
     # ------------------------------------------------------------------
-    
-    # Multicolor
     # ------------------------------------------------------------------
-    # 2: [Base ->      Multicolor] [NoAug] [train_all] [bs64]               (RUNNING)        
+    # ------------------------------------------------------------------
+]
+
+MULTICOLOR_CUBE = [
+    # [Base ->      Multicolor]
     ExperimentSpec(
         action_mode="so101_ee6d",   
         base_model=BASE_MODEL,     dataset_name=DATASET_MULTICOLOR,
-        batch_size=16,  optimizer_lr=1e-4,  steps=30_000,  scheduler_decay_lr=1e-5, gradient_accumulation_steps=2,
+        batch_size=16,  optimizer_lr=1e-4,  steps=50_000,  scheduler_decay_lr=1e-5, gradient_accumulation_steps=2,
+        adaptation=ADAPT_STAGED,
+        enable_augmentation=False, 
     ),
-    # 3: [Base ->      Multicolor] [NoAug] [domain_sp] [bs64]               (RUNNING)        
-    ExperimentSpec(
-        action_mode="so101_ee6d",   
-        base_model=BASE_MODEL,     dataset_name=DATASET_MULTICOLOR,
-        batch_size=32,  optimizer_lr=1e-4,  steps=30_000,  scheduler_decay_lr=1e-5, gradient_accumulation_steps=1,
-        freeze=train_domain_specific
-    ),
-    # 4: [Base ->      Multicolor] [NoAug] [train_all] [bs16]               (RUNNING)        
-    ExperimentSpec(
-        action_mode="so101_ee6d",   
-        base_model=BASE_MODEL,     dataset_name=DATASET_MULTICOLOR,
-        batch_size=8,  optimizer_lr=1e-4,  steps=100_000,  scheduler_decay_lr=1e-5, gradient_accumulation_steps=1,
-        push_every=50_000
-    ),
-    # 5: [Base ->      Multicolor] [NoAug] [domain_sp] [bs16]               (RUNNING)        
-    ExperimentSpec(
-        action_mode="so101_ee6d",   
-        base_model=BASE_MODEL,     dataset_name=DATASET_MULTICOLOR,
-        adaptation=EXPERIMENT_ADAPTATION,
-        batch_size=8,  optimizer_lr=1e-4,  steps=100_000,  scheduler_decay_lr=1e-5, gradient_accumulation_steps=1,
-        push_every=50_000,
-        freeze=train_domain_specific
-    ),
-
-
-
-
-
-    # 4: [Orange196 -> Multicolor] [NoAug] [train_all] [bs32]               
+    # [OrangeJOINT -> Multicolor]
     ExperimentSpec(
         action_mode="so101_ee6d",   
         base_model=BASE_ORANGE_196,     dataset_name=DATASET_MULTICOLOR,
-        adaptation=EXPERIMENT_ADAPTATION,
-        batch_size=32,  optimizer_lr=1e-4,  steps=30_000,  scheduler_decay_lr=1e-5, gradient_accumulation_steps=2,  
-    ),
-    # 5: [Orange196 -> Multicolor] [NoAug] [train_all] [bs64]               
-    ExperimentSpec(
-        action_mode="so101_ee6d",   
-        base_model=BASE_ORANGE_196,     dataset_name=DATASET_MULTICOLOR,
-        adaptation=EXPERIMENT_ADAPTATION,
-        batch_size=32,  optimizer_lr=1e-4,  steps=45_000,  scheduler_decay_lr=1e-5, gradient_accumulation_steps=2,
-    ),
-    # 6: [Orange196 -> Multicolor] [NoAug] [domain-specific] [bs64]           
-    ExperimentSpec(
-        action_mode="so101_ee6d",   
-        base_model=BASE_ORANGE_196,     dataset_name=DATASET_MULTICOLOR,
-        adaptation=EXPERIMENT_ADAPTATION,
-        batch_size=32,  optimizer_lr=1e-4,  steps=45_000,  scheduler_decay_lr=1e-5, gradient_accumulation_steps=2,
-        freeze=train_domain_specific
+        batch_size=8,  optimizer_lr=1e-4,  steps=64_000,  scheduler_decay_lr=1e-5, gradient_accumulation_steps=2,
+        adaptation=ADAPT_STAGED,
+        enable_augmentation=False, 
     ),
 ]
 
-CLOTH_EXPERIMENTS = [
+CLOTH_DROP = [
+    # [OrangeJOINT -> Cloth-Drop]
     ExperimentSpec(
         action_mode="so101_ee6d",   
-        base_model=BASE_ORANGE_196,     dataset_name=DATASET_CLOTH_DROP,
-        adaptation=EXPERIMENT_ADAPTATION,
-        batch_size=32,  optimizer_lr=1e-4,  steps=30_000,  scheduler_decay_lr=1e-5, gradient_accumulation_steps=2,
-        save_freq=25_000,   push_every=25_000,
-        freeze=train_domain_specific
-    ),
+        base_model=BASE_ORANGE_196,     
+        dataset_name=DATASET_CLOTH_DROP,
+        batch_size=16,  optimizer_lr=1e-4,  steps=50_000,  scheduler_decay_lr=1e-5, gradient_accumulation_steps=4,
+        adaptation=ADAPT_STAGED,
+        enable_augmentation=False, 
+    )
+]
 
-
-
+CLOTH_FOLD = [
+    # [OrangeJOINT -> Cloth-Fold] [NoAug] [staged] [bs64]                  
     ExperimentSpec(
         action_mode="so101_ee6d",   
-        base_model=BASE_MODEL,          dataset_name=DATASET_CLOTH_DROP,
-        batch_size=32,      optimizer_lr=1e-4,  steps=30_000,  scheduler_decay_lr=1e-5, gradient_accumulation_steps=2,
-        save_freq=25_000,   push_every=25_000,
-        freeze=train_domain_specific
+        base_model=BASE_ORANGE_196,     
+        dataset_name=DATASET_CLOTH_FOLD,
+        batch_size=16,  optimizer_lr=1e-4,  steps=50_000,  scheduler_decay_lr=1e-5, gradient_accumulation_steps=2,
+        adaptation=ADAPT_STAGED,
+        enable_augmentation=False, 
     ),
     ExperimentSpec(
         action_mode="so101_ee6d",   
-        base_model=BASE_MODEL,          dataset_name=DATASET_CLOTH_DROP,
-        adaptation=EXPERIMENT_ADAPTATION,
-        batch_size=32,      optimizer_lr=1e-4,  steps=30_000,  scheduler_decay_lr=1e-5, gradient_accumulation_steps=2,
-        save_freq=25_000,   push_every=25_000,
-    ),
-    # ------------------------------------------------------------------
-
-    # OOD adaptation (safe default): mix base fixed-location data with boosted random-placement data.
-    # 6: [Orange196 -> mixed(base + 4x random)] [NoAug] [train_all] [stable lr/steps]
-    ExperimentSpec(
-        action_mode="so101_ee6d",
-        base_model=BASE_ORANGE_196,
-        dataset_name=DATASET_ORANGE,  # fallback base if mix_base_repo_id is not set
-        dataset_revision="main",
-        adaptation=EXPERIMENT_ADAPTATION,
-        mix_enabled=True,
-        mix_base_repo_id=DATASET_ORANGE,
-        mix_new_repo_id=DATASET_MULTICOLOR,
-        mix_new_repeat=4,
-        mix_output_repo_id="soarm101_pickplace_ood_mix_orange_multicolor_r4",
-        batch_size=32,
-        optimizer_lr=3e-5,
-        steps=12_000,
-        scheduler_decay_lr=1e-5,
-        gradient_accumulation_steps=2,
-        enable_augmentation=False,
+        base_model=BASE_ORANGE_196,     
+        dataset_name=DATASET_CLOTH_FOLD,
+        batch_size=16,  optimizer_lr=1e-4,  steps=50_000,  scheduler_decay_lr=1e-5, gradient_accumulation_steps=4,
+        adaptation=ADAPT_STAGED,
+        enable_augmentation=False, 
     ),
 ]
 
-EXPERIMENTS = CUBE_EXPERIMENTS[4:6]
+EXPERIMENTS = [MULTICOLOR_CUBE[1]]
+# EXPERIMENTS = [CLOTH_FOLD[0], CLOTH_FOLD[1]]
+# EXPERIMENTS = CLOTH_FOLD
+EXPERIMENTS = [EXPERIMENTS] if isinstance(EXPERIMENTS, ExperimentSpec) else EXPERIMENTS
 
 def main() -> None:
     run_experiments(workspace_dir=WORKSPACE_DIR, defaults=DEFAULTS, experiments=EXPERIMENTS)
