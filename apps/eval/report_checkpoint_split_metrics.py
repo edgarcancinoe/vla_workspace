@@ -43,7 +43,7 @@ from lerobot.scripts.lerobot_train import (
     split_train_validation_episodes,
     FixedIndexSampler,
 )
-from lerobot.utils.constants import POLICY_PREPROCESSOR_DEFAULT_NAME, PRETRAINED_MODEL_DIR
+from lerobot.utils.constants import CHECKPOINTS_DIR, LAST_CHECKPOINT_LINK, POLICY_PREPROCESSOR_DEFAULT_NAME, PRETRAINED_MODEL_DIR
 from lerobot.utils.import_utils import register_third_party_plugins
 from lerobot.utils.utils import auto_select_torch_device, get_safe_torch_device
 
@@ -97,6 +97,21 @@ def resolve_pretrained_ref(checkpoint: str) -> tuple[str, Path | None]:
     pretrained_dir = resolved / PRETRAINED_MODEL_DIR
     if (pretrained_dir / TRAIN_CONFIG_NAME).exists():
         return str(pretrained_dir), pretrained_dir
+    checkpoints_dir = resolved / CHECKPOINTS_DIR
+    last_pretrained_dir = checkpoints_dir / LAST_CHECKPOINT_LINK / PRETRAINED_MODEL_DIR
+    if (last_pretrained_dir / TRAIN_CONFIG_NAME).exists():
+        logging.warning("%s: resolved run directory to %s", checkpoint, last_pretrained_dir)
+        return str(last_pretrained_dir), last_pretrained_dir
+    if checkpoints_dir.exists():
+        checkpoint_candidates = sorted(
+            [path for path in checkpoints_dir.iterdir() if path.is_dir() and path.name.isdigit()],
+            key=lambda path: int(path.name),
+        )
+        if checkpoint_candidates:
+            latest_pretrained_dir = checkpoint_candidates[-1] / PRETRAINED_MODEL_DIR
+            if (latest_pretrained_dir / TRAIN_CONFIG_NAME).exists():
+                logging.warning("%s: resolved run directory to latest checkpoint %s", checkpoint, latest_pretrained_dir)
+                return str(latest_pretrained_dir), latest_pretrained_dir
     raise ValueError(f"Could not locate {TRAIN_CONFIG_NAME} under {resolved}")
 
 
