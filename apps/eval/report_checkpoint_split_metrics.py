@@ -57,6 +57,7 @@ BATCH_SIZE = None
 NUM_WORKERS = None
 MAX_BATCHES = None
 OUTPUT_JSON = ""
+PROGRESS_EVERY = 10
 
 if CUDA_VISIBLE_DEVICES not in (None, ""):
     os.environ["CUDA_VISIBLE_DEVICES"] = str(CUDA_VISIBLE_DEVICES)
@@ -158,7 +159,7 @@ def ensure_xvla_slice_step(preprocessor, slice_spec) -> None:
     preprocessor.steps.insert(insert_idx, SliceProcessorStep(slice_map=slice_map))
 
 
-def evaluate_split(name: str, policy, dataloader, preprocessor, validation_seed: int, max_batches: int | None) -> dict[str, float]:
+def evaluate_split(name: str, policy, dataloader, preprocessor, validation_seed: int, max_batches: int | None, progress_every: int) -> dict[str, float]:
     fake_accelerator = _EvalAccelerator(next(policy.parameters()).device)
     was_training = policy.training
     policy.eval()
@@ -169,11 +170,17 @@ def evaluate_split(name: str, policy, dataloader, preprocessor, validation_seed:
     local_component_counts: dict[str, float] = {}
     local_gripper_counts = {key: 0.0 for key in GRIPPER_DEBUG_COUNT_KEYS}
     base_policy = policy
+    total_batches = len(dataloader)
+    if max_batches is not None:
+        total_batches = min(total_batches, max_batches)
+    print(f"[progress] split={name} starting batches={total_batches}", flush=True)
     try:
         with torch.no_grad():
             for batch_index, raw_batch in enumerate(dataloader):
                 if max_batches is not None and batch_index >= max_batches:
                     break
+                if batch_index == 0 or ((batch_index + 1) % progress_every == 0) or (batch_index + 1 == total_batches):
+                    print(f"[progress] split={name} batch={batch_index + 1}/{total_batches}", flush=True)
                 batch = preprocessor(raw_batch)
                 deterministic_validation_corruption = _make_xvla_validation_corruption(base_policy, batch, batch_index, validation_seed)
                 loss, output_dict, batch_size = _compute_policy_loss(policy, batch, fake_accelerator, deterministic_validation_corruption=deterministic_validation_corruption)
@@ -199,6 +206,7 @@ def evaluate_split(name: str, policy, dataloader, preprocessor, validation_seed:
         policy.train(was_training)
     if local_batch_count < 1 or local_sample_count <= 0:
         raise RuntimeError(f"{name} split evaluation ran with zero batches.")
+    print(f"[progress] split={name} done batches={int(local_batch_count)} samples={int(local_sample_count)}", flush=True)
     metrics = {"loss": local_loss_sum / local_sample_count, "num_batches": float(local_batch_count), "num_samples": float(local_sample_count)}
     for key, component_sum in local_component_sums.items():
         denom = local_component_counts[key]
@@ -231,6 +239,7 @@ def print_metric_block(title: str, metrics: dict[str, float]) -> None:
 
 
 def evaluate_checkpoint(spec: EvalSpec, device: torch.device, batch_size_override: int | None, num_workers_override: int | None, max_batches: int | None) -> dict[str, Any]:
+    print(f"[progress] checkpoint={spec.name} resolving", flush=True)
     pretrained_ref, local_pretrained_dir = resolve_pretrained_ref(spec.checkpoint)
     cfg = TrainPipelineConfig.from_pretrained(pretrained_ref)
     if not cfg.validation.enable:
@@ -240,6 +249,7 @@ def evaluate_checkpoint(spec: EvalSpec, device: torch.device, batch_size_overrid
     cfg.dataset = dataclasses.replace(cfg.dataset, image_transforms=dataclasses.replace(cfg.dataset.image_transforms, enable=False))
     eval_batch_size = batch_size_override if batch_size_override is not None else cfg.batch_size
     eval_num_workers = num_workers_override if num_workers_override is not None else cfg.num_workers
+    print(f"[progress] checkpoint={spec.name} building datasets repo_id={cfg.dataset.repo_id} revision={cfg.dataset.revision}", flush=True)
     base_dataset = make_dataset(cfg)
     train_episodes, val_episodes = split_train_validation_episodes(base_dataset, cfg.validation.split_ratio, cfg.validation.seed)
     train_dataset = make_dataset_with_episodes(cfg, train_episodes, disable_augmentation=True)
@@ -257,6 +267,7 @@ def evaluate_checkpoint(spec: EvalSpec, device: torch.device, batch_size_overrid
         _rebuild_xvla_visual_input_features(cfg.policy, train_dataset.meta, cfg.rename_map)
     if cfg.policy.type != "xvla":
         raise ValueError(f"Expected an XVLA checkpoint, got policy type {cfg.policy.type!r}")
+    print(f"[progress] checkpoint={spec.name} loading policy", flush=True)
     policy = XVLAPolicy.from_pretrained(cfg.policy.pretrained_path, config=cfg.policy)
     policy.config.normalization_mapping = cfg.policy.normalization_mapping
     if hasattr(policy.config, "enable_gripper_debug_stats"):
@@ -276,8 +287,11 @@ def evaluate_checkpoint(spec: EvalSpec, device: torch.device, batch_size_overrid
     ensure_xvla_slice_step(preprocessor, xvla_slice_spec)
     train_dataloader = make_eval_dataloader(train_dataset, cfg.policy, eval_batch_size, eval_num_workers, device.type)
     val_dataloader = make_eval_dataloader(val_dataset, cfg.policy, eval_batch_size, eval_num_workers, device.type)
-    train_metrics = evaluate_split("train", policy, train_dataloader, preprocessor, cfg.validation.seed, max_batches)
-    val_metrics = evaluate_split("validation", policy, val_dataloader, preprocessor, cfg.validation.seed, max_batches)
+    print(f"[progress] checkpoint={spec.name} evaluating train_split", flush=True)
+    train_metrics = evaluate_split("train", policy, train_dataloader, preprocessor, cfg.validation.seed, max_batches, PROGRESS_EVERY)
+    print(f"[progress] checkpoint={spec.name} evaluating validation_split", flush=True)
+    val_metrics = evaluate_split("validation", policy, val_dataloader, preprocessor, cfg.validation.seed, max_batches, PROGRESS_EVERY)
+    print(f"[progress] checkpoint={spec.name} complete", flush=True)
     return {
         "name": spec.name,
         "checkpoint": pretrained_ref,
