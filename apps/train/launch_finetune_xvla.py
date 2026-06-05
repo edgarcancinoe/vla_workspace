@@ -51,8 +51,8 @@ DEFAULTS = LaunchConfig(
 
     # ----------- Runtime/Device settings -----------
     runtime=RuntimeConfig(
-        launch_mode="single", # single / accelerate
-        cuda_devices=(3,),
+        launch_mode="accelerate", # single / accelerate
+        cuda_devices=(0,1),
         num_workers=4,
         dry_run=False,
     ),
@@ -125,14 +125,14 @@ DATASET_CLOTH_DROP = "soarm101_square_cloth_corner_to_box_7p5hz"
 CUBE_EXPERIMENTS = [
     # Simple Orange
     # ------------------------------------------------------------------
-    # 0: [Base ->      Orange196]  [NoAug] [train_all]
+    # 0: [Base ->      Orange196]  [NoAug] [train_all]                      (RUNNING)
     ExperimentSpec(
         action_mode="so101_ee6d",   
         base_model=BASE_MODEL,    dataset_name=DATASET_ORANGE,  dataset_revision="main", 
         adaptation=EXPERIMENT_ADAPTATION,
-        batch_size=16,  optimizer_lr=1e-4,  steps=30_000,  scheduler_decay_lr=1e-5, gradient_accumulation_steps=2,
+        batch_size=32,  optimizer_lr=1e-4,  steps=30_000,  scheduler_decay_lr=1e-5, gradient_accumulation_steps=1,
     ),
-    # 1: [Base ->      Orange196]  [Aug]   [train_all]
+    # 1: [Base ->      Orange196]  [Aug]   [train_all]                      (RUNNING)
     ExperimentSpec(
         action_mode="so101_ee6d",   
         base_model=BASE_MODEL,     dataset_name=DATASET_ORANGE, dataset_revision="main",  enable_augmentation=True,
@@ -143,28 +143,55 @@ CUBE_EXPERIMENTS = [
     
     # Multicolor
     # ------------------------------------------------------------------
-    # 2: [Base ->      Multicolor] [NoAug] [train_all] [bs64]               DONE
+    # 2: [Base ->      Multicolor] [NoAug] [train_all] [bs64]               (RUNNING)        
+    ExperimentSpec(
+        action_mode="so101_ee6d",   
+        base_model=BASE_MODEL,     dataset_name=DATASET_MULTICOLOR,
+        batch_size=16,  optimizer_lr=1e-4,  steps=30_000,  scheduler_decay_lr=1e-5, gradient_accumulation_steps=2,
+    ),
+    # 3: [Base ->      Multicolor] [NoAug] [domain_sp] [bs64]               (RUNNING)        
+    ExperimentSpec(
+        action_mode="so101_ee6d",   
+        base_model=BASE_MODEL,     dataset_name=DATASET_MULTICOLOR,
+        batch_size=32,  optimizer_lr=1e-4,  steps=30_000,  scheduler_decay_lr=1e-5, gradient_accumulation_steps=1,
+        freeze=train_domain_specific
+    ),
+    # 4: [Base ->      Multicolor] [NoAug] [train_all] [bs16]               (RUNNING)        
+    ExperimentSpec(
+        action_mode="so101_ee6d",   
+        base_model=BASE_MODEL,     dataset_name=DATASET_MULTICOLOR,
+        batch_size=8,  optimizer_lr=1e-4,  steps=100_000,  scheduler_decay_lr=1e-5, gradient_accumulation_steps=1,
+        push_every=50_000
+    ),
+    # 5: [Base ->      Multicolor] [NoAug] [domain_sp] [bs16]               (RUNNING)        
     ExperimentSpec(
         action_mode="so101_ee6d",   
         base_model=BASE_MODEL,     dataset_name=DATASET_MULTICOLOR,
         adaptation=EXPERIMENT_ADAPTATION,
-        batch_size=32,  optimizer_lr=1e-4,  steps=45_000,  scheduler_decay_lr=1e-5, gradient_accumulation_steps=2,
+        batch_size=8,  optimizer_lr=1e-4,  steps=100_000,  scheduler_decay_lr=1e-5, gradient_accumulation_steps=1,
+        push_every=50_000,
+        freeze=train_domain_specific
     ),
-    # 3: [Orange196 -> Multicolor] [NoAug] [train_all] [bs32]               DONE
+
+
+
+
+
+    # 4: [Orange196 -> Multicolor] [NoAug] [train_all] [bs32]               
     ExperimentSpec(
         action_mode="so101_ee6d",   
         base_model=BASE_ORANGE_196,     dataset_name=DATASET_MULTICOLOR,
         adaptation=EXPERIMENT_ADAPTATION,
-        batch_size=32,  optimizer_lr=1e-4,  steps=45_000,  scheduler_decay_lr=1e-5, gradient_accumulation_steps=1,  
+        batch_size=32,  optimizer_lr=1e-4,  steps=30_000,  scheduler_decay_lr=1e-5, gradient_accumulation_steps=2,  
     ),
-    # 4: [Orange196 -> Multicolor] [NoAug] [train_all] [bs64]               DONE
+    # 5: [Orange196 -> Multicolor] [NoAug] [train_all] [bs64]               
     ExperimentSpec(
         action_mode="so101_ee6d",   
         base_model=BASE_ORANGE_196,     dataset_name=DATASET_MULTICOLOR,
         adaptation=EXPERIMENT_ADAPTATION,
         batch_size=32,  optimizer_lr=1e-4,  steps=45_000,  scheduler_decay_lr=1e-5, gradient_accumulation_steps=2,
     ),
-    # 5: [Orange196 -> Multicolor] [NoAug] [domain-specific] [bs64]         DONE  
+    # 6: [Orange196 -> Multicolor] [NoAug] [domain-specific] [bs64]           
     ExperimentSpec(
         action_mode="so101_ee6d",   
         base_model=BASE_ORANGE_196,     dataset_name=DATASET_MULTICOLOR,
@@ -179,7 +206,17 @@ CLOTH_EXPERIMENTS = [
         action_mode="so101_ee6d",   
         base_model=BASE_ORANGE_196,     dataset_name=DATASET_CLOTH_DROP,
         adaptation=EXPERIMENT_ADAPTATION,
-        batch_size=32,  optimizer_lr=1e-4,  steps=40_000,  scheduler_decay_lr=1e-5, gradient_accumulation_steps=2,
+        batch_size=32,  optimizer_lr=1e-4,  steps=30_000,  scheduler_decay_lr=1e-5, gradient_accumulation_steps=2,
+        save_freq=25_000,   push_every=25_000,
+        freeze=train_domain_specific
+    ),
+
+
+
+    ExperimentSpec(
+        action_mode="so101_ee6d",   
+        base_model=BASE_MODEL,          dataset_name=DATASET_CLOTH_DROP,
+        batch_size=32,      optimizer_lr=1e-4,  steps=30_000,  scheduler_decay_lr=1e-5, gradient_accumulation_steps=2,
         save_freq=25_000,   push_every=25_000,
         freeze=train_domain_specific
     ),
@@ -187,10 +224,10 @@ CLOTH_EXPERIMENTS = [
         action_mode="so101_ee6d",   
         base_model=BASE_MODEL,          dataset_name=DATASET_CLOTH_DROP,
         adaptation=EXPERIMENT_ADAPTATION,
-        batch_size=32,      optimizer_lr=1e-4,  steps=40_000,  scheduler_decay_lr=1e-5, gradient_accumulation_steps=2,
+        batch_size=32,      optimizer_lr=1e-4,  steps=30_000,  scheduler_decay_lr=1e-5, gradient_accumulation_steps=2,
         save_freq=25_000,   push_every=25_000,
-        freeze=train_domain_specific
-    ),    # ------------------------------------------------------------------
+    ),
+    # ------------------------------------------------------------------
 
     # OOD adaptation (safe default): mix base fixed-location data with boosted random-placement data.
     # 6: [Orange196 -> mixed(base + 4x random)] [NoAug] [train_all] [stable lr/steps]
@@ -214,7 +251,7 @@ CLOTH_EXPERIMENTS = [
     ),
 ]
 
-EXPERIMENTS = CUBE_EXPERIMENTS[0:2]
+EXPERIMENTS = CUBE_EXPERIMENTS[4:6]
 
 def main() -> None:
     run_experiments(workspace_dir=WORKSPACE_DIR, defaults=DEFAULTS, experiments=EXPERIMENTS)
