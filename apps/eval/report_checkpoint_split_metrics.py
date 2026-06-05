@@ -15,16 +15,17 @@ ROOT_DIR = Path(__file__).resolve().parents[2]
 workspace_src = ROOT_DIR / "src"
 if str(workspace_src) not in sys.path:
     sys.path.insert(0, str(workspace_src))
-lerobot_src = ROOT_DIR.parent / "repos" / "lerobot" / "src"
-if lerobot_src.exists() and str(lerobot_src) not in sys.path:
-    sys.path.insert(0, str(lerobot_src))
+lerobot_src_candidates = [ROOT_DIR / "lerobot" / "src", ROOT_DIR.parent / "repos" / "lerobot" / "src"]
+for lerobot_src in lerobot_src_candidates:
+    if lerobot_src.exists() and str(lerobot_src) not in sys.path:
+        sys.path.insert(0, str(lerobot_src))
 
 from lerobot.configs.train import TRAIN_CONFIG_NAME, TrainPipelineConfig
 from lerobot.configs.types import FeatureType
 from lerobot.datasets.factory import make_dataset
 from lerobot.datasets.utils import dataset_to_policy_features
-from lerobot.policies.xvla.modeling_xvla import XVLAPolicy
 from lerobot.policies.xvla.action_contract import build_slice_map, get_so101_slice_spec, slice_dataset_meta_in_place
+from lerobot.policies.xvla.modeling_xvla import XVLAPolicy
 from lerobot.processor import PolicyProcessorPipeline
 from lerobot.processor.converters import batch_to_transition, transition_to_batch
 from lerobot.processor.normalize_processor import NormalizerProcessorStep
