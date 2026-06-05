@@ -49,9 +49,10 @@ from lerobot.utils.utils import auto_select_torch_device, get_safe_torch_device
 CHECKPOINTS: list[str | dict[str, str]] = [
     # "/abs/path/to/run/checkpoints/010000/pretrained_model",
     # {"name": "run_010000", "checkpoint": "/abs/path/to/run/checkpoints/010000/pretrained_model"},
+    "edgarcancinoe/orange196_pickplace-multicolor_7p5hz_so101_ee6d_am_sm_b8_ga2_eb32_full_ad-02a199f2-step-30000",
 ]
-CUDA_VISIBLE_DEVICES = ""
-DEVICE = "auto"
+CUDA_VISIBLE_DEVICES = "2"
+DEVICE = "cuda:2"
 BATCH_SIZE = None
 NUM_WORKERS = None
 MAX_BATCHES = None
