@@ -38,14 +38,14 @@ robot:
     camera1:
     # image: 
       type: opencv
-      index_or_path: 1
+      index_or_path: 0
       width: 640  # Standard webcam resolution
       height: 480
       fps: 30
     camera2:
     # image2:
       type: opencv
-      index_or_path: 0
+      index_or_path: 1
       width: 640  # Standard webcam resolution
       height: 480
       fps: 30

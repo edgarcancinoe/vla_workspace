@@ -198,14 +198,31 @@ POLICY_PATH = "edgarcancinoe/orange196_pickplace_multicolor_v1_7p5hz_so101_ee6d_
 # POLICY_PATH = "edgarcancinoe/xvla-base_pickplace_multicolor_v1_7p5hz_so101_ee6d_am_sm_full_adapt_v1"
 # POLICY_PATH = "edgarcancinoe/xvla-base_pickplace_10d_7p5hz_so101_ee6d_am_sm_full_adapt_v1"
 
-# POLICY_PATH = "edgarcancinoe/orange196_square_cloth_corner_to_box_7p5hz_so101_ee6d_am_sm_b32_ga2_eb64_-b4889dfe"
+POLICY_PATH = "edgarcancinoe/orange196_square_cloth_corner_to_box_7p5hz_so101_ee6d_am_sm_b32_ga2_eb64_-b4889dfe"
 # POLICY_PATH = "edgarcancinoe/xvla-base_square_cloth_corner_to_box_7p5hz_so101_ee6d_am_sm_b32_ga2_eb64_-1c3ebca5"
 
-""
+# Newest trainings
+POLICY_PATH = "edgarcancinoe/xvla-base_pickplace-multicolor_7p5hz_so101_ee6d_am_sm_b16_ga2_eb64_full_a-995dbafd-step-30000"
+POLICY_PATH = "edgarcancinoe/xvla-base_pickplace-multicolor_7p5hz_so101_ee6d_am_sm_b16_ga2_eb64_full_a-995dbafd"
+# POLICY_PATH = "edgarcancinoe/xvla-base_pickplace-multicolor_7p5hz_so101_ee6d_am_sm_b8_ga4_eb128_full_a-5a88c7bc-step-30000"             CHEATS AT RESTING
+
+
+# POLICY_PATH = "edgarcancinoe/orange196_pickplace-multicolor_7p5hz_so101_ee6d_am_sm_b16_ga2_eb64_full_a-2fa29795-step-30000"
+
+TASK_DESCRIPTION = "Pick up orange cube and place inside white box."
+
+
+EVAL_DATASET_NAME = "eval_orange196_multicolor-orange50k64bs"
+DATA_DIR                   = DATASETS_OUTPUT_DIR / EVAL_DATASET_NAME
+START_FROM_SCRATCH         = True
+RESUME_DATASET             = False
+OVERWRITE_DATASET          = False
+NUM_EPISODES               = 21
+
+
 POLICY_TYPE = "xvla" # "xvla" | "smolvla"
 DEVICE      = "mps"  # "cuda" | "mps" | "cpu"
 
-TASK_DESCRIPTION = "Pick up blue cube and place inside white box."
 # TASK_DESCRIPTION = "Pick the cloth by a visible corner and drop the cloth into the box."
 
 POLICY_PIPELINE = None
@@ -225,7 +242,7 @@ USE_VOICE          = True
 #   -  5: six inferences per second (smoother, more responsive)
 #   -  1: inference every step (smoothest but slowest, only for testing)
 CHUNK_SIZE         = None  # None = use pretrained default (30 for this checkpoint)
-N_ACTION_STEPS     = 30  # Number of control steps to execute before running the next inference chunk. Only for XVLA.
+N_ACTION_STEPS     = 18  # Number of control steps to execute before running the next inference chunk. Only for XVLA.
 
 # --- SmolVLA-specific ---
 MAX_ACTION_TOKENS  = None
@@ -236,16 +253,20 @@ NUM_XVLA_OBS_STEPS         = 1
 BINARY_GRIPPER_INFERENCE   = False
 
 # --- Evaluation & Dataset ---
-NUM_EPISODES               = 5
+
 CONTROL_FPS                = 7.5
 CAMERA_FPS                 = 30
-EPISODE_TIME_SEC           = 90
+EPISODE_TIME_SEC           = 45
 HF_USER                    = "edgarcancinoe"
-EVAL_DATASET_NAME          = "eval_" + POLICY_PATH.split("/")[-1] 
-DATA_DIR                   = DATASETS_OUTPUT_DIR / EVAL_DATASET_NAME
-START_FROM_SCRATCH         = True
-RESUME_DATASET             = False
-OVERWRITE_DATASET          = True  # Set True to delete and recreate the dataset on every run
+
+
+
+VIDEO_CODEC                = "h264"
+STREAMING_ENCODING         = True
+BATCH_VIDEO_ENCODING       = True
+ENCODER_QUEUE_MAXSIZE      = 120
+ENCODER_THREADS            = 8
+IMAGE_WRITER_THREADS       = 4
 AUTO_PUSH_TO_HUB           = True
 HF_UPLOAD_MAX_RETRIES      = 3
 HF_UPLOAD_RETRY_BACKOFF_S  = 3.0
@@ -271,7 +292,7 @@ HOME_DURATION_S = STARTING_POSITION_DURATION_S
 HOME_FPS = CONTROL_FPS
 
 # --- Meshcat Visualization ---
-USE_MESHCAT_VIZ                = True   # Set False to disable
+USE_MESHCAT_VIZ                = False   # Set False to disable
 
 # --- Rerun Visualization ---
 USE_RERUN                      = True  # Set True to enable Rerun telemetry
@@ -297,6 +318,7 @@ INTERP_MIN_DELTA_MOTOR         = 0.0
 INTERP_APPLY_TO_GRIPPER        = False
 INTERP_KEEP_CONTROL_FPS_BUDGET = True
 INTERP_MIN_SLEEP_S             = 0.0005
+
 
 # ─── State feature names (must match training dataset schema) ────────────────
 EEF_STATE_NAMES = list(get_so101_slice_spec("so101_ee6d").names)
@@ -558,6 +580,14 @@ def encode_missing_video_metadata(dataset: LeRobotDataset, episode_indices: list
 def recover_missing_eval_videos(dataset: LeRobotDataset) -> None:
     dataset.meta._close_writer()
     dataset.meta.episodes = load_episodes(dataset.root)
+    pending = getattr(dataset, "episodes_since_last_encoding", 0)
+    if pending > 0:
+        end_episode = dataset.meta.total_episodes
+        start_episode = end_episode - pending
+        print(f"[repair] Encoding deferred videos for episodes {start_episode} to {end_episode - 1}")
+        encode_missing_video_metadata(dataset, list(range(start_episode, end_episode)))
+        dataset.episodes_since_last_encoding = 0
+        dataset.meta.episodes = load_episodes(dataset.root)
     missing_episodes = get_episodes_missing_video_metadata(dataset)
     if missing_episodes:
         print(f"[repair] Missing video metadata detected for episodes: {missing_episodes}")
@@ -1261,7 +1291,16 @@ def get_dataset(features: dict, robot_type: str):
 
     if RESUME_DATASET:
         print(f"[x] Resuming dataset: {repo_id} at {DATA_DIR}")
-        dataset = LeRobotDataset(repo_id=repo_id, root=DATA_DIR)
+        dataset = LeRobotDataset(
+            repo_id=repo_id,
+            root=DATA_DIR,
+            vcodec=VIDEO_CODEC,
+            streaming_encoding=STREAMING_ENCODING,
+            batch_encoding_size=NUM_EPISODES + 1 if BATCH_VIDEO_ENCODING else 1,
+            encoder_queue_maxsize=ENCODER_QUEUE_MAXSIZE,
+            encoder_threads=ENCODER_THREADS,
+        )
+        dataset.start_image_writer(num_threads=IMAGE_WRITER_THREADS)
         episode_idx = dataset.num_episodes
     else:
         print(f"[x] Creating new evaluation dataset: {repo_id}")
@@ -1271,7 +1310,12 @@ def get_dataset(features: dict, robot_type: str):
             features=features,
             robot_type=robot_type,
             use_videos=True,
-            image_writer_threads=0,
+            vcodec=VIDEO_CODEC,
+            streaming_encoding=STREAMING_ENCODING,
+            batch_encoding_size=NUM_EPISODES + 1 if BATCH_VIDEO_ENCODING else 1,
+            encoder_queue_maxsize=ENCODER_QUEUE_MAXSIZE,
+            encoder_threads=ENCODER_THREADS,
+            image_writer_threads=IMAGE_WRITER_THREADS,
             root=DATA_DIR,
         )
         episode_idx = 0
@@ -1404,7 +1448,7 @@ def main():
 
             try:
                 if len(dataset.episode_buffer) > 0:
-                    dataset.save_episode(parallel_encoding=False)
+                    dataset.save_episode(parallel_encoding=True)
                     episode_idx += 1
                 else:
                     print("No frames recorded in episode buffer. Skipping save.")

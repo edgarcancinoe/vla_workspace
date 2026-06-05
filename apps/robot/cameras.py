@@ -14,7 +14,7 @@ from lerobot.cameras.opencv.configuration_opencv import OpenCVCameraConfig
 from lerobot.cameras.opencv.camera_opencv import OpenCVCamera
 from lerobot.cameras.configs import ColorMode, Cv2Rotation
 
-CAMERA_INDICES = [0,1,]   # Add more indices if needed, e.g. [0, 1]
+CAMERA_INDICES = [0,1,2]   # Add more indices if needed, e.g. [0, 1]
 res = (640, 480)
 cameras = []
 
