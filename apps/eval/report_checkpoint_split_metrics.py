@@ -51,13 +51,15 @@ from lerobot.utils.utils import auto_select_torch_device, get_safe_torch_device
 CHECKPOINTS: list[str | dict[str, str]] = [
     # "/abs/path/to/run/checkpoints/010000/pretrained_model",
     # {"name": "run_010000", "checkpoint": "/abs/path/to/run/checkpoints/010000/pretrained_model"},
-    "edgarcancinoe/orange196_pickplace-multicolor_7p5hz_so101_ee6d_am_sm_b8_ga2_eb32_full_ad-02a199f2-step-30000",
+    # "edgarcancinoe/orange196_pickplace_multicolor_v1_7p5hz_so101_ee6d_am_sm_b32_ga2_eb64_tra-c05dc8ed",
+    # "/home/jose/EMAI-Thesis/vla_workspace/runtime/outputs/train/orange196_pickplace-multicolor_7p5hz_so101_ee6d_am_sm_b16_ga2_eb64_full_adapt_stagedpw_v1_20260603_110808",
+    "/home/jose/EMAI-Thesis/vla_workspace/runtime/outputs/train/orange196_pickplace-multicolor_7p5hz_so101_ee6d_am_sm_b16_ga2_eb64_full_adapt_stagedpw_v1_20260604_141258"
 ]
 
 DEVICE = "cuda"
-BATCH_SIZE = None
+BATCH_SIZE = 64
 NUM_WORKERS = None
-MAX_BATCHES = None
+MAX_BATCHES = 10
 OUTPUT_JSON = ""
 PROGRESS_EVERY = 10
 
