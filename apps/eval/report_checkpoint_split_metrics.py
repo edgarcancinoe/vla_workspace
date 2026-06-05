@@ -21,6 +21,7 @@ for lerobot_src in lerobot_src_candidates:
         sys.path.insert(0, str(lerobot_src))
 
 from lerobot.configs.train import TRAIN_CONFIG_NAME, TrainPipelineConfig
+from lerobot.configs.default import ValidationConfig
 from lerobot.configs.types import FeatureType
 from lerobot.datasets.factory import make_dataset
 from lerobot.datasets.utils import dataset_to_policy_features
@@ -170,6 +171,8 @@ def evaluate_split(name: str, policy, dataloader, preprocessor, validation_seed:
     local_component_counts: dict[str, float] = {}
     local_gripper_counts = {key: 0.0 for key in GRIPPER_DEBUG_COUNT_KEYS}
     base_policy = policy
+    xyz_scale = getattr(getattr(base_policy, "model", None), "action_space", None)
+    xyz_scale = getattr(xyz_scale, "XYZ_SCALE", None)
     total_batches = len(dataloader)
     if max_batches is not None:
         total_batches = min(total_batches, max_batches)
@@ -212,6 +215,8 @@ def evaluate_split(name: str, policy, dataloader, preprocessor, validation_seed:
         denom = local_component_counts[key]
         if denom > 0:
             metrics[key] = component_sum / denom
+    if xyz_scale not in (None, 0) and "position_loss" in metrics:
+        metrics["position_loss_unweighted"] = metrics["position_loss"] / float(xyz_scale)
     total = local_gripper_counts["true_negative_count"] + local_gripper_counts["true_positive_count"] + local_gripper_counts["false_positive_count"] + local_gripper_counts["false_negative_count"]
     if total > 0:
         class0_total = local_gripper_counts["target_zero_count"]
@@ -223,7 +228,7 @@ def evaluate_split(name: str, policy, dataloader, preprocessor, validation_seed:
 
 
 def ordered_metric_items(metrics: dict[str, float]) -> list[tuple[str, float]]:
-    preferred = ["loss", "position_loss", "rotate6D_loss", "joints_loss", "gripper_loss", "gripper_accuracy", "gripper_class0_accuracy", "gripper_class1_accuracy", "num_batches", "num_samples"]
+    preferred = ["loss", "position_loss", "position_loss_unweighted", "rotate6D_loss", "joints_loss", "gripper_loss", "gripper_accuracy", "gripper_class0_accuracy", "gripper_class1_accuracy", "num_batches", "num_samples"]
     keys = [key for key in preferred if key in metrics]
     keys += [key for key in sorted(metrics) if key not in keys]
     return [(key, metrics[key]) for key in keys]
@@ -238,12 +243,24 @@ def print_metric_block(title: str, metrics: dict[str, float]) -> None:
             print(f"  {key}: {value:.6f}")
 
 
+def resolve_validation_config(spec_name: str, cfg: TrainPipelineConfig) -> tuple[ValidationConfig, list[str]]:
+    warnings = []
+    if cfg.validation.enable:
+        return cfg.validation, warnings
+    fallback = ValidationConfig(enable=True)
+    warnings.append(
+        f"{spec_name}: saved training config has validation disabled; using default validation split settings "
+        f"(split_ratio={fallback.split_ratio}, seed={fallback.seed}, max_batches={fallback.max_batches})."
+    )
+    logging.warning(warnings[-1])
+    return fallback, warnings
+
+
 def evaluate_checkpoint(spec: EvalSpec, device: torch.device, batch_size_override: int | None, num_workers_override: int | None, max_batches: int | None) -> dict[str, Any]:
     print(f"[progress] checkpoint={spec.name} resolving", flush=True)
     pretrained_ref, local_pretrained_dir = resolve_pretrained_ref(spec.checkpoint)
     cfg = TrainPipelineConfig.from_pretrained(pretrained_ref)
-    if not cfg.validation.enable:
-        raise ValueError(f"{spec.name}: saved training config has validation disabled, so there is no training-time split to reproduce.")
+    validation_cfg, warnings = resolve_validation_config(spec.name, cfg)
     cfg.policy.pretrained_path = local_pretrained_dir if local_pretrained_dir is not None else pretrained_ref
     cfg.policy.device = str(device)
     cfg.dataset = dataclasses.replace(cfg.dataset, image_transforms=dataclasses.replace(cfg.dataset.image_transforms, enable=False))
@@ -251,7 +268,7 @@ def evaluate_checkpoint(spec: EvalSpec, device: torch.device, batch_size_overrid
     eval_num_workers = num_workers_override if num_workers_override is not None else cfg.num_workers
     print(f"[progress] checkpoint={spec.name} building datasets repo_id={cfg.dataset.repo_id} revision={cfg.dataset.revision}", flush=True)
     base_dataset = make_dataset(cfg)
-    train_episodes, val_episodes = split_train_validation_episodes(base_dataset, cfg.validation.split_ratio, cfg.validation.seed)
+    train_episodes, val_episodes = split_train_validation_episodes(base_dataset, validation_cfg.split_ratio, validation_cfg.seed)
     train_dataset = make_dataset_with_episodes(cfg, train_episodes, disable_augmentation=True)
     val_dataset = make_dataset_with_episodes(cfg, val_episodes, disable_augmentation=True)
     xvla_slice_spec = get_so101_slice_spec(getattr(cfg.policy, "action_mode", "")) if cfg.policy.type == "xvla" else None
@@ -288,9 +305,9 @@ def evaluate_checkpoint(spec: EvalSpec, device: torch.device, batch_size_overrid
     train_dataloader = make_eval_dataloader(train_dataset, cfg.policy, eval_batch_size, eval_num_workers, device.type)
     val_dataloader = make_eval_dataloader(val_dataset, cfg.policy, eval_batch_size, eval_num_workers, device.type)
     print(f"[progress] checkpoint={spec.name} evaluating train_split", flush=True)
-    train_metrics = evaluate_split("train", policy, train_dataloader, preprocessor, cfg.validation.seed, max_batches, PROGRESS_EVERY)
+    train_metrics = evaluate_split("train", policy, train_dataloader, preprocessor, validation_cfg.seed, max_batches, PROGRESS_EVERY)
     print(f"[progress] checkpoint={spec.name} evaluating validation_split", flush=True)
-    val_metrics = evaluate_split("validation", policy, val_dataloader, preprocessor, cfg.validation.seed, max_batches, PROGRESS_EVERY)
+    val_metrics = evaluate_split("validation", policy, val_dataloader, preprocessor, validation_cfg.seed, max_batches, PROGRESS_EVERY)
     print(f"[progress] checkpoint={spec.name} complete", flush=True)
     return {
         "name": spec.name,
@@ -298,8 +315,10 @@ def evaluate_checkpoint(spec: EvalSpec, device: torch.device, batch_size_overrid
         "device": str(device),
         "dataset_repo_id": cfg.dataset.repo_id,
         "dataset_revision": cfg.dataset.revision,
-        "validation_split_ratio": cfg.validation.split_ratio,
-        "validation_seed": cfg.validation.seed,
+        "validation_enabled_in_checkpoint": cfg.validation.enable,
+        "validation_split_ratio": validation_cfg.split_ratio,
+        "validation_seed": validation_cfg.seed,
+        "warnings": warnings,
         "eval_batch_size": eval_batch_size,
         "eval_num_workers": eval_num_workers,
         "max_batches": max_batches,
@@ -318,6 +337,8 @@ def print_payload(payload: dict[str, Any], index: int, total: int) -> None:
     print(f"Dataset: {payload['dataset_repo_id']} @ {payload['dataset_revision']}")
     print(f"Device: {payload['device']}")
     print(f"Split: ratio={payload['validation_split_ratio']} seed={payload['validation_seed']} train_episodes={payload['train_episode_count']} val_episodes={payload['val_episode_count']}")
+    for warning in payload.get("warnings", []):
+        print(f"Warning: {warning}")
     max_batches = payload["max_batches"]
     print(f"Evaluation: batch_size={payload['eval_batch_size']} num_workers={payload['eval_num_workers']} max_batches={'all' if max_batches is None else max_batches}")
     print_metric_block("Train Split Metrics", payload["train_metrics"])
