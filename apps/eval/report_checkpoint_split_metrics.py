@@ -5,12 +5,11 @@ from __future__ import annotations
 import dataclasses
 import json
 import logging
+import os
 import sys
 from contextlib import nullcontext
 from pathlib import Path
 from typing import Any
-
-import torch
 
 ROOT_DIR = Path(__file__).resolve().parents[2]
 workspace_src = ROOT_DIR / "src"
@@ -51,11 +50,17 @@ CHECKPOINTS: list[str | dict[str, str]] = [
     # "/abs/path/to/run/checkpoints/010000/pretrained_model",
     # {"name": "run_010000", "checkpoint": "/abs/path/to/run/checkpoints/010000/pretrained_model"},
 ]
+CUDA_VISIBLE_DEVICES = ""
 DEVICE = "auto"
 BATCH_SIZE = None
 NUM_WORKERS = None
 MAX_BATCHES = None
 OUTPUT_JSON = ""
+
+if CUDA_VISIBLE_DEVICES not in (None, ""):
+    os.environ["CUDA_VISIBLE_DEVICES"] = str(CUDA_VISIBLE_DEVICES)
+
+import torch
 
 
 class _EvalAccelerator:
