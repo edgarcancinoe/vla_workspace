@@ -12,14 +12,15 @@ from pathlib import Path
 from typing import Any
 
 ROOT_DIR = Path(__file__).resolve().parents[2]
-workspace_src = ROOT_DIR / "src"
-if str(workspace_src) not in sys.path:
-    sys.path.insert(0, str(workspace_src))
-lerobot_src_candidates = [ROOT_DIR / "lerobot" / "src", ROOT_DIR.parent / "repos" / "lerobot" / "src"]
-for lerobot_src in lerobot_src_candidates:
-    if lerobot_src.exists() and str(lerobot_src) not in sys.path:
-        sys.path.insert(0, str(lerobot_src))
+workspace_src = str(ROOT_DIR / "src")
+if workspace_src in sys.path: sys.path.remove(workspace_src)
+sys.path.insert(0, workspace_src)
 
+lerobot_src_candidates = [ROOT_DIR / "lerobot" / "src", ROOT_DIR.parent / "repos" / "lerobot" / "src"]
+for lerobot_src in reversed([str(p) for p in lerobot_src_candidates if p.exists()]):
+    if lerobot_src in sys.path: sys.path.remove(lerobot_src)
+    sys.path.insert(0, lerobot_src)
+    
 from lerobot.configs.train import TRAIN_CONFIG_NAME, TrainPipelineConfig
 from lerobot.configs.types import FeatureType
 from lerobot.datasets.factory import make_dataset
@@ -52,15 +53,12 @@ CHECKPOINTS: list[str | dict[str, str]] = [
     # {"name": "run_010000", "checkpoint": "/abs/path/to/run/checkpoints/010000/pretrained_model"},
     "edgarcancinoe/orange196_pickplace-multicolor_7p5hz_so101_ee6d_am_sm_b8_ga2_eb32_full_ad-02a199f2-step-30000",
 ]
-CUDA_VISIBLE_DEVICES = "2"
-DEVICE = "cuda:2"
+
+DEVICE = "cuda"
 BATCH_SIZE = None
 NUM_WORKERS = None
 MAX_BATCHES = None
 OUTPUT_JSON = ""
-
-if CUDA_VISIBLE_DEVICES not in (None, ""):
-    os.environ["CUDA_VISIBLE_DEVICES"] = str(CUDA_VISIBLE_DEVICES)
 
 import torch
 
