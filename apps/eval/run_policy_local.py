@@ -167,67 +167,147 @@ HOME_POSE = config_data["robot"].get("home_pose", {})
 CAMERA_CONFIG_MAP = config_data.get("cameras", {})
 
 # --- Policy ---
-POLICY_PATH = "edgarcancinoe/orange196_pickplace_multicolor_v1_7p5hz_so101_ee6d_am_sm_full_adapt_v1-step-15000"
-POLICY_PATH = "edgarcancinoe/orange196_pickplace_multicolor_v1_7p5hz_so101_ee6d_am_sm_full_adapt_v1"
 
-# Trained SP
-# POLICY_PATH = "edgarcancinoe/orange196_pickplace_multicolor_v1_7p5hz_so101_ee6d_am_sm_b32_ga2_eb64_tra-c05dc8ed"
+# CLOTH FOLDING ---------------------------------------------------------------------------------
+FOLD_32_5K          = "/Users/edgarcancino/models/orange196_cloth-corner-fold_7p5hz_so101_ee6d_am_sm_b32_ga1_eb32_full_adapt_stagedpw_v1_005000"
+FOLD_32_15K         = "edgarcancinoe/orange196_cloth-corner-fold_7p5hz_so101_ee6d_am_sm_b16_ga1_eb32_full_adap-99124a1f-step-15000"
+FOLD_32_45K         = "edgarcancinoe/orange196_cloth-corner-fold_7p5hz_so101_ee6d_am_sm_b16_ga1_eb32_full_adap-99124a1f-step-45000"
+FOLD_32_60K         = "edgarcancinoe/orange196_cloth-corner-fold_7p5hz_so101_ee6d_am_sm_b16_ga1_eb32_full_adap-99124a1f-step-60000"
+FOLD_32_64K         = "edgarcancinoe/orange196_cloth-corner-fold_7p5hz_so101_ee6d_am_sm_b16_ga1_eb32_full_adap-99124a1f"
 
-# POLICY_PATH = "edgarcancinoe/orange196_pickplace_multicolor_v1_7p5hz_so101_ee6d_am_sm_full_adapt_v1_bs32_ga2_45k"
-# POLICY_PATH = "edgarcancinoe/orange196_square_cloth_corner_to_box_7p5hz_so101_ee6d_am_sm_b32_ga2_eb64_-b4889dfe" 
+FOLD_64_5K          = "/Users/edgarcancino/models/orange196_cloth-corner-fold_7p5hz_so101_ee6d_am_sm_b32_ga2_eb64_full_adapt_stagedpw_v1_005000"
+FOLD_64_15K         = "edgarcancinoe/orange196_cloth-corner-fold_7p5hz_so101_ee6d_am_sm_b16_ga2_eb64_full_adap-d345f6ab-step-15000"
+FOLD_64_30K         = "edgarcancinoe/orange196_cloth-corner-fold_7p5hz_so101_ee6d_am_sm_b16_ga2_eb64_full_adap-d345f6ab-step-30000"
+FOLD_64_45K         = "edgarcancinoe/orange196_cloth-corner-fold_7p5hz_so101_ee6d_am_sm_b16_ga2_eb64_full_adap-d345f6ab-step-45000"
+FOLD_64_50K         = "edgarcancinoe/orange196_cloth-corner-fold_7p5hz_so101_ee6d_am_sm_b16_ga2_eb64_full_adap-d345f6ab"
 
+FOLD_128_5K         = "/Users/edgarcancino/models/orange196_cloth-corner-fold_7p5hz_so101_ee6d_am_sm_b32_ga4_eb128_full_adapt_stagedpw_v1_005000"
+FOLD_128_15K        = "edgarcancinoe/orange196_cloth-corner-fold_7p5hz_so101_ee6d_am_sm_b16_ga4_eb128_full_ada-3523523e-step-15000"
+FOLD_128_30K        = None
+FOLD_128_45K        = None
+FOLD_128_50K        = None
+# -----------------------------------------------------------------------------------------------
 
-# 1 JUNE
-# POLICY_PATH = "edgarcancinoe/xvla-base_pickplace_multicolor_v1_7p5hz_so101_ee6d_am_sm_b8_ga1_eb16_tran-be792c2a"                
-# POLICY_PATH = "edgarcancinoe/xvla-base_pickplace_multicolor_v1_7p5hz_so101_ee6d_am_sm_b8_ga1_eb16_tran-be792c2a-step-50000"      
+# PICKPLACE -------------------------------------------------------------------------------------
+PICKPLACE_32_5K     = "/Users/edgarcancino/models/orange196_pickplace-multicolor_7p5hz_so101_ee6d_am_sm_b32_ga2_eb32_full_adapt_stagedpw_v1_005000"
+PICKPLACE_32_15K    = "edgarcancinoe/orange196_pickplace-multicolor_7p5hz_so101_ee6d_am_sm_b8_ga2_eb32_full_ad-02a199f2-step-15000"
+PICKPLACE_32_30K    = "edgarcancinoe/orange196_pickplace-multicolor_7p5hz_so101_ee6d_am_sm_b8_ga2_eb32_full_ad-02a199f2-step-30000"
+PICKPLACE_32_45K    = "edgarcancinoe/orange196_pickplace-multicolor_7p5hz_so101_ee6d_am_sm_b8_ga2_eb32_full_ad-02a199f2-step-45000"
+PICKPLACE_32_60K    = "edgarcancinoe/orange196_pickplace-multicolor_7p5hz_so101_ee6d_am_sm_b8_ga2_eb32_full_ad-02a199f2-step-60000"
+PICKPLACE_32_64K    = "edgarcancinoe/orange196_pickplace-multicolor_7p5hz_so101_ee6d_am_sm_b8_ga2_eb32_full_ad-02a199f2"
 
-# POLICY_PATH = "edgarcancinoe/xvla-base_pickplace_10d_7p5hz_so101_ee6d_am_sm_b32_ga2_eb64_full_adapt_aug_v1"                       TRASH
-# POLICY_PATH = "edgarcancinoe/xvla-base_pickplace_multicolor_v1_7p5hz_so101_ee6d_am_sm_b8_ga1_eb16_full_adapt_v1"                  TRASH
+PICKPLACE_64_5K     = "/Users/edgarcancino/models/orange196_pickplace-multicolor_7p5hz_so101_ee6d_am_sm_b32_ga2_eb64_full_adapt_stagedpw_v1_005000"
+PICKPLACE_64_15K   = "edgarcancinoe/orange196_pickplace-multicolor_7p5hz_so101_ee6d_am_sm_b16_ga2_eb64_full_a-2fa29795-step-15000"
+PICKPLACE_64_30K    = "edgarcancinoe/orange196_pickplace-multicolor_7p5hz_so101_ee6d_am_sm_b16_ga2_eb64_full_a-2fa29795-step-30000"
+PICKPLACE_64_45K    = "edgarcancinoe/orange196_pickplace-multicolor_7p5hz_so101_ee6d_am_sm_b16_ga2_eb64_full_a-2fa29795-step-45000"
+PICKPLACE_64_50K    = "edgarcancinoe/orange196_pickplace-multicolor_7p5hz_so101_ee6d_am_sm_b16_ga2_eb64_full_a-2fa29795"
 
-# POLICY_PATH = "edgarcancinoe/orange196_pickplace_multicolor_v1_7p5hz_so101_ee6d_am_sm_full_adapt_v1"
-# POLICY_PATH = "edgarcancinoe/orange196_square_cloth_corner_to_box_7p5hz_so101_ee6d_am_sm_b32_ga2_eb64_-b4889dfe" 
-# POLICY_PATH = "edgarcancinoe/xvla-base_pickplace_multicolor_v1_7p5hz_so101_ee6d_am_sm_b32_ga1_eb64_tra-655333cc"                  TRASH
-# POLICY_PATH = "edgarcancinoe/xvla-base_pickplace_multicolor_v1_7p5hz_so101_ee6d_am_sm_b16_ga2_eb64_ful-ad908ed8"                  TRASH
-# POLICY_PATH = "edgarcancinoe/xvla-base_pickplace_10d_7p5hz_so101_ee6d_am_sm_b16_ga2_eb32_full_adapt_v1"                           TRASH
-# POLICY_PATH = "edgarcancinoe/xvla-base_pickplace_10d_7p5hz_so101_ee6d_am_sm_b32_ga1_eb32_full_adapt_v1"                           TRASH
-
-# OLDER TRYING
-# POLICY_PATH = "edgarcancinoe/xvla-base_pickplace_10d_7p5hz_so101_ee6d_am_sm_b16_ga2_eb64_full_adapt_v1"
-# POLICY_PATH = "edgarcancinoe/orange196_pickplace_multicolor_v1_7p5hz_so101_ee6d_am_sm_b32_ga2_eb64_tra-c05dc8ed"
-# POLICY_PATH = "edgarcancinoe/orange196_pickplace_multicolor_v1_7p5hz_so101_ee6d_am_sm_full_adapt_v1"
-# POLICY_PATH = "edgarcancinoe/xvla-base_pickplace_multicolor_v1_7p5hz_so101_ee6d_am_sm_full_adapt_v1"
-# POLICY_PATH = "edgarcancinoe/xvla-base_pickplace_10d_7p5hz_so101_ee6d_am_sm_full_adapt_v1"
-
-POLICY_PATH = "edgarcancinoe/orange196_square_cloth_corner_to_box_7p5hz_so101_ee6d_am_sm_b32_ga2_eb64_-b4889dfe"
-# POLICY_PATH = "edgarcancinoe/xvla-base_square_cloth_corner_to_box_7p5hz_so101_ee6d_am_sm_b32_ga2_eb64_-1c3ebca5"
-
-# Newest trainings
-POLICY_PATH = "edgarcancinoe/xvla-base_pickplace-multicolor_7p5hz_so101_ee6d_am_sm_b16_ga2_eb64_full_a-995dbafd-step-30000"
-POLICY_PATH = "edgarcancinoe/xvla-base_pickplace-multicolor_7p5hz_so101_ee6d_am_sm_b16_ga2_eb64_full_a-995dbafd"
-# POLICY_PATH = "edgarcancinoe/xvla-base_pickplace-multicolor_7p5hz_so101_ee6d_am_sm_b8_ga4_eb128_full_a-5a88c7bc-step-30000"             CHEATS AT RESTING
+OLD_WINNER          = "edgarcancinoe/orange196_pickplace_multicolor_v1_7p5hz_so101_ee6d_am_sm_b32_ga2_eb64_tra-c05dc8ed"
 
 
-# POLICY_PATH = "edgarcancinoe/orange196_pickplace-multicolor_7p5hz_so101_ee6d_am_sm_b16_ga2_eb64_full_a-2fa29795-step-30000"
+PICKPLACE_128_5K    = "/Users/edgarcancino/models/orange196_pickplace-multicolor_7p5hz_so101_ee6d_am_sm_b32_ga2_eb128_full_adapt_stagedpw_v1_005000"
+PICKPLACE_128_15K   = "edgarcancinoe/orange196_pickplace-multicolor_7p5hz_so101_ee6d_am_sm_b8_ga2_eb128_full_a-eb6038c7-step-15000"
+PICKPLACE_128_30K   = "edgarcancinoe/orange196_pickplace-multicolor_7p5hz_so101_ee6d_am_sm_b8_ga4_eb128_full_a-5a88c7bc-step-30000"
+PICKPLACE_128_45K   = "edgarcancinoe/orange196_pickplace-multicolor_7p5hz_so101_ee6d_am_sm_b8_ga2_eb128_full_a-eb6038c7-step-45000"
+PICKPLACE_128_50K   = "edgarcancinoe/orange196_pickplace-multicolor_7p5hz_so101_ee6d_am_sm_b8_ga2_eb128_full_a-eb6038c7"
+# -----------------------------------------------------------------------------------------------
+
+# BOX -------------------------------------------------------------------------------------------
+BOX_32_5K           = "/Users/edgarcancino/models/orange196_cloth-corner-box_7p5hz_so101_ee6d_am_sm_b32_ga1_eb32_full_adapt_stagedpw_v1_005000"
+BOX_32_15K          = "edgarcancinoe/orange196_cloth-corner-box_7p5hz_so101_ee6d_am_sm_b16_ga1_eb32_full_adapt-86a3b1c4-step-15000"
+BOX_32_30K          = "edgarcancinoe/orange196_cloth-corner-box_7p5hz_so101_ee6d_am_sm_b16_ga1_eb32_full_adapt-86a3b1c4-step-30000"
+BOX_32_45K          = "edgarcancinoe/orange196_cloth-corner-box_7p5hz_so101_ee6d_am_sm_b16_ga1_eb32_full_adapt-86a3b1c4-step-45000"
+BOX_32_60K          = "edgarcancinoe/orange196_cloth-corner-box_7p5hz_so101_ee6d_am_sm_b16_ga1_eb32_full_adapt-86a3b1c4-step-60000"
+BOX_32_64K          = "edgarcancinoe/orange196_cloth-corner-box_7p5hz_so101_ee6d_am_sm_b16_ga1_eb32_full_adapt-86a3b1c4"
+
+BOX_64_5K           = "/Users/edgarcancino/models/orange196_cloth-corner-box_7p5hz_so101_ee6d_am_sm_b32_ga4_eb64_full_adapt_stagedpw_v1_005000"
+BOX_64_15K          = None
+BOX_64_30K          = "edgarcancinoe/orange196_cloth-corner-box_7p5hz_so101_ee6d_am_sm_b8_ga4_eb64_full_adapt_-d680fd81-step-30000"
+BOX_64_45K          = None
+BOX_64_50K          = "edgarcancinoe/orange196_cloth-corner-box_7p5hz_so101_ee6d_am_sm_b8_ga4_eb64_full_adapt_-d680fd81"
+
+BOX_128_5K          = "/Users/edgarcancino/models/orange196_cloth-corner-box_7p5hz_so101_ee6d_am_sm_b32_ga4_eb128_full_adapt_stagedpw_v1_005000"
+BOX_128_15K         = "edgarcancinoe/orange196_cloth-corner-box_7p5hz_so101_ee6d_am_sm_b16_ga4_eb128_full_adap-7d00f2cc-step-15000"
+BOX_128_30K         = "edgarcancinoe/orange196_cloth-corner-box_7p5hz_so101_ee6d_am_sm_b16_ga4_eb128_full_adap-7d00f2cc-step-30000"
+BOX_128_45K         = None
+BOX_128_50K         = None
+# -----------------------------------------------------------------------------------------------
 
 
-POLICY_PATH = "/home/jose/EMAI-Thesis/vla_workspace/runtime/outputs/train/orange196_cloth-corner-fold_7p5hz_so101_ee6d_am_sm_b16_ga1_eb32_full_adapt_stagedpw_v1_20260604_142207/checkpoints/064000"
-# TASK_DESCRIPTION = "Pick up orange cube and place inside white box."
-TASK_DESCRIPTION = "Pick up a visible corner of the cloth and fold it over to the opposite side."
+TASKS = {
+    "fold": {
+        "task_description": "Pick up a visible corner of the cloth and fold it over to the opposite side.",
+        "models": {
+            32: {5: FOLD_32_5K, 15: FOLD_32_15K, 45: FOLD_32_45K, 60: FOLD_32_60K, 64: FOLD_32_64K},
+            64: {5: FOLD_64_5K, 15: FOLD_64_15K, 30: FOLD_64_30K, 45: FOLD_64_45K, 50: FOLD_64_50K},
+            128: {5: FOLD_128_5K, 15: FOLD_128_15K, 30: FOLD_128_30K, 45: FOLD_128_45K, 50: FOLD_128_50K},
+        },
+    },
+    "pickplace": {
+        "task_description": "Pick up orange cube and place inside white box.",
+        "models": {
+            32: {5: PICKPLACE_32_5K, 15: PICKPLACE_32_15K, 30: PICKPLACE_32_30K, 45: PICKPLACE_32_45K, 60: PICKPLACE_32_60K, 64: PICKPLACE_32_64K},
+            64: {5: PICKPLACE_64_5K, 15: PICKPLACE_64_15K, 30: PICKPLACE_64_30K, 45: PICKPLACE_64_45K, 50: PICKPLACE_64_50K},
+            128: {5: PICKPLACE_128_5K, 15: PICKPLACE_128_15K, 30: PICKPLACE_128_30K, 45: PICKPLACE_128_45K, 50: PICKPLACE_128_50K},
+        },
+        "old_winner": OLD_WINNER,
+    },
+    "box": {
+        "task_description": "Pick the cloth by a visible corner and drop the cloth into the box.",
+        "models": {
+            32: {5: BOX_32_5K, 15: BOX_32_15K, 30: BOX_32_30K, 45: BOX_32_45K, 60: BOX_32_60K, 64: BOX_32_64K},
+            64: {5: BOX_64_5K, 15: BOX_64_15K, 30: BOX_64_30K, 45: BOX_64_45K, 50: BOX_64_50K},
+            128: {5: BOX_128_5K, 15: BOX_128_15K, 30: BOX_128_30K, 45: BOX_128_45K, 50: BOX_128_50K},
+        },
+    },
+}
 
 
+def get_eval_config(task: str, batch_size: int, step_k: int) -> dict:
+    task_key = task.strip().lower()
+    if task_key not in TASKS:
+        raise ValueError(f"Unknown task: {task}. Choose from {list(TASKS)}")
+    task_entry = TASKS[task_key]
+    if batch_size not in task_entry["models"]:
+        raise ValueError(f"Unknown batch size {batch_size} for task {task_key}. Choose from {list(task_entry['models'])}")
+    if step_k not in task_entry["models"][batch_size]:
+        raise ValueError(f"Unknown step {step_k}K for task {task_key} batch {batch_size}. Choose from {list(task_entry['models'][batch_size])}")
 
-EVAL_DATASET_NAME = "eval_orange196_multicolor-orange50k64bs"
-DATA_DIR                   = DATASETS_OUTPUT_DIR / EVAL_DATASET_NAME
-START_FROM_SCRATCH         = True
-RESUME_DATASET             = False
+    policy_path = task_entry["models"][batch_size][step_k]
+    eval_name = f"eval_{task_key}_{batch_size}_{step_k}k"
+
+    return {
+        "task": task_key,
+        "batch_size": batch_size,
+        "step_k": step_k,
+        "policy_path": policy_path,
+        "task_description": task_entry["task_description"],
+        "eval_name": eval_name,
+        "available_steps_k": sorted(task_entry["models"][batch_size]),
+        "old_winner": task_entry.get("old_winner"),
+    }
+
+
+experiment = get_eval_config("pickplace", batch_size = 64, step_k = 15)
+# experiment = get_eval_config("pickplace", batch_size="old_winner", step_k=None)
+
+CONTROL_FPS                = 10 #7.5
+NUM_EPISODES               = 16
+START_FROM_SCRATCH         = False
+RESUME_DATASET             = True
 OVERWRITE_DATASET          = False
-NUM_EPISODES               = 21
+N_ACTION_STEPS             = 24  # Number of control steps to execute before running the next inference chunk. Only for XVLA.
+EPISODE_TIME_SEC           = 45
 
+
+POLICY_PATH       = experiment["policy_path"]
+TASK_DESCRIPTION  = experiment["task_description"]
+TASK_DESCRIPTION  = "Pick up orange cube and place inside white box."
+EVAL_DATASET_NAME = experiment["eval_name"]
+DATA_DIR          = DATASETS_OUTPUT_DIR / EVAL_DATASET_NAME
 
 POLICY_TYPE = "xvla" # "xvla" | "smolvla"
 DEVICE      = "mps"  # "cuda" | "mps" | "cpu"
-
-# TASK_DESCRIPTION = "Pick the cloth by a visible corner and drop the cloth into the box."
 
 POLICY_PIPELINE = None
 
@@ -245,8 +325,7 @@ USE_VOICE          = True
 #   - 30: one inference per second (jerky, ~5mm jumps)
 #   -  5: six inferences per second (smoother, more responsive)
 #   -  1: inference every step (smoothest but slowest, only for testing)
-CHUNK_SIZE         = None  # None = use pretrained default (30 for this checkpoint)
-N_ACTION_STEPS     = 18  # Number of control steps to execute before running the next inference chunk. Only for XVLA.
+CHUNK_SIZE         = None  # None = use pretrained default (usually 30)
 
 # --- SmolVLA-specific ---
 MAX_ACTION_TOKENS  = None
@@ -256,14 +335,9 @@ POLICY_DELAY       = 0.1
 NUM_XVLA_OBS_STEPS         = 1
 BINARY_GRIPPER_INFERENCE   = False
 
-# --- Evaluation & Dataset ---
-
-CONTROL_FPS                = 7.5
+# --- Other ---
 CAMERA_FPS                 = 30
-EPISODE_TIME_SEC           = 45
 HF_USER                    = "edgarcancinoe"
-
-
 
 VIDEO_CODEC                = "h264"
 STREAMING_ENCODING         = True
@@ -289,6 +363,14 @@ HF_UPLOAD_DELETE_PATTERNS  = [
     "tmp*/**",
 ]
 
+
+def get_effective_batch_encoding_size() -> int:
+    if STREAMING_ENCODING:
+        if BATCH_VIDEO_ENCODING:
+            print("[video] STREAMING_ENCODING=True so deferred batch video encoding is disabled; using immediate per-episode video saves.")
+        return 1
+    return NUM_EPISODES + 1 if BATCH_VIDEO_ENCODING else 1
+
 # --- Robot & Setup
 ACTIVE_XVLA_RENAME_MAP = {}
 STARTING_POSITION_DURATION_S = 5
@@ -310,7 +392,7 @@ DRY_RUN                        = False
 # --- EXECUTION SMOOTHING (Strategy 1 + 4) -----------------------------------
 # All toggles default OFF so current behavior is preserved unless enabled.
 # Strategy 1: EMA smoothing in MOTOR command space.
-ENABLE_EMA_SMOOTHING           = False
+ENABLE_EMA_SMOOTHING           = True
 EMA_ALPHA_MOTOR                = 0.35
 EMA_ALPHA_GRIPPER              = 0.25
 EMA_RESET_ON_EPISODE_START     = True
@@ -584,6 +666,16 @@ def encode_missing_video_metadata(dataset: LeRobotDataset, episode_indices: list
 def recover_missing_eval_videos(dataset: LeRobotDataset) -> None:
     dataset.meta._close_writer()
     dataset.meta.episodes = load_episodes(dataset.root)
+    if getattr(dataset, "_streaming_encoder", None) is not None:
+        if getattr(dataset, "episodes_since_last_encoding", 0) > 0:
+            print("[repair] Streaming video mode detected; skipping deferred batch video recovery and clearing stale counter.")
+            dataset.episodes_since_last_encoding = 0
+        missing_episodes = get_episodes_missing_video_metadata(dataset)
+        if missing_episodes:
+            print(f"[repair] Missing video metadata detected for episodes: {missing_episodes}")
+            encode_missing_video_metadata(dataset, missing_episodes)
+            dataset.meta.episodes = load_episodes(dataset.root)
+        return
     pending = getattr(dataset, "episodes_since_last_encoding", 0)
     if pending > 0:
         end_episode = dataset.meta.total_episodes
@@ -1300,7 +1392,7 @@ def get_dataset(features: dict, robot_type: str):
             root=DATA_DIR,
             vcodec=VIDEO_CODEC,
             streaming_encoding=STREAMING_ENCODING,
-            batch_encoding_size=NUM_EPISODES + 1 if BATCH_VIDEO_ENCODING else 1,
+            batch_encoding_size=get_effective_batch_encoding_size(),
             encoder_queue_maxsize=ENCODER_QUEUE_MAXSIZE,
             encoder_threads=ENCODER_THREADS,
         )
@@ -1316,7 +1408,7 @@ def get_dataset(features: dict, robot_type: str):
             use_videos=True,
             vcodec=VIDEO_CODEC,
             streaming_encoding=STREAMING_ENCODING,
-            batch_encoding_size=NUM_EPISODES + 1 if BATCH_VIDEO_ENCODING else 1,
+            batch_encoding_size=get_effective_batch_encoding_size(),
             encoder_queue_maxsize=ENCODER_QUEUE_MAXSIZE,
             encoder_threads=ENCODER_THREADS,
             image_writer_threads=IMAGE_WRITER_THREADS,

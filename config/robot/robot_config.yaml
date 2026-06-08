@@ -7,7 +7,7 @@ robot:
   home_pose: # Degrees
     shoulder_pan.pos: 0.0
     shoulder_lift.pos: -100.0
-    elbow_flex.pos: 70.0
+    elbow_flex.pos: 100.0
     wrist_flex.pos: 50.0
     wrist_roll.pos: -90
     gripper.pos: 0.0
