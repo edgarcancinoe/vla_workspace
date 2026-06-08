@@ -1,0 +1,28 @@
+teacher:
+  name: cedirnet
+  target_kind: dense_map
+  loss_type: mse
+  weight: 1.0
+  model_type: ConvNext-B-RGB
+  image_size: 768
+  checkpoint: null
+  repo_src: null
+  config_path: null
+  localization_checkpoint: null
+  target_channel_indices: [0, 1, 2]
+  resize: true
+
+head:
+  grid_hw: [32, 32]
+  hidden_dim: null
+  projection_mode: linear
+  projection_mlp_ratio: 4.0
+  projection_dropout: 0.0
+  refine_layers: 2
+  refine_kernel_size: 3
+  refine_dropout: 0.0
+  out_layers: 1
+  out_hidden_dim: null
+  out_dropout: 0.0
+  resize_mode: bilinear
+  align_corners: false
