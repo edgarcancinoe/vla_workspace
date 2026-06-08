@@ -13,7 +13,7 @@ from torch.utils.data._utils.collate import default_collate
 from tqdm import tqdm
 
 from thesis_vla.inference.xvla_runtime import make_xvla_runtime_processors, resolve_xvla_rename_map, sync_xvla_policy_config
-from thesis_vla.visual_thought import CeDirNetDistillationModel, DinoFeatureAlignmentModel, compute_feature_alignment_loss, load_cedirnet_decoder_config, load_dino_feature_alignment_config
+from thesis_vla.visual_thought import CeDirNetDistillationModel, DinoFeatureAlignmentModel, DinoTokenSequenceModel, compute_feature_alignment_loss, load_cedirnet_decoder_config, load_dino_decoder_config
 from thesis_vla.visual_thought.checkpoints import DECODER_STATE_FILENAME, POLICY_DIRNAME, load_decoder_state, load_visual_thought_checkpoint_metadata, save_visual_thought_checkpoint
 from thesis_vla.visual_thought.targets import TeacherTarget, compute_teacher_loss
 from thesis_vla.visual_thought.teachers import CeDiRNetTeacher, DinoV2Teacher
@@ -136,12 +136,15 @@ def build_teacher(config: VisualThoughtTrainConfig):
     if config.expert_type == "cedirnet":
         task_cfg = load_cedirnet_decoder_config(config.decoder_stack_config_path, config.decoder_task_config_path)
         return task_cfg, CeDiRNetTeacher(task_cfg.teacher)
-    task_cfg = load_dino_feature_alignment_config(config.decoder_stack_config_path, config.decoder_task_config_path)
+    task_cfg = load_dino_decoder_config(config.decoder_stack_config_path, config.decoder_task_config_path)
     return task_cfg, DinoV2Teacher(task_cfg.teacher)
 
 
 def build_decoder(config: VisualThoughtTrainConfig, task_cfg, target: TeacherTarget, student_vlm_dim: int):
-    if config.expert_type == "cedirnet": return CeDirNetDistillationModel.from_config(student_vlm_dim=student_vlm_dim, cfg=task_cfg)
+    if config.expert_type == "cedirnet": 
+        return CeDirNetDistillationModel.from_config(student_vlm_dim=student_vlm_dim, cfg=task_cfg)
+    if target.kind == "token_sequence": 
+        return DinoTokenSequenceModel.from_config(student_vlm_dim=student_vlm_dim, target=target, cfg=task_cfg)
     return DinoFeatureAlignmentModel.from_config(student_vlm_dim=student_vlm_dim, target=target, cfg=task_cfg)
 
 
@@ -181,8 +184,13 @@ def compute_xvla_action_loss_from_encoder(policy, processed_batch: dict[str, Any
 def compute_expert_loss(config: VisualThoughtTrainConfig, decoder: torch.nn.Module, task_cfg, target: TeacherTarget, vlm_features: torch.Tensor, step: int) -> tuple[torch.Tensor, dict[str, float]]:
     
     if config.expert_type == "cedirnet":
-        prediction = decoder(vlm_features, target_map=target.tensor)
-        loss = compute_teacher_loss(prediction, target)
+        prediction  = decoder(vlm_features, target_map=target.tensor)
+        loss        = compute_teacher_loss(prediction, target)
+        return loss, {"expert_total": float(loss.detach().item()), "expert_stage": 0.0}
+    
+    if target.kind == "token_sequence":
+        prediction  = decoder(vlm_features)
+        loss        = compute_teacher_loss(prediction, target)
         return loss, {"expert_total": float(loss.detach().item()), "expert_stage": 0.0}
     
     query_tokens = decoder.query_tokens(vlm_features)

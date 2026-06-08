@@ -6,11 +6,11 @@ import torch
 sys.path.append(str(Path(__file__).resolve().parents[2] / "src"))
 
 from thesis_vla.common.paths import PROJECT_ROOT
-from thesis_vla.visual_thought import DinoFeatureAlignmentModel, TeacherTarget, compute_feature_alignment_loss, load_dino_feature_alignment_config
+from thesis_vla.visual_thought import DinoFeatureAlignmentModel, TeacherTarget, compute_feature_alignment_loss, load_dino_decoder_config
 
 
 def test_dino_feature_alignment_smoke():
-    cfg = load_dino_feature_alignment_config(PROJECT_ROOT / "config" / "visual_thought" / "dino_stack.yaml", PROJECT_ROOT / "config" / "visual_thought" / "dino_feature_alignment.yaml")
+    cfg = load_dino_decoder_config(PROJECT_ROOT / "config" / "visual_thought" / "dino_stack.yaml", PROJECT_ROOT / "config" / "visual_thought" / "dino_expert_query.yaml")
     batch_size, num_query_tokens, num_spatial_tokens, student_vlm_dim, expert_dim = 2, 4, 64, 64, 768
     target = TeacherTarget(name="dinov2", tensor=torch.randn(batch_size, 1, 32, 32), kind="expert_feature_query", loss_type="mse", weight=1.0, aux={"expert_feature_layout": "patch", "expert_features": torch.randn(batch_size, num_query_tokens, num_spatial_tokens, expert_dim), "patch_hw": (8, 8), "expert_spatial_hw": (8, 8)})
     model = DinoFeatureAlignmentModel.from_config(student_vlm_dim=student_vlm_dim, target=target, cfg=cfg)

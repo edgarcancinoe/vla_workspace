@@ -13,7 +13,10 @@ VISUAL_THOUGHT_CONFIG_ROOT = CONFIG_ROOT / "visual_thought"
 DEFAULT_CEDIRNET_STACK_CONFIG_PATH = VISUAL_THOUGHT_CONFIG_ROOT / "cedirnet_stack.yaml"
 DEFAULT_CEDIRNET_HEAD_CONFIG_PATH = VISUAL_THOUGHT_CONFIG_ROOT / "cedirnet_head.yaml"
 DEFAULT_DINO_STACK_CONFIG_PATH = VISUAL_THOUGHT_CONFIG_ROOT / "dino_stack.yaml"
-DEFAULT_DINO_FEATURE_ALIGNMENT_CONFIG_PATH = VISUAL_THOUGHT_CONFIG_ROOT / "dino_feature_alignment.yaml"
+DEFAULT_DINO_CONFIG_PATH = VISUAL_THOUGHT_CONFIG_ROOT / "dino_decoder.yaml"
+DEFAULT_DINO_TOKEN_SEQUENCE_CONFIG_PATH = VISUAL_THOUGHT_CONFIG_ROOT / "dino_decoder.yaml"
+DEFAULT_DINO_EXPERT_QUERY_CONFIG_PATH = VISUAL_THOUGHT_CONFIG_ROOT / "dino_expert_query.yaml"
+DEFAULT_DINO_FEATURE_ALIGNMENT_CONFIG_PATH = DEFAULT_DINO_EXPERT_QUERY_CONFIG_PATH
 
 
 def _read_yaml(path: str | Path) -> dict[str, Any]:
@@ -197,7 +200,7 @@ class ExpertQueryHeadConfig:
 @dataclass(frozen=True)
 class DinoTeacherConfig:
     name: str = "dinov2"
-    target_kind: str = "expert_feature_query"
+    target_kind: str = "token_sequence"
     loss_type: str = "mse"
     weight: float = 1.0
     model_type: str | None = None
@@ -216,7 +219,7 @@ class DinoTeacherConfig:
         layer_indices = None if raw_layer_indices is None else _as_int_tuple(raw_layer_indices, "teacher.layer_indices")
         return cls(
             name=str(data.get("name", "dinov2")),
-            target_kind=str(data.get("target_kind", "expert_feature_query")),
+            target_kind=str(data.get("target_kind", "token_sequence")),
             loss_type=str(data.get("loss_type", "mse")),
             weight=float(data.get("weight", 1.0)),
             model_type=None if data.get("model_type") is None else str(data["model_type"]),
@@ -231,20 +234,27 @@ class DinoTeacherConfig:
 
 
 @dataclass(frozen=True)
-class DinoFeatureAlignmentConfig:
+class DinoDecoderConfig:
     stack: DecoderStackConfig
     head: ExpertQueryHeadConfig
     teacher: DinoTeacherConfig
 
-    def validate(self) -> "DinoFeatureAlignmentConfig":
-        if self.teacher.target_kind != "expert_feature_query": raise ValueError(f"DINO feature alignment expects target_kind='expert_feature_query', got {self.teacher.target_kind!r}.")
+    def validate(self) -> "DinoDecoderConfig":
+        if self.teacher.target_kind not in {"token_sequence", "expert_feature_query"}: raise ValueError(f"DINO expects target_kind in {{'token_sequence', 'expert_feature_query'}}, got {self.teacher.target_kind!r}.")
         return self
 
 
-def load_dino_feature_alignment_config(stack_path: str | Path = DEFAULT_DINO_STACK_CONFIG_PATH, feature_alignment_path: str | Path = DEFAULT_DINO_FEATURE_ALIGNMENT_CONFIG_PATH) -> DinoFeatureAlignmentConfig:
+def load_dino_decoder_config(stack_path: str | Path = DEFAULT_DINO_STACK_CONFIG_PATH, decoder_path: str | Path = DEFAULT_DINO_CONFIG_PATH) -> DinoDecoderConfig:
     stack_payload = _read_yaml(stack_path)
-    alignment_payload = _read_yaml(feature_alignment_path)
+    alignment_payload = _read_yaml(decoder_path)
     stack = DecoderStackConfig.from_dict(stack_payload.get("stack", stack_payload))
     head = ExpertQueryHeadConfig.from_dict(alignment_payload.get("head", alignment_payload))
     teacher = DinoTeacherConfig.from_dict(alignment_payload.get("teacher", alignment_payload))
-    return DinoFeatureAlignmentConfig(stack=stack, head=head, teacher=teacher).validate()
+    return DinoDecoderConfig(stack=stack, head=head, teacher=teacher).validate()
+
+
+DinoFeatureAlignmentConfig = DinoDecoderConfig
+
+
+def load_dino_feature_alignment_config(stack_path: str | Path = DEFAULT_DINO_STACK_CONFIG_PATH, feature_alignment_path: str | Path = DEFAULT_DINO_FEATURE_ALIGNMENT_CONFIG_PATH) -> DinoDecoderConfig:
+    return load_dino_decoder_config(stack_path=stack_path, decoder_path=feature_alignment_path)

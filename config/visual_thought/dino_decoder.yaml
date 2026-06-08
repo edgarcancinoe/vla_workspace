@@ -1,0 +1,22 @@
+teacher:
+  name: dinov2
+  target_kind: token_sequence
+  loss_type: mse
+  weight: 1.0
+  model_type: vitb14
+  image_size: 476
+  checkpoint: null
+  resize_mode: aspect_patch14
+  patch_multiple: 14
+  size_ref: long_side
+  round_mode: floor
+  layer_indices: null
+
+head:
+  query_projection_mode: mlp
+  query_projection_mlp_ratio: 1.0
+  query_projection_dropout: 0.0
+  query_aggregation_mode: mean
+  align_weight: 1.0
+  recon_weight: 1.0
+  recon_scale: 1.0

@@ -3,11 +3,10 @@ import sys
 import tempfile
 
 import torch
-
 sys.path.append(str(Path(__file__).resolve().parents[1] / "src"))
 
 from thesis_vla.training.visual_thought_trainer import VisualThoughtTrainConfig, compute_expert_loss, compute_xvla_action_loss_from_encoder, load_decoder_init_if_present, set_policy_trainability
-from thesis_vla.visual_thought import CeDirNetDistillationModel, DinoFeatureAlignmentModel, TeacherTarget, load_cedirnet_decoder_config, load_dino_feature_alignment_config
+from thesis_vla.visual_thought import CeDirNetDistillationModel, DinoFeatureAlignmentModel, DinoTokenSequenceModel, TeacherTarget, load_cedirnet_decoder_config, load_dino_decoder_config
 from thesis_vla.visual_thought.checkpoints import DECODER_STATE_FILENAME, save_decoder_state
 
 
@@ -60,13 +59,23 @@ def test_cedirnet_distill_step_smoke():
 
 
 def test_dino_alignment_step_smoke():
-    cfg = load_dino_feature_alignment_config()
+    cfg = load_dino_decoder_config(Path(__file__).resolve().parents[1] / "config" / "visual_thought" / "dino_stack.yaml", Path(__file__).resolve().parents[1] / "config" / "visual_thought" / "dino_expert_query.yaml")
     target = TeacherTarget(name="dinov2", tensor=torch.randn(2, 64, 768), kind="expert_feature_query", loss_type="mse", weight=1.0, aux={"expert_feature_layout": "patch", "expert_features": torch.randn(2, 4, 64, 768), "patch_hw": (8, 8), "expert_spatial_hw": (8, 8)})
     decoder = DinoFeatureAlignmentModel.from_config(student_vlm_dim=64, target=target, cfg=cfg)
     trainer_cfg = VisualThoughtTrainConfig(name="demo", training_stage="distill_only", expert_type="dino", xvla_init_path="x", decoder_init_path=None, decoder_stack_config_path="a", decoder_task_config_path="b", dataset_repo_id="repo", dataset_revision="main", dataset_root=None, output_dir="/tmp/out", device="cpu", align_feature_until_step=10, steps=10)
     loss, stats = compute_expert_loss(trainer_cfg, decoder, cfg, target, torch.randn(2, 256, 64), step=1)
     assert loss.ndim == 0
     assert stats["expert_stage"] == 1.0
+
+
+def test_dino_token_sequence_default_step_smoke():
+    cfg = load_dino_decoder_config()
+    target = TeacherTarget(name="dinov2", tensor=torch.randn(2, 64, 768), kind="token_sequence", loss_type="mse", weight=1.0)
+    decoder = DinoTokenSequenceModel.from_config(student_vlm_dim=64, target=target, cfg=cfg)
+    trainer_cfg = VisualThoughtTrainConfig(name="demo", training_stage="distill_only", expert_type="dino", xvla_init_path="x", decoder_init_path=None, decoder_stack_config_path="a", decoder_task_config_path="b", dataset_repo_id="repo", dataset_revision="main", dataset_root=None, output_dir="/tmp/out", device="cpu")
+    loss, stats = compute_expert_loss(trainer_cfg, decoder, cfg, target, torch.randn(2, 256, 64), step=1)
+    assert loss.ndim == 0
+    assert stats["expert_stage"] == 0.0
 
 
 def test_joint_step_reports_action_and_expert_losses():

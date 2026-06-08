@@ -10,7 +10,7 @@ teacher:
   patch_multiple: 14
   size_ref: long_side
   round_mode: floor
-  layer_indices: null
+  layer_indices: [8, 9, 10, 11]
 
 head:
   query_projection_mode: mlp
