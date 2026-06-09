@@ -9,6 +9,7 @@ from pathlib import Path
 
 import numpy as np
 import torch
+from PIL import Image, ImageDraw
 from torch.utils.data import DataLoader
 from torch.utils.data._utils.collate import default_collate
 from tqdm import tqdm
@@ -120,10 +121,52 @@ def inspect_cache(args) -> None:
     print(json.dumps({"event": "cedirnet_cache_spot_check", "indices": indices, "target_shape": list(target.tensor.shape), "target_mean": float(target.tensor.mean().item()), "target_std": float(target.tensor.std().item())}, indent=2, sort_keys=True))
 
 
+def _normalize_channel(channel: np.ndarray) -> np.ndarray:
+    finite = channel[np.isfinite(channel)]
+    if finite.size == 0: return np.zeros(channel.shape, dtype=np.uint8)
+    lo, hi = float(np.min(finite)), float(np.max(finite))
+    if abs(hi - lo) < 1e-8: return np.zeros(channel.shape, dtype=np.uint8)
+    return (np.clip((channel - lo) / (hi - lo), 0.0, 1.0) * 255.0).astype(np.uint8)
+
+
+def _channel_image(channel: np.ndarray) -> Image.Image:
+    normalized = _normalize_channel(channel)
+    return Image.fromarray(normalized, mode="L").convert("RGB")
+
+
+def _tile_with_label(image: Image.Image, label: str, panel_size: int, header_height: int = 28) -> Image.Image:
+    resized = image.resize((panel_size, panel_size), resample=Image.Resampling.NEAREST)
+    tile = Image.new("RGB", (panel_size, panel_size + header_height), color=(16, 16, 16))
+    tile.paste(resized, (0, header_height))
+    draw = ImageDraw.Draw(tile)
+    draw.text((8, 6), label, fill=(255, 255, 255))
+    return tile
+
+
+def visualize_cache(args) -> None:
+    task_cfg = load_cedirnet_decoder_config(args.decoder_stack_config_path, args.decoder_task_config_path)
+    dataset, resolved_root, _ = _build_dataset(args)
+    cache = CeDiRNetTargetCache.resolve(dataset_repo_id=args.dataset_repo_id, dataset_revision=args.dataset_revision, dataset_root=resolved_root, dataset_length=len(dataset), teacher_cfg=task_cfg.teacher, cache_root=args.cache_root)
+    indices = [int(item.strip()) for item in str(args.indices).split(",") if item.strip()]
+    if not indices: raise CeDiRNetTargetCacheError("visualize requires at least one --indices entry.")
+    output_dir = Path(args.output_dir).expanduser()
+    output_dir.mkdir(parents=True, exist_ok=True)
+    panel_size = int(args.panel_size)
+    for index in indices:
+        target = cache.target_for_absolute_indices([index], device="cpu")
+        tensor = target.tensor[0].detach().cpu().numpy()
+        panels = [_tile_with_label(_channel_image(tensor[channel]), f"idx={index} ch={channel}", panel_size) for channel in range(int(tensor.shape[0]))]
+        canvas = Image.new("RGB", (panel_size * len(panels), panels[0].height), color=(0, 0, 0))
+        for i, panel in enumerate(panels): canvas.paste(panel, (i * panel_size, 0))
+        out_path = output_dir / f"cedirnet_cache_{index:06d}.png"
+        canvas.save(out_path)
+        print(json.dumps({"event": "cedirnet_cache_visualized", "index": index, "output_path": str(out_path), "target_shape": list(target.tensor.shape)}, indent=2, sort_keys=True))
+
+
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Build or inspect offline CeDiRNet dense-map caches for visual-thought training.")
     subparsers = parser.add_subparsers(dest="command", required=True)
-    for name in ("build", "inspect"):
+    for name in ("build", "inspect", "visualize"):
         sub = subparsers.add_parser(name)
         sub.add_argument("--dataset_repo_id", required=True)
         sub.add_argument("--dataset_revision", default=None)
@@ -143,13 +186,18 @@ def parse_args() -> argparse.Namespace:
     build.add_argument("--overwrite", action="store_true")
     inspect = subparsers.choices["inspect"]
     inspect.add_argument("--spot_check_indices", default="0")
+    visualize = subparsers.choices["visualize"]
+    visualize.add_argument("--indices", default="0")
+    visualize.add_argument("--output_dir", default=str(ROOT_DIR / "runtime" / "outputs" / "visualizations" / "cedirnet_cache"))
+    visualize.add_argument("--panel_size", type=int, default=256)
     return parser.parse_args()
 
 
 def main() -> None:
     args = parse_args()
     if args.command == "build": build_cache(args)
-    else: inspect_cache(args)
+    elif args.command == "inspect": inspect_cache(args)
+    else: visualize_cache(args)
 
 
 if __name__ == "__main__":
