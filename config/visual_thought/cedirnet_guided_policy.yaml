@@ -1,0 +1,6 @@
+fusion_mode: concat
+gated_fusion: false
+guidance_train_mode: warmup_freeze
+guidance_unfreeze_step: 1000
+action_loss_weight: 1.0
+expert_loss_weight: 0.25

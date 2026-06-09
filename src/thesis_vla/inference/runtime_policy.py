@@ -8,6 +8,7 @@ from lerobot.configs.policies import PreTrainedConfig
 from lerobot.policies.factory import get_policy_class, make_pre_post_processors
 from lerobot.policies.xvla.action_contract import get_so101_slice_spec
 
+from thesis_vla.policies import ensure_thesis_policy_registration
 from thesis_vla.inference.xvla_runtime import make_xvla_runtime_processors, sync_xvla_policy_config
 
 
@@ -26,11 +27,12 @@ def load_runtime_policy(
     device: str,
     overrides: RuntimePolicyOverrides | None = None,
 ):
+    ensure_thesis_policy_registration()
     overrides = overrides or RuntimePolicyOverrides()
     policy_cls = get_policy_class(policy_type)
     include_eef_state = False
 
-    if policy_type == "xvla":
+    if policy_type in {"xvla", "xvla_guided"}:
         config = PreTrainedConfig.from_pretrained(pretrained_path)
         config.device = device
         if overrides.chunk_size is not None:
@@ -76,7 +78,7 @@ def build_runtime_policy_processors(
     use_dataset_stats: bool = False,
 ):
     rename_map = rename_map or {}
-    if getattr(policy.config, "type", None) == "xvla":
+    if getattr(policy.config, "type", None) in {"xvla", "xvla_guided"}:
         return make_xvla_runtime_processors(
             policy=policy,
             pretrained_path=pretrained_path,

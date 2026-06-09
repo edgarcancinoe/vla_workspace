@@ -61,6 +61,12 @@ class CeDirNetDistillationModel(nn.Module):
     def from_config(cls, student_vlm_dim: int, cfg: CeDirNetDecoderConfig) -> "CeDirNetDistillationModel":
         return cls(student_vlm_dim=student_vlm_dim, stack_cfg=cfg.stack, head_cfg=cfg.head, out_channels=cfg.teacher.out_channels)
 
-    def forward(self, vlm_features: torch.Tensor, target_map: torch.Tensor | None = None, output_size: tuple[int, int] | None = None) -> torch.Tensor:
+    def decoder_tokens(self, vlm_features: torch.Tensor) -> torch.Tensor:
+        return self.strategy(vlm_features)
+
+    def predict_from_tokens(self, student_tokens: torch.Tensor, target_map: torch.Tensor | None = None, output_size: tuple[int, int] | None = None) -> torch.Tensor:
         target_hw = tuple(int(v) for v in target_map.shape[-2:]) if target_map is not None else output_size
-        return self.head(self.strategy(vlm_features), target_hw=target_hw)
+        return self.head(student_tokens, target_hw=target_hw)
+
+    def forward(self, vlm_features: torch.Tensor, target_map: torch.Tensor | None = None, output_size: tuple[int, int] | None = None) -> torch.Tensor:
+        return self.predict_from_tokens(self.decoder_tokens(vlm_features), target_map=target_map, output_size=output_size)
