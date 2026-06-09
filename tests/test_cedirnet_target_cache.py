@@ -1,4 +1,5 @@
 from pathlib import Path
+import json
 import sys
 
 import numpy as np
@@ -39,9 +40,13 @@ def test_cedirnet_cache_roundtrip_and_validation(tmp_path):
 
 
 def test_cedirnet_cache_rejects_revision_mismatch(tmp_path):
-    teacher_cfg, _ = _write_cache(tmp_path)
+    teacher_cfg, cache_dir = _write_cache(tmp_path)
+    manifest_path = cache_dir / "manifest.json"
+    manifest = json.loads(manifest_path.read_text())
+    manifest["dataset"]["revision"] = "v1"
+    manifest_path.write_text(json.dumps(manifest, indent=2, sort_keys=True))
     with pytest.raises(CeDiRNetTargetCacheError, match="revision mismatch"):
-        CeDiRNetTargetCache.resolve(dataset_repo_id="edgarcancinoe/cloth-corner-fold_7p5hz", dataset_revision="v2", dataset_root=Path("/tmp/datasets") / "edgarcancinoe/cloth-corner-fold_7p5hz", dataset_length=3, teacher_cfg=teacher_cfg, cache_root=tmp_path)
+        CeDiRNetTargetCache.resolve(dataset_repo_id="edgarcancinoe/cloth-corner-fold_7p5hz", dataset_revision="main", dataset_root=Path("/tmp/datasets") / "edgarcancinoe/cloth-corner-fold_7p5hz", dataset_length=3, teacher_cfg=teacher_cfg, cache_root=tmp_path)
 
 
 def test_cedirnet_cache_missing_shard_fails_fast(tmp_path):
