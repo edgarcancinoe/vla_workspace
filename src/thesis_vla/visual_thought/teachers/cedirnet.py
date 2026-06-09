@@ -65,7 +65,9 @@ class CeDiRNetTeacher:
 
     def _config_path(self) -> Path:
         if not self.cfg.config_path: raise ValueError("CeDiRNet teacher requires config_path.")
-        return Path(self.cfg.config_path).expanduser()
+        path = Path(self.cfg.config_path).expanduser()
+        if path.is_dir(): raise ValueError(f"CeDiRNet teacher config_path must be a JSON file, not a directory: {path}")
+        return path
 
     def _load_args(self) -> dict:
         if self.args is None:

@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import dataclasses
 import json
+import os
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Literal
@@ -12,6 +13,7 @@ from torch.utils.data import DataLoader
 from torch.utils.data._utils.collate import default_collate
 from tqdm import tqdm
 
+from thesis_vla.common.paths import RUNTIME_CACHE_DIR
 from thesis_vla.inference.xvla_runtime import make_xvla_runtime_processors, resolve_xvla_rename_map, sync_xvla_policy_config
 from thesis_vla.visual_thought import CeDirNetDistillationModel, DinoFeatureAlignmentModel, DinoTokenSequenceModel, compute_feature_alignment_loss, load_cedirnet_decoder_config, load_dino_decoder_config
 from thesis_vla.visual_thought.checkpoints import DECODER_STATE_FILENAME, POLICY_DIRNAME, load_decoder_state, load_visual_thought_checkpoint_metadata, save_visual_thought_checkpoint
@@ -86,8 +88,20 @@ def _set_seed(seed: int) -> None:
     if torch.cuda.is_available(): torch.cuda.manual_seed_all(int(seed))
 
 
+def _default_lerobot_home() -> Path:
+    user = os.environ.get("USER", "default_user")
+    cache_root = RUNTIME_CACHE_DIR / f"xvla_{user}"
+    os.environ.setdefault("HF_HUB_CACHE", str(cache_root / "hub"))
+    os.environ.setdefault("HF_ASSETS_CACHE", str(cache_root / "assets"))
+    os.environ.setdefault("HF_LEROBOT_HOME", str(cache_root / "lerobot"))
+    Path(os.environ["HF_HUB_CACHE"]).mkdir(parents=True, exist_ok=True)
+    Path(os.environ["HF_ASSETS_CACHE"]).mkdir(parents=True, exist_ok=True)
+    Path(os.environ["HF_LEROBOT_HOME"]).mkdir(parents=True, exist_ok=True)
+    return Path(os.environ["HF_LEROBOT_HOME"])
+
+
 def _resolve_dataset_root(config: VisualThoughtTrainConfig) -> Path | None:
-    return Path(config.dataset_root) / config.dataset_repo_id if config.dataset_root else None
+    return Path(config.dataset_root) / config.dataset_repo_id if config.dataset_root else _default_lerobot_home() / config.dataset_repo_id
 
 
 def _resolve_teacher_image_key(camera_keys: list[str], rename_map: dict[str, str], requested_key: str) -> str:
