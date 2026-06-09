@@ -10,7 +10,7 @@ from dataclasses import asdict, dataclass, fields, replace
 from pathlib import Path
 from typing import Literal
 
-from thesis_vla.common.paths import RUNTIME_TMP_DIR, TRAIN_OUTPUT_DIR
+from thesis_vla.common.paths import RUNTIME_CACHE_DIR, RUNTIME_TMP_DIR, TRAIN_OUTPUT_DIR
 
 
 LaunchMode = Literal["single", "accelerate"]
@@ -197,6 +197,16 @@ def prepare_environment(workspace_dir: Path) -> dict[str, str]:
     existing_pythonpath = env.get("PYTHONPATH", "").strip()
     if existing_pythonpath: pythonpath_parts.append(existing_pythonpath)
     env["PYTHONPATH"] = ":".join(pythonpath_parts)
+    user = env.get("USER", "default_user")
+    cache_root = RUNTIME_CACHE_DIR / f"xvla_{user}"
+    os.makedirs(cache_root, exist_ok=True)
+    env.pop("HF_HOME", None)
+    env["HF_HUB_CACHE"] = str(cache_root / "hub")
+    env["HF_ASSETS_CACHE"] = str(cache_root / "assets")
+    env["HF_LEROBOT_HOME"] = str(cache_root / "lerobot")
+    os.makedirs(env["HF_HUB_CACHE"], exist_ok=True)
+    os.makedirs(env["HF_ASSETS_CACHE"], exist_ok=True)
+    os.makedirs(env["HF_LEROBOT_HOME"], exist_ok=True)
     return env
 
 
