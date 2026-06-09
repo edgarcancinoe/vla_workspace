@@ -12,7 +12,6 @@ from torch.utils.data import DataLoader
 from tqdm import tqdm
 
 from thesis_vla.inference.xvla_runtime import sync_xvla_policy_config
-from thesis_vla.policies.xvla_guided import XVLAGuidedConfig, XVLAGuidedPolicy
 from thesis_vla.training.visual_thought_trainer import XVLARuntime, _as_device, _resolve_dataset_root, _resolve_teacher_image_key, _set_seed, build_dataloader, preprocess_batch
 from thesis_vla.visual_thought import load_cedirnet_decoder_config
 from thesis_vla.visual_thought.cedirnet_cache import CeDiRNetTargetCache
@@ -88,15 +87,16 @@ def build_xvla_runtime(config: GuidedXVLATrainConfig) -> XVLARuntime:
     return XVLARuntime(policy=policy, dataset=dataset, preprocessor=preprocessor, rename_map=rename_map, teacher_image_key=teacher_image_key)
 
 
-def _load_decoder_init(model: XVLAGuidedPolicy, decoder_init_path: str) -> None:
+def _load_decoder_init(model, decoder_init_path: str) -> None:
     root = Path(decoder_init_path)
     state = load_decoder_state(root / DECODER_STATE_FILENAME if root.is_dir() else root)
     model.model.guidance_decoder.load_state_dict(state, strict=True)
 
 
-def _init_guided_policy_from_base(runtime: XVLARuntime, config: GuidedXVLATrainConfig, task_cfg) -> XVLAGuidedPolicy:
+def _init_guided_policy_from_base(runtime: XVLARuntime, config: GuidedXVLATrainConfig, task_cfg):
     from lerobot.configs.policies import PreTrainedConfig
     from lerobot.policies.xvla.modeling_xvla import XVLAPolicy
+    from thesis_vla.policies.xvla_guided import XVLAGuidedConfig, XVLAGuidedPolicy
 
     base_cfg = PreTrainedConfig.from_pretrained(config.xvla_init_path)
     sync_xvla_policy_config(base_cfg, runtime.dataset.meta, runtime.rename_map)
@@ -122,7 +122,7 @@ def _init_guided_policy_from_base(runtime: XVLARuntime, config: GuidedXVLATrainC
     return policy
 
 
-def build_optimizer(config: GuidedXVLATrainConfig, policy: XVLAGuidedPolicy) -> torch.optim.Optimizer:
+def build_optimizer(config: GuidedXVLATrainConfig, policy) -> torch.optim.Optimizer:
     decoder_params, xvla_params = [], []
     for name, parameter in policy.named_parameters():
         if not parameter.requires_grad: continue
@@ -134,7 +134,7 @@ def build_optimizer(config: GuidedXVLATrainConfig, policy: XVLAGuidedPolicy) -> 
     return torch.optim.AdamW(param_groups, weight_decay=config.weight_decay)
 
 
-def compute_guided_action_loss_from_encoder(policy: XVLAGuidedPolicy, processed_batch: dict[str, Any], inputs: dict[str, torch.Tensor], enc: dict[str, torch.Tensor]) -> tuple[torch.Tensor, dict[str, float], torch.Tensor]:
+def compute_guided_action_loss_from_encoder(policy, processed_batch: dict[str, Any], inputs: dict[str, torch.Tensor], enc: dict[str, torch.Tensor]) -> tuple[torch.Tensor, dict[str, float], torch.Tensor]:
     targets = policy._prepare_action_targets(processed_batch)
     target_dtype = policy.model._get_target_dtype()
     t, action_noisy = policy.model._build_corrupted_action(action=targets, device=inputs["input_ids"].device, target_dtype=target_dtype)
@@ -148,7 +148,7 @@ def compute_guided_action_loss_from_encoder(policy: XVLAGuidedPolicy, processed_
     return action_loss, stats, guidance_tokens
 
 
-def compute_guidance_loss(policy: XVLAGuidedPolicy, target, guidance_tokens: torch.Tensor) -> tuple[torch.Tensor, dict[str, float]]:
+def compute_guidance_loss(policy, target, guidance_tokens: torch.Tensor) -> tuple[torch.Tensor, dict[str, float]]:
     prediction = policy.model.guidance_decoder.predict_from_tokens(guidance_tokens, target_map=target.tensor)
     loss = compute_teacher_loss(prediction, target)
     return loss, {"expert_total": float(loss.detach().item())}
@@ -158,7 +158,7 @@ def load_guidance_target(cache: CeDiRNetTargetCache, raw_batch: dict[str, Any], 
     return cache.target_for_batch(raw_batch, device=_as_device(config))
 
 
-def _save_checkpoint(config: GuidedXVLATrainConfig, policy: XVLAGuidedPolicy, optimizer: torch.optim.Optimizer, step: int, final: bool = False) -> None:
+def _save_checkpoint(config: GuidedXVLATrainConfig, policy, optimizer: torch.optim.Optimizer, step: int, final: bool = False) -> None:
     if not final and (config.save_every <= 0 or step % config.save_every != 0): return
     checkpoint_dir = Path(config.output_dir) / ("checkpoint_final" if final else f"checkpoint_{step:07d}")
     checkpoint_dir.mkdir(parents=True, exist_ok=True)
