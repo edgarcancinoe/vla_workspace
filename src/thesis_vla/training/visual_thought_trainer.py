@@ -16,9 +16,10 @@ from tqdm import tqdm
 from thesis_vla.common.paths import RUNTIME_CACHE_DIR
 from thesis_vla.inference.xvla_runtime import make_xvla_runtime_processors, resolve_xvla_rename_map, sync_xvla_policy_config
 from thesis_vla.visual_thought import CeDirNetDistillationModel, DinoFeatureAlignmentModel, DinoTokenSequenceModel, compute_feature_alignment_loss, load_cedirnet_decoder_config, load_dino_decoder_config
+from thesis_vla.visual_thought.cedirnet_cache import CeDiRNetTargetCache
 from thesis_vla.visual_thought.checkpoints import DECODER_STATE_FILENAME, POLICY_DIRNAME, load_decoder_state, load_visual_thought_checkpoint_metadata, save_visual_thought_checkpoint
 from thesis_vla.visual_thought.targets import TeacherTarget, compute_teacher_loss
-from thesis_vla.visual_thought.teachers import CeDiRNetTeacher, DinoV2Teacher
+from thesis_vla.visual_thought.teachers import DinoV2Teacher
 
 
 TrainingStage = Literal["distill_only", "joint_multitask"]
@@ -52,6 +53,7 @@ class VisualThoughtTrainConfig:
     action_loss_weight: float = 1.0
     expert_loss_weight: float = 1.0
     teacher_image_feature_key: str = "observation.images.image"
+    teacher_target_cache_root: str | None = None
     dataset_video_backend: str = "pyav"
     dataset_tolerance_s: float = 1e-4
     align_feature_until_step: int = 0
@@ -148,12 +150,20 @@ def set_policy_trainability(policy, training_stage: TrainingStage) -> None:
     else: policy.eval()
 
 
-def build_teacher(config: VisualThoughtTrainConfig):
+def build_teacher(config: VisualThoughtTrainConfig, runtime: XVLARuntime | None = None):
     if config.expert_type == "cedirnet":
         task_cfg = load_cedirnet_decoder_config(config.decoder_stack_config_path, config.decoder_task_config_path)
-        return task_cfg, CeDiRNetTeacher(task_cfg.teacher)
+        dataset_length = len(runtime.dataset) if runtime is not None else None
+        if dataset_length is None: raise ValueError("CeDiRNet cached teacher resolution requires an initialized runtime dataset.")
+        cache = CeDiRNetTargetCache.resolve(dataset_repo_id=config.dataset_repo_id, dataset_revision=config.dataset_revision, dataset_root=_resolve_dataset_root(config), dataset_length=dataset_length, teacher_cfg=task_cfg.teacher, cache_root=config.teacher_target_cache_root)
+        return task_cfg, cache
     task_cfg = load_dino_decoder_config(config.decoder_stack_config_path, config.decoder_task_config_path)
     return task_cfg, DinoV2Teacher(task_cfg.teacher)
+
+
+def load_teacher_target(config: VisualThoughtTrainConfig, teacher_source, raw_batch: dict[str, Any], teacher_image_key: str) -> TeacherTarget:
+    if config.expert_type == "cedirnet": return teacher_source.target_for_batch(raw_batch, device=_as_device(config))
+    return teacher_source.predict(get_teacher_images(raw_batch, teacher_image_key).to(_as_device(config)))
 
 
 def build_decoder(config: VisualThoughtTrainConfig, task_cfg, target: TeacherTarget, student_vlm_dim: int):
@@ -229,7 +239,7 @@ def prepare_models_and_target(config: VisualThoughtTrainConfig, runtime: XVLARun
     first_raw_batch = next(iter(loader))
     processed = preprocess_batch(runtime, first_raw_batch)
     inputs, enc = build_xvla_inputs(runtime.policy, processed)
-    target = teacher.predict(get_teacher_images(first_raw_batch, runtime.teacher_image_key).to(_as_device(config)))
+    target = load_teacher_target(config, teacher, first_raw_batch, runtime.teacher_image_key)
     decoder = build_decoder(config, task_cfg, target, student_vlm_dim=int(enc["vlm_features"].shape[-1])).to(_as_device(config))
     load_decoder_init_if_present(decoder, config.decoder_init_path)
     return loader, decoder, target
@@ -253,7 +263,7 @@ def train_visual_thought(config: VisualThoughtTrainConfig) -> None:
     runtime = build_xvla_runtime(config)
 
     set_policy_trainability(runtime.policy, config.training_stage)
-    task_cfg, teacher = build_teacher(config)
+    task_cfg, teacher = build_teacher(config, runtime)
     loader, decoder, _ = prepare_models_and_target(config, runtime, task_cfg, teacher)
     if config.training_stage == "joint_multitask":
         for parameter in decoder.parameters(): parameter.requires_grad = True
@@ -264,7 +274,6 @@ def train_visual_thought(config: VisualThoughtTrainConfig) -> None:
     optimizer = build_optimizer(config, runtime.policy, decoder)
     
     if config.dry_run: return
-    device = _as_device(config)
 
     step = 0
     progress = tqdm(total=config.steps, desc=config.name)
@@ -275,9 +284,7 @@ def train_visual_thought(config: VisualThoughtTrainConfig) -> None:
 
             processed_batch = preprocess_batch(runtime, raw_batch)
             inputs, enc     = build_xvla_inputs(runtime.policy, processed_batch)
-            teacher_images  = get_teacher_images(raw_batch, runtime.teacher_image_key).to(device)
-            
-            target          = teacher.predict(teacher_images)
+            target          = load_teacher_target(config, teacher, raw_batch, runtime.teacher_image_key)
             expert_loss, expert_stats = compute_expert_loss(config, decoder, task_cfg, target, enc["vlm_features"], step)
             total_loss      = float(config.expert_loss_weight) * expert_loss
             

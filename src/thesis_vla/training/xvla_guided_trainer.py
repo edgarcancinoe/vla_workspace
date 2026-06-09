@@ -11,16 +11,13 @@ import torch
 from torch.utils.data import DataLoader
 from tqdm import tqdm
 
-from lerobot.configs.policies import PreTrainedConfig
-from lerobot.policies.xvla.modeling_xvla import XVLAPolicy
-
 from thesis_vla.inference.xvla_runtime import sync_xvla_policy_config
 from thesis_vla.policies.xvla_guided import XVLAGuidedConfig, XVLAGuidedPolicy
-from thesis_vla.training.visual_thought_trainer import XVLARuntime, _as_device, _resolve_dataset_root, _resolve_teacher_image_key, _set_seed, build_dataloader, get_teacher_images, preprocess_batch
+from thesis_vla.training.visual_thought_trainer import XVLARuntime, _as_device, _resolve_dataset_root, _resolve_teacher_image_key, _set_seed, build_dataloader, preprocess_batch
 from thesis_vla.visual_thought import load_cedirnet_decoder_config
+from thesis_vla.visual_thought.cedirnet_cache import CeDiRNetTargetCache
 from thesis_vla.visual_thought.checkpoints import DECODER_STATE_FILENAME, load_decoder_state
 from thesis_vla.visual_thought.targets import compute_teacher_loss
-from thesis_vla.visual_thought.teachers import CeDiRNetTeacher
 
 
 TRAINER_STATE_FILENAME = "trainer_state.pt"
@@ -53,6 +50,7 @@ class GuidedXVLATrainConfig:
     action_loss_weight: float = 1.0
     expert_loss_weight: float = 0.25
     teacher_image_feature_key: str = "observation.images.image"
+    teacher_target_cache_root: str | None = None
     dataset_video_backend: str = "pyav"
     dataset_tolerance_s: float = 1e-4
     fusion_mode: str = "concat"
@@ -75,6 +73,8 @@ class GuidedXVLATrainConfig:
 
 def build_xvla_runtime(config: GuidedXVLATrainConfig) -> XVLARuntime:
     from lerobot.datasets.lerobot_dataset import LeRobotDataset
+    from lerobot.configs.policies import PreTrainedConfig
+    from lerobot.policies.xvla.modeling_xvla import XVLAPolicy
 
     dataset = LeRobotDataset(config.dataset_repo_id, root=_resolve_dataset_root(config), revision=config.dataset_revision, video_backend=config.dataset_video_backend, tolerance_s=float(config.dataset_tolerance_s))
     from thesis_vla.inference.xvla_runtime import make_xvla_runtime_processors, resolve_xvla_rename_map
@@ -95,6 +95,9 @@ def _load_decoder_init(model: XVLAGuidedPolicy, decoder_init_path: str) -> None:
 
 
 def _init_guided_policy_from_base(runtime: XVLARuntime, config: GuidedXVLATrainConfig, task_cfg) -> XVLAGuidedPolicy:
+    from lerobot.configs.policies import PreTrainedConfig
+    from lerobot.policies.xvla.modeling_xvla import XVLAPolicy
+
     base_cfg = PreTrainedConfig.from_pretrained(config.xvla_init_path)
     sync_xvla_policy_config(base_cfg, runtime.dataset.meta, runtime.rename_map)
     guided_cfg = XVLAGuidedConfig.from_xvla_config(
@@ -151,6 +154,10 @@ def compute_guidance_loss(policy: XVLAGuidedPolicy, target, guidance_tokens: tor
     return loss, {"expert_total": float(loss.detach().item())}
 
 
+def load_guidance_target(cache: CeDiRNetTargetCache, raw_batch: dict[str, Any], config: GuidedXVLATrainConfig):
+    return cache.target_for_batch(raw_batch, device=_as_device(config))
+
+
 def _save_checkpoint(config: GuidedXVLATrainConfig, policy: XVLAGuidedPolicy, optimizer: torch.optim.Optimizer, step: int, final: bool = False) -> None:
     if not final and (config.save_every <= 0 or step % config.save_every != 0): return
     checkpoint_dir = Path(config.output_dir) / ("checkpoint_final" if final else f"checkpoint_{step:07d}")
@@ -166,14 +173,13 @@ def train_guided_xvla(config: GuidedXVLATrainConfig) -> None:
     Path(config.output_dir).mkdir(parents=True, exist_ok=True)
     runtime = build_xvla_runtime(config)
     task_cfg = load_cedirnet_decoder_config(config.decoder_stack_config_path, config.decoder_task_config_path)
-    teacher = CeDiRNetTeacher(task_cfg.teacher)
+    cache = CeDiRNetTargetCache.resolve(dataset_repo_id=config.dataset_repo_id, dataset_revision=config.dataset_revision, dataset_root=_resolve_dataset_root(config), dataset_length=len(runtime.dataset), teacher_cfg=task_cfg.teacher, cache_root=config.teacher_target_cache_root)
     policy = _init_guided_policy_from_base(runtime, config, task_cfg)
     runtime.policy = policy
     optimizer = build_optimizer(config, policy)
     loader = build_dataloader(runtime, config)
     if config.dry_run: return
     policy.train()
-    device = _as_device(config)
     step = 0
     progress = tqdm(total=config.steps, desc=config.name)
     while step < config.steps:
@@ -184,8 +190,7 @@ def train_guided_xvla(config: GuidedXVLATrainConfig) -> None:
             processed_batch = preprocess_batch(runtime, raw_batch)
             inputs = policy._build_model_inputs(processed_batch)
             enc = policy.model.forward_vlm(input_ids=inputs["input_ids"], pixel_values=inputs["image_input"], image_mask=inputs["image_mask"])
-            teacher_images = get_teacher_images(raw_batch, runtime.teacher_image_key).to(device)
-            target = teacher.predict(teacher_images)
+            target = load_guidance_target(cache, raw_batch, config)
             action_loss, action_stats, guidance_tokens = compute_guided_action_loss_from_encoder(policy, processed_batch, inputs, enc)
             if float(config.expert_loss_weight) > 0.0:
                 expert_loss, expert_stats = compute_guidance_loss(policy, target, guidance_tokens)
