@@ -50,6 +50,8 @@ class VisualThoughtTrainConfig:
     action_loss_weight: float = 1.0
     expert_loss_weight: float = 1.0
     teacher_image_feature_key: str = "observation.images.image"
+    dataset_video_backend: str = "pyav"
+    dataset_tolerance_s: float = 1e-4
     align_feature_until_step: int = 0
     save_final_checkpoint: bool = True
     seed: int = 42
@@ -102,7 +104,7 @@ def build_xvla_runtime(config: VisualThoughtTrainConfig) -> XVLARuntime:
     from lerobot.datasets.lerobot_dataset import LeRobotDataset
     from lerobot.policies.xvla.modeling_xvla import XVLAPolicy
 
-    dataset = LeRobotDataset(config.dataset_repo_id, root=_resolve_dataset_root(config), revision=config.dataset_revision)
+    dataset = LeRobotDataset(config.dataset_repo_id, root=_resolve_dataset_root(config), revision=config.dataset_revision, video_backend=config.dataset_video_backend, tolerance_s=float(config.dataset_tolerance_s))
     rename_map = resolve_xvla_rename_map(getattr(dataset.meta, "camera_keys", []))
     policy_cfg = PreTrainedConfig.from_pretrained(config.xvla_init_path)
     sync_xvla_policy_config(policy_cfg, dataset.meta, rename_map)

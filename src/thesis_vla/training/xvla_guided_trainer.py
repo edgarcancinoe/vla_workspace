@@ -53,6 +53,8 @@ class GuidedXVLATrainConfig:
     action_loss_weight: float = 1.0
     expert_loss_weight: float = 0.25
     teacher_image_feature_key: str = "observation.images.image"
+    dataset_video_backend: str = "pyav"
+    dataset_tolerance_s: float = 1e-4
     fusion_mode: str = "concat"
     gated_fusion: bool = False
     guidance_train_mode: str = "warmup_freeze"
@@ -74,7 +76,7 @@ class GuidedXVLATrainConfig:
 def build_xvla_runtime(config: GuidedXVLATrainConfig) -> XVLARuntime:
     from lerobot.datasets.lerobot_dataset import LeRobotDataset
 
-    dataset = LeRobotDataset(config.dataset_repo_id, root=_resolve_dataset_root(config), revision=config.dataset_revision)
+    dataset = LeRobotDataset(config.dataset_repo_id, root=_resolve_dataset_root(config), revision=config.dataset_revision, video_backend=config.dataset_video_backend, tolerance_s=float(config.dataset_tolerance_s))
     from thesis_vla.inference.xvla_runtime import make_xvla_runtime_processors, resolve_xvla_rename_map
 
     rename_map = resolve_xvla_rename_map(getattr(dataset.meta, "camera_keys", []))
