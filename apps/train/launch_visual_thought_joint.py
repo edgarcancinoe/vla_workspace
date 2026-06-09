@@ -46,7 +46,22 @@ DEFAULTS = VisualThoughtLaunchConfig(
     name_prefix="visual-thought",
 )
 
-EXPERIMENTS = []
+EXPERIMENTS = [
+    VisualThoughtExperimentSpec(
+        name                        ="cedirnet_joint_stage",
+        dataset_name                ="cloth-corner-fold_7p5hz",
+        dataset_revision            ="v3.0",
+        training_stage              ="joint_multitask",
+        expert_type                 ="cedirnet",
+        xvla_init_path              ="/home/jose/EMAI-Thesis/vla_workspace/runtime/outputs/train/orange196_pickplace-multicolor_7p5hz_so101_ee6d_am_sm_b16_ga2_eb64_full_adapt_stagedpw_v1_20260604_141258/checkpoints/015000/pretrained_model",
+        decoder_init_path           ="/home/jose/EMAI-Thesis/vla_workspace/models/cedirnet_legacy_32x32",
+        decoder_stack_config_path   ="/home/jose/EMAI-Thesis/vla_workspace/config/visual_thought/cedirnet_stack.yaml",
+        decoder_task_config_path    ="/home/jose/EMAI-Thesis/vla_workspace/config/visual_thought/cedirnet_head.yaml",
+        action_loss_weight=1.0,
+        expert_loss_weight=0.25,
+    ),
+]
+
 
 
 def main() -> None:

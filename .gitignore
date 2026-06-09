@@ -27,6 +27,7 @@ checkpoints/
 *.log
 *.tmp
 tmp/
+models/
 
 # Legacy local caches
 .huggingface/
