@@ -218,7 +218,8 @@ def compute_expert_loss(config: VisualThoughtTrainConfig, decoder: torch.nn.Modu
     
     if config.expert_type == "cedirnet":
         prediction  = decoder(vlm_features, target_map=target.tensor)
-        loss        = compute_teacher_loss(prediction, target)
+        loss_target = TeacherTarget(name=target.name, tensor=target.tensor.to(dtype=prediction.dtype), kind=target.kind, loss_type=target.loss_type, weight=target.weight, aux=target.aux)
+        loss        = compute_teacher_loss(prediction, loss_target).float()
         return loss, {"expert_total": float(loss.detach().item()), "expert_stage": 0.0}
     
     if target.kind == "token_sequence":
@@ -249,6 +250,7 @@ def prepare_models_and_target(config: VisualThoughtTrainConfig, runtime: XVLARun
     target = load_teacher_target(config, teacher, first_raw_batch, runtime.teacher_image_key)
     decoder = build_decoder(config, task_cfg, target, student_vlm_dim=int(enc["vlm_features"].shape[-1])).to(_as_device(config))
     load_decoder_init_if_present(decoder, config.decoder_init_path)
+    if config.training_stage == "joint_multitask" and torch.is_floating_point(enc["vlm_features"]): decoder = decoder.to(dtype=enc["vlm_features"].dtype)
     return loader, decoder, target
 
 
