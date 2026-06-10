@@ -215,6 +215,7 @@ def compute_xvla_action_loss_from_encoder(policy, processed_batch: dict[str, Any
 
 
 def compute_expert_loss(config: VisualThoughtTrainConfig, decoder: torch.nn.Module, task_cfg, target: TeacherTarget, vlm_features: torch.Tensor, step: int) -> tuple[torch.Tensor, dict[str, float]]:
+    if config.training_stage == "joint_multitask": vlm_features = vlm_features.detach()
     
     if config.expert_type == "cedirnet":
         prediction  = decoder(vlm_features, target_map=target.tensor)
@@ -250,7 +251,6 @@ def prepare_models_and_target(config: VisualThoughtTrainConfig, runtime: XVLARun
     target = load_teacher_target(config, teacher, first_raw_batch, runtime.teacher_image_key)
     decoder = build_decoder(config, task_cfg, target, student_vlm_dim=int(enc["vlm_features"].shape[-1])).to(_as_device(config))
     load_decoder_init_if_present(decoder, config.decoder_init_path)
-    if config.training_stage == "joint_multitask" and torch.is_floating_point(enc["vlm_features"]): decoder = decoder.to(dtype=enc["vlm_features"].dtype)
     return loader, decoder, target
 
 
