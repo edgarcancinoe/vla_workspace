@@ -47,6 +47,14 @@ class VisualThoughtLaunchConfig:
     wandb_enable: bool = False
     wandb_project: str = "visual-thought"
     wandb_run_name: str | None = None
+    validation_enable: bool = False
+    validation_split_ratio: float = 0.1
+    validation_freq: int = 500
+    validation_max_batches: int = 10
+    validation_seed: int = 1337
+    push_to_hub: bool = False
+    push_repo_id: str | None = None
+    push_every: int = 0
     batch_size: int = 8
     gradient_accumulation_steps: int = 1
     weight_decay: float = 0.01
@@ -82,6 +90,14 @@ class VisualThoughtExperimentSpec:
     wandb_enable: bool | None = None
     wandb_project: str | None = None
     wandb_run_name: str | None = None
+    validation_enable: bool | None = None
+    validation_split_ratio: float | None = None
+    validation_freq: int | None = None
+    validation_max_batches: int | None = None
+    validation_seed: int | None = None
+    push_to_hub: bool | None = None
+    push_repo_id: str | None = None
+    push_every: int | None = None
     batch_size: int | None = None
     gradient_accumulation_steps: int | None = None
     decoder_optimizer_lr: float | None = None
@@ -118,6 +134,14 @@ class ResolvedVisualThoughtExperiment:
     wandb_enable: bool
     wandb_project: str
     wandb_run_name: str | None
+    validation_enable: bool
+    validation_split_ratio: float
+    validation_freq: int
+    validation_max_batches: int
+    validation_seed: int
+    push_to_hub: bool
+    push_repo_id: str | None
+    push_every: int
     batch_size: int
     gradient_accumulation_steps: int
     weight_decay: float
@@ -183,6 +207,14 @@ def resolve_experiment(workspace_dir: Path, defaults: VisualThoughtLaunchConfig,
         wandb_enable=experiment.wandb_enable if experiment.wandb_enable is not None else defaults.wandb_enable,
         wandb_project=experiment.wandb_project or defaults.wandb_project,
         wandb_run_name=experiment.wandb_run_name or defaults.wandb_run_name or name,
+        validation_enable=experiment.validation_enable if experiment.validation_enable is not None else defaults.validation_enable,
+        validation_split_ratio=experiment.validation_split_ratio if experiment.validation_split_ratio is not None else defaults.validation_split_ratio,
+        validation_freq=experiment.validation_freq if experiment.validation_freq is not None else defaults.validation_freq,
+        validation_max_batches=experiment.validation_max_batches if experiment.validation_max_batches is not None else defaults.validation_max_batches,
+        validation_seed=experiment.validation_seed if experiment.validation_seed is not None else defaults.validation_seed,
+        push_to_hub=experiment.push_to_hub if experiment.push_to_hub is not None else defaults.push_to_hub,
+        push_repo_id=experiment.push_repo_id or defaults.push_repo_id,
+        push_every=experiment.push_every if experiment.push_every is not None else defaults.push_every,
         batch_size=experiment.batch_size if experiment.batch_size is not None else defaults.batch_size,
         gradient_accumulation_steps=experiment.gradient_accumulation_steps if experiment.gradient_accumulation_steps is not None else defaults.gradient_accumulation_steps,
         weight_decay=defaults.weight_decay,
@@ -267,6 +299,15 @@ def print_run_summary(index: int, total: int, resolved: ResolvedVisualThoughtExp
     print(f"  W&B Enabled:        {resolved.wandb_enable}")
     print(f"  W&B Project:        {resolved.wandb_project}")
     print(f"  W&B Run:            {resolved.wandb_run_name}")
+    print(f"  Validation:         {resolved.validation_enable}")
+    if resolved.validation_enable:
+        print(f"  Val Split Ratio:    {resolved.validation_split_ratio}")
+        print(f"  Val Frequency:      {resolved.validation_freq}")
+        print(f"  Val Max Batches:    {resolved.validation_max_batches}")
+    print(f"  Push To Hub:        {resolved.push_to_hub}")
+    if resolved.push_to_hub:
+        print(f"  Push Repo:          {resolved.push_repo_id}")
+        print(f"  Push Every:         {resolved.push_every}")
     print(f"  Output Dir:         {resolved.output_dir}")
     print(f"  Steps:              {resolved.steps}")
     print(f"  Batch Size:         {resolved.batch_size}")

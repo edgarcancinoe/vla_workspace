@@ -9,7 +9,7 @@ from pathlib import Path
 from typing import Any, Literal
 
 import torch
-from torch.utils.data import DataLoader
+from torch.utils.data import DataLoader, Subset
 from torch.utils.data._utils.collate import default_collate
 from tqdm import tqdm
 
@@ -59,6 +59,14 @@ class VisualThoughtTrainConfig:
     wandb_enable: bool = False
     wandb_project: str = "visual-thought"
     wandb_run_name: str | None = None
+    validation_enable: bool = False
+    validation_split_ratio: float = 0.1
+    validation_freq: int = 500
+    validation_max_batches: int = 10
+    validation_seed: int = 1337
+    push_to_hub: bool = False
+    push_repo_id: str | None = None
+    push_every: int = 0
     align_feature_until_step: int = 0
     save_final_checkpoint: bool = True
     seed: int = 42
@@ -136,6 +144,20 @@ def build_xvla_runtime(config: VisualThoughtTrainConfig) -> XVLARuntime:
 
 def build_dataloader(runtime: XVLARuntime, config: VisualThoughtTrainConfig) -> DataLoader:
     return DataLoader(runtime.dataset, batch_size=config.batch_size, shuffle=True, num_workers=config.num_workers, collate_fn=default_collate, drop_last=False)
+
+
+def build_train_val_dataloaders(runtime: XVLARuntime, config: VisualThoughtTrainConfig) -> tuple[DataLoader, DataLoader | None]:
+    if not config.validation_enable or float(config.validation_split_ratio) <= 0.0: return build_dataloader(runtime, config), None
+    dataset_len = len(runtime.dataset)
+    val_len = min(max(int(round(dataset_len * float(config.validation_split_ratio))), 1), max(dataset_len - 1, 1))
+    if dataset_len < 2 or val_len >= dataset_len: return build_dataloader(runtime, config), None
+    generator = torch.Generator().manual_seed(int(config.validation_seed))
+    permutation = torch.randperm(dataset_len, generator=generator).tolist()
+    val_indices, train_indices = permutation[:val_len], permutation[val_len:]
+    train_dataset, val_dataset = Subset(runtime.dataset, train_indices), Subset(runtime.dataset, val_indices)
+    train_loader = DataLoader(train_dataset, batch_size=config.batch_size, shuffle=True, num_workers=config.num_workers, collate_fn=default_collate, drop_last=False)
+    val_loader = DataLoader(val_dataset, batch_size=config.batch_size, shuffle=False, num_workers=config.num_workers, collate_fn=default_collate, drop_last=False)
+    return train_loader, val_loader
 
 
 def preprocess_batch(runtime: XVLARuntime, raw_batch: dict[str, Any]) -> dict[str, Any]:
@@ -248,18 +270,26 @@ def compute_expert_loss(config: VisualThoughtTrainConfig, decoder: torch.nn.Modu
 
 
 def prepare_models_and_target(config: VisualThoughtTrainConfig, runtime: XVLARuntime, task_cfg, teacher):
-    loader = build_dataloader(runtime, config)
+    loader, val_loader = build_train_val_dataloaders(runtime, config)
     first_raw_batch = next(iter(loader))
     processed = preprocess_batch(runtime, first_raw_batch)
     inputs, enc = build_xvla_inputs(runtime.policy, processed)
     target = load_teacher_target(config, teacher, first_raw_batch, runtime.teacher_image_key)
     decoder = build_decoder(config, task_cfg, target, student_vlm_dim=int(enc["vlm_features"].shape[-1])).to(_as_device(config))
     load_decoder_init_if_present(decoder, config.decoder_init_path)
-    return loader, decoder, target
+    return loader, val_loader, decoder, target
 
 
 def _checkpoint_metadata(config: VisualThoughtTrainConfig, step: int) -> dict[str, Any]:
     return {"name": config.name, "training_stage": config.training_stage, "expert_type": config.expert_type, "global_step": int(step), "xvla_init_path": config.xvla_init_path, "decoder_init_path": config.decoder_init_path}
+
+
+def _push_checkpoint_to_hub(checkpoint_dir: Path, repo_id: str, commit_message: str) -> None:
+    from huggingface_hub import HfApi
+
+    api = HfApi()
+    api.create_repo(repo_id=repo_id, repo_type="model", exist_ok=True)
+    api.upload_folder(folder_path=str(checkpoint_dir), repo_id=repo_id, repo_type="model", commit_message=commit_message)
 
 
 def _save_checkpoint_if_needed(config: VisualThoughtTrainConfig, policy, decoder: torch.nn.Module, optimizer: torch.optim.Optimizer, step: int, final: bool = False) -> None:
@@ -267,6 +297,8 @@ def _save_checkpoint_if_needed(config: VisualThoughtTrainConfig, policy, decoder
     checkpoint_name = "checkpoint_final" if final else f"checkpoint_{step:07d}"
     checkpoint_dir = Path(config.output_dir) / checkpoint_name
     save_visual_thought_checkpoint(checkpoint_dir=checkpoint_dir, policy=policy, decoder=decoder, trainer_state={"step": int(step), "optimizer": optimizer.state_dict()}, metadata=_checkpoint_metadata(config, step), config_snapshot=config.to_json_dict())
+    should_push = bool(config.push_to_hub) and bool(config.push_repo_id) and (final or (int(config.push_every) > 0 and step % int(config.push_every) == 0))
+    if should_push: _push_checkpoint_to_hub(checkpoint_dir, str(config.push_repo_id), f"Upload visual-thought checkpoint {checkpoint_name}")
 
 
 def _maybe_init_wandb(config: VisualThoughtTrainConfig):
@@ -274,6 +306,35 @@ def _maybe_init_wandb(config: VisualThoughtTrainConfig):
     import wandb
 
     return wandb.init(project=config.wandb_project, name=config.wandb_run_name or config.name, config=config.to_json_dict(), dir=config.output_dir)
+
+
+@torch.no_grad()
+def run_validation(config: VisualThoughtTrainConfig, runtime: XVLARuntime, task_cfg, teacher, decoder: torch.nn.Module, val_loader: DataLoader) -> dict[str, float]:
+    decoder_was_training = decoder.training
+    policy_was_training = runtime.policy.training
+    decoder.eval()
+    runtime.policy.eval()
+    total_loss, total_action, total_expert, batches = 0.0, 0.0, 0.0, 0
+    for raw_batch in val_loader:
+        if batches >= max(int(config.validation_max_batches), 1): break
+        processed_batch = preprocess_batch(runtime, raw_batch)
+        inputs, enc = build_xvla_inputs(runtime.policy, processed_batch)
+        target = load_teacher_target(config, teacher, raw_batch, runtime.teacher_image_key)
+        expert_loss, _ = compute_expert_loss(config, decoder, task_cfg, target, enc["vlm_features"], step=0)
+        total = float(config.expert_loss_weight) * expert_loss
+        action_value = 0.0
+        if config.training_stage == "joint_multitask":
+            action_loss, _ = compute_xvla_action_loss_from_encoder(runtime.policy, processed_batch, inputs, enc)
+            action_value = float(action_loss.detach().item())
+            total = float(config.action_loss_weight) * action_loss + float(config.expert_loss_weight) * expert_loss
+        total_loss += float(total.detach().item())
+        total_action += action_value
+        total_expert += float(expert_loss.detach().item())
+        batches += 1
+    if decoder_was_training: decoder.train()
+    if policy_was_training: runtime.policy.train()
+    denom = max(batches, 1)
+    return {"val_loss": total_loss / denom, "val_expert_total": total_expert / denom, "val_action_total": total_action / denom, "val_batches": float(batches)}
 
 
 def train_visual_thought(config: VisualThoughtTrainConfig) -> None:
@@ -285,7 +346,7 @@ def train_visual_thought(config: VisualThoughtTrainConfig) -> None:
 
     set_policy_trainability(runtime.policy, config.training_stage)
     task_cfg, teacher = build_teacher(config, runtime)
-    loader, decoder, _ = prepare_models_and_target(config, runtime, task_cfg, teacher)
+    loader, val_loader, decoder, _ = prepare_models_and_target(config, runtime, task_cfg, teacher)
     if config.training_stage == "joint_multitask":
         for parameter in decoder.parameters(): parameter.requires_grad = True
         runtime.policy.train()
@@ -323,6 +384,10 @@ def train_visual_thought(config: VisualThoughtTrainConfig) -> None:
                 metrics = {"event": "train_step", "step": int(step), "loss": float(total_loss.detach().item()), **expert_stats, **action_stats}
                 print(json.dumps(metrics))
                 if wandb_run is not None: wandb_run.log({key: value for key, value in metrics.items() if key != "event"}, step=int(step))
+            if val_loader is not None and step % max(int(config.validation_freq), 1) == 0:
+                val_metrics = {"event": "validation_step", "step": int(step), **run_validation(config, runtime, task_cfg, teacher, decoder, val_loader)}
+                print(json.dumps(val_metrics))
+                if wandb_run is not None: wandb_run.log({key: value for key, value in val_metrics.items() if key != "event"}, step=int(step))
             _save_checkpoint_if_needed(config, runtime.policy, decoder, optimizer, step, final=False)
             progress.update(1)
     progress.close()
