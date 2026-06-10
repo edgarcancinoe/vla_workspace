@@ -57,7 +57,7 @@ DEFAULTS = VisualThoughtLaunchConfig(
     name_prefix=f"visual-thought-{RUN_TS}",
 )
 
-EXPERIMENTS = [
+EXPERIMENTS_FOLD_CEDIRNET = [
     VisualThoughtExperimentSpec(
         name                        =f"cedirnet_joint_stage_{RUN_TS}",
         dataset_name                ="cloth-corner-fold_7p5hz",
@@ -128,10 +128,32 @@ EXPERIMENTS = [
         action_loss_weight=1.0,
         expert_loss_weight=1.0,
     ),
+    
 ]
 
+EXPERIMENTS_FOLD_DINO = []
 
+EXPERIMENTS_CLOTH_DROP_CEDIRNET = []
+EXPERIMENTS_CLOTH_DROP_DINO = []
 
+EXPERIMENTS_CUBES_DINO = [
+    VisualThoughtExperimentSpec(
+        name="dino_joint_stage",
+        dataset_name="cloth-corner-fold_7p5hz",
+        dataset_revision="v3.0",
+        training_stage="joint_multitask",
+        expert_type="dino",
+        xvla_init_path="/home/jose/EMAI-Thesis/vla_workspace/runtime/outputs/train/orange196_pickplace-multicolor_7p5hz_so101_ee6d_am_sm_b16_ga2_eb64_full_adapt_stagedpw_v1_20260604_141258/checkpoints/015000/pretrained_model",
+        decoder_init_path="/home/jose/EMAI-Thesis/vla_workspace/PATH/TO/YOUR_DINO_DISTILL_CHECKPOINT",
+        decoder_stack_config_path="/home/jose/EMAI-Thesis/vla_workspace/config/visual_thought/dino_stack.yaml",
+        decoder_task_config_path="/home/jose/EMAI-Thesis/vla_workspace/config/visual_thought/dino_decoder.yaml",
+        wandb_run_name="dino_joint_stage",
+        action_loss_weight=1.0,
+        expert_loss_weight=0.25,
+    )
+]
+
+EXPERIMENTS = EXPERIMENTS_FOLD_CEDIRNET
 def main() -> None:
     run_experiments(workspace_dir=WORKSPACE_DIR, defaults=DEFAULTS, experiments=EXPERIMENTS)
 
