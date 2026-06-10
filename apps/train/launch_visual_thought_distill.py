@@ -24,7 +24,7 @@ from thesis_vla.training.visual_thought_launcher import VisualThoughtExperimentS
 WORKSPACE_DIR = PROJECT_ROOT
 RUN_TS = dt.datetime.now().strftime("%Y%m%d_%H%M%S")
 
-RUNTIME_CONFIG = VisualThoughtRuntimeConfig(launch_mode="single", cuda_devices=(0,), num_workers=0, dry_run=False)
+RUNTIME_CONFIG = VisualThoughtRuntimeConfig(launch_mode="single", cuda_devices=(1,), num_workers=0, dry_run=False)
 
 DEFAULTS = VisualThoughtLaunchConfig(
     hf_user     ="edgarcancinoe",
@@ -44,6 +44,7 @@ DEFAULTS = VisualThoughtLaunchConfig(
     log_every=20,
     save_every=500,
     name_prefix=f"visual-thought-{RUN_TS}",
+    vis_every=10,
 )
 
 # DINO distill_only: no target cache needed (teacher = stock dinov2 vitb14 from torch.hub).
