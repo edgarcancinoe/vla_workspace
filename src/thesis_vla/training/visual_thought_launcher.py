@@ -23,6 +23,7 @@ class VisualThoughtRuntimeConfig:
     launch_mode: LaunchMode = "single"
     cuda_devices: tuple[int, ...] = (0,)
     main_process_port: int = 45001
+    mixed_precision: str = "no"
     device: str = "cuda"
     num_workers: int = 0
     dry_run: bool = False
@@ -272,7 +273,6 @@ def run_preflight_checks(experiments: list[ResolvedVisualThoughtExperiment], env
     importlib.import_module("lerobot")
     probe = subprocess.run([sys.executable, "-c", "import thesis_vla"], env=env, capture_output=True, text=True, check=False)
     if probe.returncode != 0: raise SystemExit(f"ERROR: thesis_vla is not importable in subprocess environment.\n{(probe.stderr or probe.stdout).strip()}")
-    if any(experiment.runtime.launch_mode != "single" for experiment in experiments): raise SystemExit("Visual-thought training currently supports launch_mode='single' only.")
 
 
 def write_resolved_config(resolved: ResolvedVisualThoughtExperiment) -> Path:
@@ -289,7 +289,21 @@ def write_resolved_config(resolved: ResolvedVisualThoughtExperiment) -> Path:
 
 
 def build_training_command(resolved: ResolvedVisualThoughtExperiment, config_path: Path) -> list[str]:
-    return [sys.executable, "-m", "thesis_vla.training.visual_thought_trainer", f"--config_path={config_path}"]
+    trainer_module = "thesis_vla.training.visual_thought_trainer"
+    trainer_args = [f"--config_path={config_path}"]
+    if resolved.runtime.launch_mode == "single":
+        return [sys.executable, "-m", trainer_module, *trainer_args]
+    num_processes = len(resolved.runtime.cuda_devices)
+    if num_processes < 1: raise ValueError("Accelerate launch mode requires at least one CUDA device.")
+    accelerate_cmd = [
+        sys.executable, "-m", "accelerate.commands.launch",
+        f"--num_processes={num_processes}", "--num_machines=1",
+        f"--main_process_port={resolved.runtime.main_process_port}",
+        f"--mixed_precision={resolved.runtime.mixed_precision}", "--dynamo_backend=no",
+    ]
+    if num_processes > 1: accelerate_cmd.append("--multi_gpu")
+    accelerate_cmd += ["--module", trainer_module, *trainer_args]
+    return accelerate_cmd
 
 
 def apply_runtime_environment(env: dict[str, str], runtime: VisualThoughtRuntimeConfig) -> dict[str, str]:
@@ -327,6 +341,12 @@ def print_run_summary(index: int, total: int, resolved: ResolvedVisualThoughtExp
         print(f"  Push Repo:          {resolved.push_repo_id}")
         print(f"  Push Every:         {resolved.push_every}")
     print(f"  Output Dir:         {resolved.output_dir}")
+    print(f"  Launch Mode:        {resolved.runtime.launch_mode}")
+    print(f"  CUDA Devices:       {resolved.runtime.cuda_devices}")
+    if resolved.runtime.launch_mode != "single":
+        print(f"  Mixed Precision:    {resolved.runtime.mixed_precision}")
+        print(f"  Main Process Port:  {resolved.runtime.main_process_port}")
+    print(f"  Num Workers:        {resolved.runtime.num_workers}")
     print(f"  Steps:              {resolved.steps}")
     print(f"  Batch Size:         {resolved.batch_size}")
     print(f"  Grad Accum:         {resolved.gradient_accumulation_steps}")

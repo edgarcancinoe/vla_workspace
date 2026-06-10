@@ -508,72 +508,121 @@ def run_validation(config: VisualThoughtTrainConfig, runtime: XVLARuntime, task_
     return metrics
 
 
+class VisualThoughtModule(torch.nn.Module):
+    """Bundles policy + decoder so a single DDP-wrapped forward touches every trainable
+    parameter. Required for joint_multitask multi-GPU: the trainer calls policy submodules
+    directly (forward_vlm / transformer), so without one wrapped forward the policy grads
+    would never all-reduce across ranks."""
+
+    def __init__(self, policy, decoder: torch.nn.Module, config: VisualThoughtTrainConfig, task_cfg) -> None:
+        super().__init__()
+        self.policy = policy
+        self.decoder = decoder
+        self._config = config
+        self._task_cfg = task_cfg
+
+    def forward(self, processed_batch: dict[str, Any], target: TeacherTarget, step: int):
+        inputs = self.policy._build_model_inputs(processed_batch)
+        enc = self.policy.model.forward_vlm(input_ids=inputs["input_ids"], pixel_values=inputs["image_input"], image_mask=inputs["image_mask"])
+        expert_loss, expert_stats = compute_expert_loss(self._config, self.decoder, self._task_cfg, target, enc["vlm_features"], step)
+        action_loss, action_stats = compute_xvla_action_loss_from_encoder(self.policy, processed_batch, inputs, enc)
+        total_loss = float(self._config.action_loss_weight) * action_loss + float(self._config.expert_loss_weight) * expert_loss
+        return total_loss, expert_stats, action_stats
+
+
 def train_visual_thought(config: VisualThoughtTrainConfig) -> None:
+    from accelerate import Accelerator
+    from accelerate.utils import DistributedDataParallelKwargs
+
+    accum_steps = max(int(config.gradient_accumulation_steps), 1)
+    accelerator = Accelerator(step_scheduler_with_optimizer=False, kwargs_handlers=[DistributedDataParallelKwargs(find_unused_parameters=True)], gradient_accumulation_steps=accum_steps)
+    # Pin this rank's CUDA device so the existing `_as_device()` -> "cuda" resolves to
+    # cuda:local_rank (Accelerator already set it, but be explicit for the policy/VLM loads).
+    if torch.cuda.is_available(): torch.cuda.set_device(accelerator.local_process_index)
+    is_main = accelerator.is_main_process
+    is_joint = config.training_stage == "joint_multitask"
+
     _set_seed(config.seed)
-    Path(config.output_dir).mkdir(parents=True, exist_ok=True)
-    wandb_run = _maybe_init_wandb(config)
+    if is_main: Path(config.output_dir).mkdir(parents=True, exist_ok=True)
+    accelerator.wait_for_everyone()
+    wandb_run = _maybe_init_wandb(config) if is_main else None
 
     runtime = build_xvla_runtime(config)
+    accelerator.wait_for_everyone()
 
     set_policy_trainability(runtime.policy, config.training_stage)
     task_cfg, teacher = build_teacher(config, runtime)
     loader, val_loader, vis_loader, vis_indices, decoder, _ = prepare_models_and_target(config, runtime, task_cfg, teacher)
-    if vis_loader is not None: print(json.dumps({"event": "visualization_config", "vis_fixed_indices": vis_indices, "vis_num_samples": int(config.vis_num_samples), "vis_every": int(config.vis_every)}))
-    if config.training_stage == "joint_multitask":
+    if is_main and vis_loader is not None: print(json.dumps({"event": "visualization_config", "vis_fixed_indices": vis_indices, "vis_num_samples": int(config.vis_num_samples), "vis_every": int(config.vis_every)}))
+    if is_joint:
         for parameter in decoder.parameters(): parameter.requires_grad = True
         runtime.policy.train()
     else:
         decoder.train()
-        
+
+    # Distill multi-GPU DDP-wraps the decoder, so it must be driven through `forward`.
+    # cedirnet (dense_map) and dino token_sequence are forward-based; dino feature-alignment
+    # uses custom decoder methods that a DDP wrapper would hide -> unsupported on >1 GPU.
+    if (not is_joint) and accelerator.num_processes > 1 and config.expert_type == "dino" and getattr(task_cfg.teacher, "target_kind", None) != "token_sequence":
+        raise SystemExit("Multi-GPU distill supports dino target_kind='token_sequence' only (feature-alignment uses custom decoder methods incompatible with DDP-wrapping the decoder). Use launch_mode='single' for that expert.")
+
     optimizer = build_optimizer(config, runtime.policy, decoder)
-    
+
     if config.dry_run: return
 
+    if is_joint:
+        train_module = VisualThoughtModule(runtime.policy, decoder, config, task_cfg)
+        train_module, optimizer, loader = accelerator.prepare(train_module, optimizer, loader)
+        unwrapped_decoder = lambda: accelerator.unwrap_model(train_module).decoder
+    else:
+        decoder, optimizer, loader = accelerator.prepare(decoder, optimizer, loader)
+        train_module = decoder
+        unwrapped_decoder = lambda: accelerator.unwrap_model(decoder)
+
     step = 0
-    accum_steps = max(int(config.gradient_accumulation_steps), 1)
     optimizer.zero_grad(set_to_none=True)
-    progress = tqdm(total=config.steps, desc=config.name)
+    progress = tqdm(total=config.steps, desc=config.name, disable=not is_main)
     while step < config.steps:
         for raw_batch in loader:
             if step >= config.steps: break
             step += 1
 
             processed_batch = preprocess_batch(runtime, raw_batch)
-            inputs, enc     = build_xvla_inputs(runtime, processed_batch)
-            target          = load_teacher_target(config, teacher, raw_batch, runtime.teacher_image_key)
-            expert_loss, expert_stats = compute_expert_loss(config, decoder, task_cfg, target, enc["vlm_features"], step)
-            total_loss      = float(config.expert_loss_weight) * expert_loss
-            
-            action_stats = {}
-            if config.training_stage == "joint_multitask":
-                action_loss, action_stats = compute_xvla_action_loss_from_encoder(runtime.policy, processed_batch, inputs, enc)
-                total_loss = float(config.action_loss_weight) * action_loss + float(config.expert_loss_weight) * expert_loss
-            
-            (total_loss / accum_steps).backward()
-            if step % accum_steps == 0 or step == config.steps:
-                torch.nn.utils.clip_grad_norm_([parameter for group in optimizer.param_groups for parameter in group["params"]], XVLA_GRAD_CLIP_NORM)
-                optimizer.step()
-                optimizer.zero_grad(set_to_none=True)
-            
-            if step % max(int(config.log_every), 1) == 0:
+            target = load_teacher_target(config, teacher, raw_batch, runtime.teacher_image_key)
+            with accelerator.accumulate(train_module):
+                if is_joint:
+                    total_loss, expert_stats, action_stats = train_module(processed_batch, target, step)
+                else:
+                    _, enc = build_xvla_inputs(runtime, processed_batch)
+                    expert_loss, expert_stats = compute_expert_loss(config, decoder, task_cfg, target, enc["vlm_features"], step)
+                    total_loss, action_stats = float(config.expert_loss_weight) * expert_loss, {}
+                accelerator.backward(total_loss)
+                if accelerator.sync_gradients:
+                    accelerator.clip_grad_norm_(train_module.parameters(), XVLA_GRAD_CLIP_NORM)
+                    optimizer.step()
+                    optimizer.zero_grad(set_to_none=True)
+
+            if is_main and step % max(int(config.log_every), 1) == 0:
                 metrics = {"event": "train_step", "step": int(step), "loss": float(total_loss.detach().item()), **expert_stats, **action_stats}
                 print(json.dumps(metrics))
                 if wandb_run is not None: wandb_run.log({key: value for key, value in metrics.items() if key != "event"}, step=int(step))
-            if val_loader is not None and step % max(int(config.validation_freq), 1) == 0:
-                val_metrics = {"event": "validation_step", "step": int(step), **run_validation(config, runtime, task_cfg, teacher, decoder, val_loader)}
+            if is_main and val_loader is not None and step % max(int(config.validation_freq), 1) == 0:
+                val_metrics = {"event": "validation_step", "step": int(step), **run_validation(config, runtime, task_cfg, teacher, unwrapped_decoder(), val_loader)}
                 print(json.dumps(val_metrics))
                 if wandb_run is not None: wandb_run.log({key: value for key, value in val_metrics.items() if key != "event"}, step=int(step))
-            if vis_loader is not None and int(config.vis_every) > 0 and step % max(int(config.vis_every), 1) == 0:
-                vis_metrics = {"event": "visualization_step", "step": int(step), **run_visualization(config, runtime, teacher, decoder, vis_loader, step)}
+            if is_main and vis_loader is not None and int(config.vis_every) > 0 and step % max(int(config.vis_every), 1) == 0:
+                vis_metrics = {"event": "visualization_step", "step": int(step), **run_visualization(config, runtime, teacher, unwrapped_decoder(), vis_loader, step)}
                 print(json.dumps(vis_metrics))
-            _save_checkpoint_if_needed(config, runtime, decoder, optimizer, step, final=False)
+            if is_main: _save_checkpoint_if_needed(config, runtime, unwrapped_decoder(), optimizer, step, final=False)
             progress.update(1)
     progress.close()
-    if bool(config.vis_final) and vis_loader is not None:
-        vis_metrics = {"event": "visualization_final", "step": int(step), **run_visualization(config, runtime, teacher, decoder, vis_loader, step)}
+    accelerator.wait_for_everyone()
+    if is_main and bool(config.vis_final) and vis_loader is not None:
+        vis_metrics = {"event": "visualization_final", "step": int(step), **run_visualization(config, runtime, teacher, unwrapped_decoder(), vis_loader, step)}
         print(json.dumps(vis_metrics))
-    if config.save_final_checkpoint: 
-        _save_checkpoint_if_needed(config, runtime, decoder, optimizer, step, final=True)
+    if is_main and config.save_final_checkpoint:
+        _save_checkpoint_if_needed(config, runtime, unwrapped_decoder(), optimizer, step, final=True)
+    accelerator.wait_for_everyone()
     if wandb_run is not None: wandb_run.finish()
 
 

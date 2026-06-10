@@ -14,4 +14,4 @@ stack:
   student_projection_mode: res_mlp
   student_projection_mlp_ratio: 4.0
   student_projection_dropout: 0.01
-  positional_encodings: true
+  positional_encodings: false
