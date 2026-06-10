@@ -8,7 +8,10 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Literal
 
+import numpy as np
 import torch
+import torch.nn.functional as F
+from PIL import Image
 from torch.utils.data import DataLoader, Subset
 from torch.utils.data._utils.collate import default_collate
 from tqdm import tqdm
@@ -69,6 +72,9 @@ class VisualThoughtTrainConfig:
     validation_freq: int = 500
     validation_max_batches: int = 10
     validation_seed: int = 1337
+    vis_every: int = 0
+    vis_num_samples: int = 4
+    vis_final: bool = True
     push_to_hub: bool = False
     push_repo_id: str | None = None
     push_every: int = 0
@@ -95,6 +101,102 @@ class XVLARuntime:
     postprocessor: Any
     rename_map: dict[str, str]
     teacher_image_key: str
+
+
+def _resolve_grid_hw(target: TeacherTarget) -> tuple[int, int]:
+    grid_hw = target.aux.get("grid_hw") if isinstance(target.aux, dict) else None
+    if isinstance(grid_hw, (tuple, list)) and len(grid_hw) == 2: return int(grid_hw[0]), int(grid_hw[1])
+    num_tokens = int(target.tensor.shape[1]); side = int(round(num_tokens ** 0.5))
+    if side * side != num_tokens: raise ValueError(f"Unable to infer token grid from N={num_tokens}.")
+    return side, side
+
+
+def _to_uint8_image(image_chw: torch.Tensor) -> np.ndarray:
+    image = image_chw.detach().cpu().float()
+    if image.ndim != 3: raise ValueError(f"Expected CHW image, got shape={tuple(image.shape)}.")
+    image = image.permute(1, 2, 0).numpy()
+    if image.max() <= 1.0: image = image * 255.0
+    return np.clip(image, 0.0, 255.0).astype(np.uint8)
+
+
+def _draw_patch_borders(image_hwc: np.ndarray, gh: int, gw: int, color: tuple[int, int, int] = (255, 255, 255)) -> np.ndarray:
+    canvas = image_hwc.copy(); height, width = canvas.shape[:2]
+    for row in range(1, gh):
+        y = int(round(row * height / gh))
+        canvas[max(0, y - 1):min(height, y + 1), :] = color
+    for col in range(1, gw):
+        x = int(round(col * width / gw))
+        canvas[:, max(0, x - 1):min(width, x + 1)] = color
+    return canvas
+
+
+def _compute_token_pca(tokens: torch.Tensor) -> tuple[np.ndarray, np.ndarray]:
+    token_np = tokens.detach().float().cpu().numpy(); norms = np.linalg.norm(token_np, axis=-1, keepdims=True)
+    token_norm = token_np / np.clip(norms, 1e-8, None); centered = token_norm - token_norm.mean(axis=0, keepdims=True)
+    _, _, vt = np.linalg.svd(centered, full_matrices=False); pc1 = centered @ vt[0]; hi_mask = pc1 > np.median(pc1); flat_norms = norms.squeeze(-1)
+    fg_mask = hi_mask if flat_norms[hi_mask].mean() >= flat_norms[~hi_mask].mean() else ~hi_mask
+    if fg_mask.sum() > 3:
+        fg_tokens = centered[fg_mask]; _, _, vt_fg = np.linalg.svd(fg_tokens - fg_tokens.mean(axis=0, keepdims=True), full_matrices=False); projected = (centered - fg_tokens.mean(axis=0, keepdims=True)) @ vt_fg[:3].T
+    else:
+        projected = centered @ vt[1:4].T
+    for channel in range(3):
+        lo = np.percentile(projected[fg_mask, channel], 2) if fg_mask.sum() > 1 else float(projected[:, channel].min())
+        hi = np.percentile(projected[fg_mask, channel], 98) if fg_mask.sum() > 1 else float(projected[:, channel].max())
+        projected[:, channel] = np.clip((projected[:, channel] - lo) / max(hi - lo, 1e-8), 0.0, 1.0)
+    pca_rgb = projected * fg_mask[:, None].astype(np.float32) + 0.3 * (~fg_mask)[:, None].astype(np.float32)
+    return pca_rgb, fg_mask
+
+
+def _overlay_map(image_chw: torch.Tensor, map_hw: torch.Tensor, alpha: float = 0.45, vmin: float | None = None, vmax: float | None = None) -> np.ndarray:
+    image = _to_uint8_image(image_chw).astype(np.float32)
+    map_np = map_hw.detach().cpu().float().numpy()
+    lo = float(map_np.min()) if vmin is None else float(vmin); hi = float(map_np.max()) if vmax is None else float(vmax)
+    denom = max(hi - lo, 1e-8); norm = np.clip((map_np - lo) / denom, 0.0, 1.0)
+    heat = np.stack([norm, 1.0 - np.abs(2.0 * norm - 1.0), 1.0 - norm], axis=-1) * 255.0
+    return np.clip((1.0 - alpha) * image + alpha * heat, 0.0, 255.0).astype(np.uint8)
+
+
+@torch.no_grad()
+def run_visualization(config: VisualThoughtTrainConfig, runtime: XVLARuntime, teacher, decoder: torch.nn.Module, loader: DataLoader, step: int) -> dict[str, Any]:
+    if int(config.vis_num_samples) <= 0: return {"vis_skipped": "vis_num_samples"}
+    decoder_was_training, policy_was_training = decoder.training, runtime.policy.training
+    decoder.eval(); runtime.policy.eval()
+    try:
+        raw_batch = next(iter(loader))
+        processed_batch = preprocess_batch(runtime, raw_batch)
+        _, enc = build_xvla_inputs(runtime.policy, processed_batch)
+        target = load_teacher_target(config, teacher, raw_batch, runtime.teacher_image_key)
+        if config.expert_type != "dino" or target.kind != "token_sequence": return {"vis_skipped": f"{config.expert_type}:{target.kind}"}
+        prediction = decoder(enc["vlm_features"])
+        gh, gw = _resolve_grid_hw(target); sample_count = min(int(config.vis_num_samples), int(prediction.shape[0]))
+        vis_root = Path(config.output_dir) / "visualizations" / f"step_{int(step):07d}"; vis_root.mkdir(parents=True, exist_ok=True)
+        teacher_images = get_teacher_images(raw_batch, runtime.teacher_image_key); gallery = []
+        pred_tokens = prediction.detach().cpu(); target_tokens = target.tensor.detach().cpu()
+        cosine_maps = F.cosine_similarity(pred_tokens, target_tokens, dim=-1).view(pred_tokens.shape[0], gh, gw)
+        error_maps = ((pred_tokens - target_tokens) ** 2).mean(dim=-1).view(pred_tokens.shape[0], gh, gw)
+        sample_ids = raw_batch.get("index")
+        for sample_idx in range(sample_count):
+            sample_id = int(sample_ids[sample_idx].item()) if torch.is_tensor(sample_ids) else int(sample_idx)
+            stem = vis_root / f"sample{sample_idx:02d}_{sample_id}"
+            image_uint8 = _to_uint8_image(teacher_images[sample_idx]); Image.fromarray(_draw_patch_borders(image_uint8, gh, gw)).save(stem.with_name(stem.name + "_image.png"), compress_level=1)
+            student_pca, fg_mask = _compute_token_pca(pred_tokens[sample_idx]); teacher_pca, _ = _compute_token_pca(target_tokens[sample_idx])
+            student_pca_img = np.array(Image.fromarray((student_pca.reshape(gh, gw, 3) * 255).astype(np.uint8)).resize((image_uint8.shape[1], image_uint8.shape[0]), Image.NEAREST))
+            teacher_pca_img = np.array(Image.fromarray((teacher_pca.reshape(gh, gw, 3) * 255).astype(np.uint8)).resize((image_uint8.shape[1], image_uint8.shape[0]), Image.NEAREST))
+            Image.fromarray(_draw_patch_borders(student_pca_img, gh, gw)).save(stem.with_name(stem.name + "_pca_student.png"), compress_level=1)
+            Image.fromarray(_draw_patch_borders(teacher_pca_img, gh, gw)).save(stem.with_name(stem.name + "_pca_teacher.png"), compress_level=1)
+            fg_overlay = _overlay_map(teacher_images[sample_idx], torch.from_numpy(fg_mask.reshape(gh, gw).astype(np.float32)))
+            Image.fromarray(_draw_patch_borders(fg_overlay, gh, gw)).save(stem.with_name(stem.name + "_fg_mask.png"), compress_level=1)
+            cos_overlay = _overlay_map(teacher_images[sample_idx], F.interpolate(cosine_maps[sample_idx].unsqueeze(0).unsqueeze(0), size=teacher_images[sample_idx].shape[-2:], mode="bilinear", align_corners=False).squeeze(0).squeeze(0), vmin=-1.0, vmax=1.0)
+            err_up = F.interpolate(error_maps[sample_idx].unsqueeze(0).unsqueeze(0), size=teacher_images[sample_idx].shape[-2:], mode="bilinear", align_corners=False).squeeze(0).squeeze(0)
+            err_overlay = _overlay_map(teacher_images[sample_idx], err_up, vmin=0.0, vmax=float(err_up.max().item()) if float(err_up.max().item()) > 0.0 else 1.0)
+            Image.fromarray(cos_overlay).save(stem.with_name(stem.name + "_cosine_overlay.png"), compress_level=1)
+            Image.fromarray(err_overlay).save(stem.with_name(stem.name + "_error_overlay.png"), compress_level=1)
+            gallery.append({"sample_id": sample_id, "mean_cosine": float(cosine_maps[sample_idx].mean().item()), "token_mse": float(error_maps[sample_idx].mean().item()), "image": str(stem.with_name(stem.name + "_image.png")), "pca_student": str(stem.with_name(stem.name + "_pca_student.png")), "pca_teacher": str(stem.with_name(stem.name + "_pca_teacher.png")), "fg_mask": str(stem.with_name(stem.name + "_fg_mask.png")), "cosine_overlay": str(stem.with_name(stem.name + "_cosine_overlay.png")), "error_overlay": str(stem.with_name(stem.name + "_error_overlay.png"))})
+        gallery_path = vis_root / "gallery.json"; gallery_path.write_text(json.dumps(gallery, indent=2))
+        return {"vis_path": str(vis_root), "vis_gallery": str(gallery_path), "vis_samples": len(gallery)}
+    finally:
+        if decoder_was_training: decoder.train()
+        if policy_was_training: runtime.policy.train()
 
 
 def _as_device(config: VisualThoughtTrainConfig) -> str:
@@ -405,9 +507,15 @@ def train_visual_thought(config: VisualThoughtTrainConfig) -> None:
                 val_metrics = {"event": "validation_step", "step": int(step), **run_validation(config, runtime, task_cfg, teacher, decoder, val_loader)}
                 print(json.dumps(val_metrics))
                 if wandb_run is not None: wandb_run.log({key: value for key, value in val_metrics.items() if key != "event"}, step=int(step))
+            if int(config.vis_every) > 0 and step % max(int(config.vis_every), 1) == 0:
+                vis_metrics = {"event": "visualization_step", "step": int(step), **run_visualization(config, runtime, teacher, decoder, val_loader or loader, step)}
+                print(json.dumps(vis_metrics))
             _save_checkpoint_if_needed(config, runtime, decoder, optimizer, step, final=False)
             progress.update(1)
     progress.close()
+    if bool(config.vis_final):
+        vis_metrics = {"event": "visualization_final", "step": int(step), **run_visualization(config, runtime, teacher, decoder, val_loader or loader, step)}
+        print(json.dumps(vis_metrics))
     if config.save_final_checkpoint: 
         _save_checkpoint_if_needed(config, runtime, decoder, optimizer, step, final=True)
     if wandb_run is not None: wandb_run.finish()

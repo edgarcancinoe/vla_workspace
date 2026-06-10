@@ -52,6 +52,9 @@ class VisualThoughtLaunchConfig:
     validation_freq: int = 500
     validation_max_batches: int = 10
     validation_seed: int = 1337
+    vis_every: int = 0
+    vis_num_samples: int = 4
+    vis_final: bool = True
     push_to_hub: bool = False
     push_repo_id: str | None = None
     push_every: int = 0
@@ -95,6 +98,9 @@ class VisualThoughtExperimentSpec:
     validation_freq: int | None = None
     validation_max_batches: int | None = None
     validation_seed: int | None = None
+    vis_every: int | None = None
+    vis_num_samples: int | None = None
+    vis_final: bool | None = None
     push_to_hub: bool | None = None
     push_repo_id: str | None = None
     push_every: int | None = None
@@ -139,6 +145,9 @@ class ResolvedVisualThoughtExperiment:
     validation_freq: int
     validation_max_batches: int
     validation_seed: int
+    vis_every: int
+    vis_num_samples: int
+    vis_final: bool
     push_to_hub: bool
     push_repo_id: str | None
     push_every: int
@@ -214,6 +223,9 @@ def resolve_experiment(workspace_dir: Path, defaults: VisualThoughtLaunchConfig,
         validation_freq=experiment.validation_freq if experiment.validation_freq is not None else defaults.validation_freq,
         validation_max_batches=experiment.validation_max_batches if experiment.validation_max_batches is not None else defaults.validation_max_batches,
         validation_seed=experiment.validation_seed if experiment.validation_seed is not None else defaults.validation_seed,
+        vis_every=experiment.vis_every if experiment.vis_every is not None else defaults.vis_every,
+        vis_num_samples=experiment.vis_num_samples if experiment.vis_num_samples is not None else defaults.vis_num_samples,
+        vis_final=experiment.vis_final if experiment.vis_final is not None else defaults.vis_final,
         push_to_hub=push_to_hub,
         push_repo_id=push_repo_id,
         push_every=experiment.push_every if experiment.push_every is not None else defaults.push_every,
@@ -306,6 +318,10 @@ def print_run_summary(index: int, total: int, resolved: ResolvedVisualThoughtExp
         print(f"  Val Split Ratio:    {resolved.validation_split_ratio}")
         print(f"  Val Frequency:      {resolved.validation_freq}")
         print(f"  Val Max Batches:    {resolved.validation_max_batches}")
+    print(f"  Vis Every:          {resolved.vis_every}")
+    if resolved.vis_every > 0:
+        print(f"  Vis Num Samples:    {resolved.vis_num_samples}")
+    print(f"  Vis Final:          {resolved.vis_final}")
     print(f"  Push To Hub:        {resolved.push_to_hub}")
     if resolved.push_to_hub:
         print(f"  Push Repo:          {resolved.push_repo_id}")
