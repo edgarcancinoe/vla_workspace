@@ -58,6 +58,27 @@ def test_cedirnet_distill_step_smoke():
     assert "expert_total" in stats
 
 
+def test_joint_expert_loss_propagates_gradient_to_vlm_features():
+    cfg = load_cedirnet_decoder_config()
+    decoder = CeDirNetDistillationModel.from_config(student_vlm_dim=64, cfg=cfg)
+    target = TeacherTarget(name="cedirnet", tensor=torch.randn(2, cfg.teacher.out_channels, 64, 64), kind="dense_map", loss_type="mse", weight=1.0)
+
+    base_kwargs = dict(name="demo", expert_type="cedirnet", xvla_init_path="x", decoder_init_path=None, decoder_stack_config_path="a", decoder_task_config_path="b", dataset_repo_id="repo", dataset_revision="main", dataset_root=None, output_dir="/tmp/out", device="cpu")
+
+    joint_cfg = VisualThoughtTrainConfig(training_stage="joint_multitask", **base_kwargs)
+    vlm_features = torch.randn(2, 256, 64, requires_grad=True)
+    loss, _ = compute_expert_loss(joint_cfg, decoder, cfg, target, vlm_features, step=1)
+    loss.backward()
+    assert vlm_features.grad is not None, "joint_multitask expert loss must shape the VLM backbone"
+    assert torch.any(vlm_features.grad != 0)
+
+    distill_cfg = VisualThoughtTrainConfig(training_stage="distill_only", **base_kwargs)
+    vlm_features_frozen = torch.randn(2, 256, 64, requires_grad=True)
+    loss_frozen, _ = compute_expert_loss(distill_cfg, decoder, cfg, target, vlm_features_frozen, step=1)
+    loss_frozen.backward()
+    assert vlm_features_frozen.grad is None, "distill_only must detach the VLM backbone"
+
+
 def test_dino_alignment_step_smoke():
     cfg = load_dino_decoder_config(Path(__file__).resolve().parents[1] / "config" / "visual_thought" / "dino_stack.yaml", Path(__file__).resolve().parents[1] / "config" / "visual_thought" / "dino_expert_query.yaml")
     target = TeacherTarget(name="dinov2", tensor=torch.randn(2, 64, 768), kind="expert_feature_query", loss_type="mse", weight=1.0, aux={"expert_feature_layout": "patch", "expert_features": torch.randn(2, 4, 64, 768), "patch_hw": (8, 8), "expert_spatial_hw": (8, 8)})
