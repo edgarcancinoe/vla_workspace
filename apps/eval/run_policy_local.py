@@ -49,7 +49,7 @@ from thesis_vla.inference.xvla_runtime import (
     sync_xvla_policy_config,
 )
 from thesis_vla.robot.so101_control import SO101Control
-from huggingface_hub import HfApi
+from huggingface_hub import HfApi, snapshot_download
 
 # DEBUG UTILITIES
 # ============================================================================
@@ -149,6 +149,37 @@ def validate_configuration():
         if DATA_DIR.exists():
             shutil.rmtree(DATA_DIR)
 
+
+def resolve_pretrained_policy_path(path: str) -> str:
+    def _resolved_dir(candidate: Path) -> str:
+        migrated = candidate.parent / f"{candidate.name}_migrated"
+        nested_policy = candidate / "policy"
+        if migrated.exists() and (migrated / "config.json").exists():
+            return str(migrated)
+        if nested_policy.exists() and (nested_policy / "config.json").exists():
+            return str(nested_policy)
+        if (candidate / "config.json").exists():
+            return str(candidate)
+        return str(candidate)
+
+    candidate = Path(path).expanduser()
+    if candidate.exists():
+        return _resolved_dir(candidate)
+    if candidate.is_absolute() or path.startswith(".") or path.startswith("~"):
+        raise FileNotFoundError(f"Local policy path does not exist: {candidate}")
+    if "/" not in path:
+        return path
+    local_root = Path(snapshot_download(repo_id=path, repo_type="model"))
+    migrated = local_root.parent / f"{local_root.name}_migrated"
+    if migrated.exists() and (migrated / "config.json").exists():
+        return str(migrated)
+    nested_policy = local_root / "policy"
+    if nested_policy.exists() and (nested_policy / "config.json").exists():
+        return str(nested_policy)
+    if (local_root / "config.json").exists():
+        return str(local_root)
+    raise FileNotFoundError(f"Downloaded repo {path!r} does not contain config.json at root or policy/config.json.")
+
 # CONFIGURATION
 # ============================================================================
 
@@ -186,6 +217,10 @@ FOLD_128_15K        = "edgarcancinoe/orange196_cloth-corner-fold_7p5hz_so101_ee6
 FOLD_128_30K        = None
 FOLD_128_45K        = None
 FOLD_128_50K        = None
+
+
+# WITH IMPLICIT CEDIRNET
+IMPLICIT_CEDIRNET = "/Users/edgarcancino/models/cedirnet_joint_stage_2500_10jun_repaired"
 # -----------------------------------------------------------------------------------------------
 
 # PICKPLACE -------------------------------------------------------------------------------------
@@ -242,6 +277,7 @@ TASKS = {
             64: {5: FOLD_64_5K, 15: FOLD_64_15K, 30: FOLD_64_30K, 45: FOLD_64_45K, 50: FOLD_64_50K},
             128: {5: FOLD_128_5K, 15: FOLD_128_15K, 30: FOLD_128_30K, 45: FOLD_128_45K, 50: FOLD_128_50K},
         },
+        "implicit_cedirnet": IMPLICIT_CEDIRNET,
     },
     "pickplace": {
         "task_description": "Pick up orange cube and place inside white box.",
@@ -263,11 +299,26 @@ TASKS = {
 }
 
 
-def get_eval_config(task: str, batch_size: int, step_k: int) -> dict:
+def get_eval_config(task: str, batch_size: int | str | None, step_k: int | None) -> dict:
     task_key = task.strip().lower()
     if task_key not in TASKS:
         raise ValueError(f"Unknown task: {task}. Choose from {list(TASKS)}")
     task_entry = TASKS[task_key]
+    if batch_size == "implicit_cedirnet":
+        policy_path = task_entry.get("implicit_cedirnet")
+        if not policy_path:
+            raise ValueError(f"Task {task_key} does not define an implicit CeDiRNet policy.")
+        eval_name = f"eval_{task_key}_implicit_cedirnet"
+        return {
+            "task": task_key,
+            "batch_size": batch_size,
+            "step_k": step_k,
+            "policy_path": policy_path,
+            "task_description": task_entry["task_description"],
+            "eval_name": eval_name,
+            "available_steps_k": [],
+            "old_winner": task_entry.get("old_winner"),
+        }
     if batch_size not in task_entry["models"]:
         raise ValueError(f"Unknown batch size {batch_size} for task {task_key}. Choose from {list(task_entry['models'])}")
     if step_k not in task_entry["models"][batch_size]:
@@ -288,21 +339,22 @@ def get_eval_config(task: str, batch_size: int, step_k: int) -> dict:
     }
 
 
-experiment = get_eval_config("pickplace", batch_size = 64, step_k = 15)
+experiment = get_eval_config("fold", batch_size=64, step_k=15)
 # experiment = get_eval_config("pickplace", batch_size="old_winner", step_k=None)
 
 CONTROL_FPS                = 10 #7.5
 NUM_EPISODES               = 16
-START_FROM_SCRATCH         = False
-RESUME_DATASET             = True
+START_FROM_SCRATCH         = True
+RESUME_DATASET             = False
 OVERWRITE_DATASET          = False
 N_ACTION_STEPS             = 24  # Number of control steps to execute before running the next inference chunk. Only for XVLA.
 EPISODE_TIME_SEC           = 45
 
 
-POLICY_PATH       = experiment["policy_path"]
+POLICY_PATH       = resolve_pretrained_policy_path(experiment["policy_path"])
 TASK_DESCRIPTION  = experiment["task_description"]
-TASK_DESCRIPTION  = "Pick up orange cube and place inside white box."
+print('Desc:' + TASK_DESCRIPTION)
+# TASK_DESCRIPTION  = "Pick up orange cube and place inside white box."
 EVAL_DATASET_NAME = experiment["eval_name"]
 DATA_DIR          = DATASETS_OUTPUT_DIR / EVAL_DATASET_NAME
 
@@ -378,7 +430,7 @@ HOME_DURATION_S = STARTING_POSITION_DURATION_S
 HOME_FPS = CONTROL_FPS
 
 # --- Meshcat Visualization ---
-USE_MESHCAT_VIZ                = False   # Set False to disable
+USE_MESHCAT_VIZ                = True   # Set False to disable
 
 # --- Rerun Visualization ---
 USE_RERUN                      = True  # Set True to enable Rerun telemetry

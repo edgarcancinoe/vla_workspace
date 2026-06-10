@@ -82,9 +82,9 @@ def build_xvla_runtime(config: GuidedXVLATrainConfig) -> XVLARuntime:
     policy_cfg = PreTrainedConfig.from_pretrained(config.xvla_init_path)
     sync_xvla_policy_config(policy_cfg, dataset.meta, rename_map)
     policy = XVLAPolicy.from_pretrained(config.xvla_init_path, config=policy_cfg, device=_as_device(config))
-    preprocessor, _ = make_xvla_runtime_processors(policy=policy, pretrained_path=config.xvla_init_path, device=_as_device(config), rename_map=rename_map, dataset_stats=dataset.meta.stats, use_dataset_stats=True)
+    preprocessor, postprocessor = make_xvla_runtime_processors(policy=policy, pretrained_path=config.xvla_init_path, device=_as_device(config), rename_map=rename_map, dataset_stats=dataset.meta.stats, use_dataset_stats=True)
     teacher_image_key = _resolve_teacher_image_key(list(getattr(dataset.meta, "camera_keys", [])), rename_map, config.teacher_image_feature_key)
-    return XVLARuntime(policy=policy, dataset=dataset, preprocessor=preprocessor, rename_map=rename_map, teacher_image_key=teacher_image_key)
+    return XVLARuntime(policy=policy, dataset=dataset, preprocessor=preprocessor, postprocessor=postprocessor, rename_map=rename_map, teacher_image_key=teacher_image_key)
 
 
 def _load_decoder_init(model, decoder_init_path: str) -> None:
@@ -158,11 +158,13 @@ def load_guidance_target(cache: CeDiRNetTargetCache, raw_batch: dict[str, Any], 
     return cache.target_for_batch(raw_batch, device=_as_device(config))
 
 
-def _save_checkpoint(config: GuidedXVLATrainConfig, policy, optimizer: torch.optim.Optimizer, step: int, final: bool = False) -> None:
+def _save_checkpoint(config: GuidedXVLATrainConfig, runtime: XVLARuntime, optimizer: torch.optim.Optimizer, step: int, final: bool = False) -> None:
     if not final and (config.save_every <= 0 or step % config.save_every != 0): return
     checkpoint_dir = Path(config.output_dir) / ("checkpoint_final" if final else f"checkpoint_{step:07d}")
     checkpoint_dir.mkdir(parents=True, exist_ok=True)
-    policy.save_pretrained(checkpoint_dir)
+    runtime.policy.save_pretrained(checkpoint_dir)
+    if runtime.preprocessor is not None: runtime.preprocessor.save_pretrained(checkpoint_dir)
+    if runtime.postprocessor is not None: runtime.postprocessor.save_pretrained(checkpoint_dir)
     torch.save({"step": int(step), "optimizer": optimizer.state_dict()}, checkpoint_dir / TRAINER_STATE_FILENAME)
     (checkpoint_dir / METADATA_FILENAME).write_text(json.dumps({"name": config.name, "global_step": int(step), "xvla_init_path": config.xvla_init_path, "decoder_init_path": config.decoder_init_path, "fusion_mode": config.fusion_mode, "gated_fusion": bool(config.gated_fusion)}, indent=2, sort_keys=True))
     (checkpoint_dir / CONFIG_FILENAME).write_text(json.dumps(config.to_json_dict(), indent=2, sort_keys=True))
@@ -204,10 +206,10 @@ def train_guided_xvla(config: GuidedXVLATrainConfig) -> None:
             if step % max(int(config.log_every), 1) == 0:
                 progress.set_postfix({"loss": f"{float(total_loss.detach().item()):.4f}", "action": f"{action_stats['action_total']:.4f}", "expert": f"{expert_stats['expert_total']:.4f}"})
             progress.update(1)
-            _save_checkpoint(config, policy, optimizer, step, final=False)
+            _save_checkpoint(config, runtime, optimizer, step, final=False)
             if step >= config.steps: break
     progress.close()
-    if config.save_final_checkpoint: _save_checkpoint(config, policy, optimizer, step, final=True)
+    if config.save_final_checkpoint: _save_checkpoint(config, runtime, optimizer, step, final=True)
 
 
 def parse_args() -> argparse.Namespace:

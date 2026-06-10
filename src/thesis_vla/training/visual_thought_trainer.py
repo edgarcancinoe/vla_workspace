@@ -87,6 +87,7 @@ class XVLARuntime:
     policy: Any
     dataset: Any
     preprocessor: Any
+    postprocessor: Any
     rename_map: dict[str, str]
     teacher_image_key: str
 
@@ -137,9 +138,9 @@ def build_xvla_runtime(config: VisualThoughtTrainConfig) -> XVLARuntime:
     sync_xvla_policy_config(policy_cfg, dataset.meta, rename_map)
     policy = XVLAPolicy.from_pretrained(config.xvla_init_path, config=policy_cfg, device=_as_device(config))
     policy = policy.to(dtype=torch.float32)
-    preprocessor, _ = make_xvla_runtime_processors(policy=policy, pretrained_path=config.xvla_init_path, device=_as_device(config), rename_map=rename_map, dataset_stats=dataset.meta.stats, use_dataset_stats=True)
+    preprocessor, postprocessor = make_xvla_runtime_processors(policy=policy, pretrained_path=config.xvla_init_path, device=_as_device(config), rename_map=rename_map, dataset_stats=dataset.meta.stats, use_dataset_stats=True)
     teacher_image_key = _resolve_teacher_image_key(list(getattr(dataset.meta, "camera_keys", [])), rename_map, config.teacher_image_feature_key)
-    return XVLARuntime(policy=policy, dataset=dataset, preprocessor=preprocessor, rename_map=rename_map, teacher_image_key=teacher_image_key)
+    return XVLARuntime(policy=policy, dataset=dataset, preprocessor=preprocessor, postprocessor=postprocessor, rename_map=rename_map, teacher_image_key=teacher_image_key)
 
 
 def build_dataloader(runtime: XVLARuntime, config: VisualThoughtTrainConfig) -> DataLoader:
@@ -241,7 +242,10 @@ def compute_xvla_action_loss_from_encoder(policy, processed_batch: dict[str, Any
 
 
 def compute_expert_loss(config: VisualThoughtTrainConfig, decoder: torch.nn.Module, task_cfg, target: TeacherTarget, vlm_features: torch.Tensor, step: int) -> tuple[torch.Tensor, dict[str, float]]:
-    if config.training_stage == "joint_multitask": vlm_features = vlm_features.detach()
+    # In joint_multitask the expert loss MUST flow gradient back into the VLM so the
+    # auxiliary task actually shapes the backbone features. Only detach in distill_only,
+    # where the policy is frozen anyway and the decoder is the sole thing being trained.
+    if config.training_stage == "distill_only": vlm_features = vlm_features.detach()
     
     if config.expert_type == "cedirnet":
         prediction  = decoder(vlm_features, target_map=target.tensor)
@@ -292,11 +296,11 @@ def _push_checkpoint_to_hub(checkpoint_dir: Path, repo_id: str, commit_message: 
     api.upload_folder(folder_path=str(checkpoint_dir), repo_id=repo_id, repo_type="model", commit_message=commit_message)
 
 
-def _save_checkpoint_if_needed(config: VisualThoughtTrainConfig, policy, decoder: torch.nn.Module, optimizer: torch.optim.Optimizer, step: int, final: bool = False) -> None:
+def _save_checkpoint_if_needed(config: VisualThoughtTrainConfig, runtime: XVLARuntime, decoder: torch.nn.Module, optimizer: torch.optim.Optimizer, step: int, final: bool = False) -> None:
     if not final and (config.save_every <= 0 or step % config.save_every != 0): return
     checkpoint_name = "checkpoint_final" if final else f"checkpoint_{step:07d}"
     checkpoint_dir = Path(config.output_dir) / checkpoint_name
-    save_visual_thought_checkpoint(checkpoint_dir=checkpoint_dir, policy=policy, decoder=decoder, trainer_state={"step": int(step), "optimizer": optimizer.state_dict()}, metadata=_checkpoint_metadata(config, step), config_snapshot=config.to_json_dict())
+    save_visual_thought_checkpoint(checkpoint_dir=checkpoint_dir, policy=runtime.policy, decoder=decoder, trainer_state={"step": int(step), "optimizer": optimizer.state_dict()}, metadata=_checkpoint_metadata(config, step), config_snapshot=config.to_json_dict(), preprocessor=runtime.preprocessor, postprocessor=runtime.postprocessor)
     should_push = bool(config.push_to_hub) and bool(config.push_repo_id) and (final or (int(config.push_every) > 0 and step % int(config.push_every) == 0))
     if should_push: _push_checkpoint_to_hub(checkpoint_dir, str(config.push_repo_id), f"Upload visual-thought checkpoint {checkpoint_name}")
 
@@ -388,11 +392,11 @@ def train_visual_thought(config: VisualThoughtTrainConfig) -> None:
                 val_metrics = {"event": "validation_step", "step": int(step), **run_validation(config, runtime, task_cfg, teacher, decoder, val_loader)}
                 print(json.dumps(val_metrics))
                 if wandb_run is not None: wandb_run.log({key: value for key, value in val_metrics.items() if key != "event"}, step=int(step))
-            _save_checkpoint_if_needed(config, runtime.policy, decoder, optimizer, step, final=False)
+            _save_checkpoint_if_needed(config, runtime, decoder, optimizer, step, final=False)
             progress.update(1)
     progress.close()
     if config.save_final_checkpoint: 
-        _save_checkpoint_if_needed(config, runtime.policy, decoder, optimizer, step, final=True)
+        _save_checkpoint_if_needed(config, runtime, decoder, optimizer, step, final=True)
     if wandb_run is not None: wandb_run.finish()
 
 

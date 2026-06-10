@@ -24,11 +24,13 @@ def load_decoder_state(path: str | Path) -> dict[str, torch.Tensor]:
     return load_file(str(path))
 
 
-def save_visual_thought_checkpoint(checkpoint_dir: str | Path, policy, decoder: torch.nn.Module, trainer_state: dict[str, Any], metadata: dict[str, Any], config_snapshot: dict[str, Any]) -> Path:
+def save_visual_thought_checkpoint(checkpoint_dir: str | Path, policy, decoder: torch.nn.Module, trainer_state: dict[str, Any], metadata: dict[str, Any], config_snapshot: dict[str, Any], preprocessor=None, postprocessor=None) -> Path:
     root = Path(checkpoint_dir)
     policy_dir = root / POLICY_DIRNAME
     root.mkdir(parents=True, exist_ok=True)
     policy.save_pretrained(policy_dir)
+    if preprocessor is not None: preprocessor.save_pretrained(policy_dir)
+    if postprocessor is not None: postprocessor.save_pretrained(policy_dir)
     save_decoder_state(decoder, root / DECODER_STATE_FILENAME)
     torch.save(trainer_state, root / TRAINER_STATE_FILENAME)
     (root / METADATA_FILENAME).write_text(json.dumps(metadata, indent=2, sort_keys=True))

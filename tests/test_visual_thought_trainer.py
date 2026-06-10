@@ -7,7 +7,7 @@ sys.path.append(str(Path(__file__).resolve().parents[1] / "src"))
 
 from thesis_vla.training.visual_thought_trainer import VisualThoughtTrainConfig, compute_expert_loss, compute_xvla_action_loss_from_encoder, load_decoder_init_if_present, set_policy_trainability
 from thesis_vla.visual_thought import CeDirNetDistillationModel, DinoFeatureAlignmentModel, DinoTokenSequenceModel, TeacherTarget, load_cedirnet_decoder_config, load_dino_decoder_config
-from thesis_vla.visual_thought.checkpoints import DECODER_STATE_FILENAME, save_decoder_state
+from thesis_vla.visual_thought.checkpoints import DECODER_STATE_FILENAME, save_decoder_state, save_visual_thought_checkpoint
 
 
 class _FakeActionSpace:
@@ -106,3 +106,28 @@ def test_decoder_checkpoint_roundtrip():
         load_decoder_init_if_present(twin, str(checkpoint_root))
         for key, value in model.state_dict().items():
             assert torch.equal(value, twin.state_dict()[key])
+
+
+class _FakeProcessor:
+    def __init__(self, filename: str):
+        self.filename = filename
+
+    def save_pretrained(self, save_dir):
+        Path(save_dir, self.filename).write_text("{}")
+
+
+class _FakeSavePolicy:
+    def save_pretrained(self, save_dir):
+        Path(save_dir).mkdir(parents=True, exist_ok=True)
+        Path(save_dir, "config.json").write_text("{}")
+        Path(save_dir, "model.safetensors").write_bytes(b"fake")
+
+
+def test_visual_thought_checkpoint_saves_processors():
+    cfg = load_cedirnet_decoder_config()
+    model = CeDirNetDistillationModel.from_config(student_vlm_dim=64, cfg=cfg)
+    with tempfile.TemporaryDirectory() as tmpdir:
+        root = Path(tmpdir) / "ckpt"
+        save_visual_thought_checkpoint(checkpoint_dir=root, policy=_FakeSavePolicy(), decoder=model, trainer_state={"step": 1}, metadata={"name": "demo"}, config_snapshot={"device": "cpu"}, preprocessor=_FakeProcessor("policy_preprocessor.json"), postprocessor=_FakeProcessor("policy_postprocessor.json"))
+        assert (root / "policy" / "policy_preprocessor.json").is_file()
+        assert (root / "policy" / "policy_postprocessor.json").is_file()

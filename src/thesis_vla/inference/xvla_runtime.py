@@ -43,8 +43,10 @@ def make_xvla_runtime_processors(
     rename_map: dict[str, str],
     dataset_stats: dict | None = None,
     use_dataset_stats: bool = False,
+    load_pretrained_processors: bool = True,
 ):
     from lerobot.policies.factory import make_pre_post_processors
+    from lerobot.policies.xvla.processor_xvla import make_xvla_pre_post_processors
     from lerobot.scripts.lerobot_train import _patch_xvla_gripper_stats_for_overrides
 
     preprocessor_overrides = {
@@ -52,6 +54,7 @@ def make_xvla_runtime_processors(
         "rename_observations_processor": {"rename_map": rename_map},
     }
     postprocessor_overrides = {}
+    processor_stats = None
 
     if use_dataset_stats and dataset_stats is not None:
         processor_stats = _patch_xvla_gripper_stats_for_overrides(policy.config, dataset_stats)
@@ -66,9 +69,13 @@ def make_xvla_runtime_processors(
             "norm_map": policy.config.normalization_mapping,
         }
 
-    return make_pre_post_processors(
-        policy_cfg=policy.config,
-        pretrained_path=pretrained_path,
-        preprocessor_overrides=preprocessor_overrides,
-        postprocessor_overrides=postprocessor_overrides,
-    )
+    if not load_pretrained_processors:
+        preprocessor, postprocessor = make_xvla_pre_post_processors(config=policy.config, dataset_stats=processor_stats if use_dataset_stats and dataset_stats is not None else None)
+        for step in preprocessor.steps:
+            if getattr(step.__class__, "_registry_name", "") == "rename_observations_processor": step.rename_map = dict(rename_map)
+            if getattr(step.__class__, "_registry_name", "") == "device_processor": step.device = device
+        for step in postprocessor.steps:
+            if getattr(step.__class__, "_registry_name", "") == "device_processor": step.device = "cpu"
+        return preprocessor, postprocessor
+
+    return make_pre_post_processors(policy_cfg=policy.config, pretrained_path=pretrained_path, preprocessor_overrides=preprocessor_overrides, postprocessor_overrides=postprocessor_overrides)
