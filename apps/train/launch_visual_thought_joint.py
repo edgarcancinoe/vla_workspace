@@ -34,8 +34,8 @@ DEFAULTS = VisualThoughtLaunchConfig(
     xvla_init_path="lerobot/xvla-base",
     decoder_stack_config_path=str(CONFIG_ROOT / "visual_thought" / "cedirnet_stack.yaml"),
     decoder_task_config_path=str(CONFIG_ROOT / "visual_thought" / "cedirnet_head.yaml"),
-    batch_size=12,
-    gradient_accumulation_steps=1,
+    batch_size=8,
+    gradient_accumulation_steps=2,
     decoder_optimizer_lr=1e-3,
     xvla_optimizer_lr=1e-5,
     wandb_enable=True,
@@ -66,6 +66,7 @@ EXPERIMENTS = [
     VisualThoughtExperimentSpec(
         name                        ="cedirnet_joint_stage",
         dataset_name                ="cloth-corner-fold_7p5hz",
+        wandb_run_name              ="cedirnet_joint_stage",
         dataset_revision            ="main",
         training_stage              ="joint_multitask",
         expert_type                 ="cedirnet",
@@ -79,6 +80,7 @@ EXPERIMENTS = [
     VisualThoughtExperimentSpec(
         name                        ="cedirnet_joint_stage",
         dataset_name                ="cloth-corner-fold_7p5hz",
+        wandb_run_name              ="cedirnet_joint_stage",
         dataset_revision            ="main",
         training_stage              ="joint_multitask",
         expert_type                 ="cedirnet",
