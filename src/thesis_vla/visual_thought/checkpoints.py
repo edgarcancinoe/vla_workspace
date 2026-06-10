@@ -13,6 +13,8 @@ TRAINER_STATE_FILENAME = "trainer_state.pt"
 METADATA_FILENAME = "metadata.json"
 CONFIG_FILENAME = "visual_thought_config.json"
 POLICY_DIRNAME = "policy"
+DECODER_STACK_CONFIG_FILENAME = "decoder_stack_config.yaml"
+DECODER_TASK_CONFIG_FILENAME = "decoder_task_config.yaml"
 
 
 def save_decoder_state(model: torch.nn.Module, path: str | Path) -> None:
@@ -24,7 +26,7 @@ def load_decoder_state(path: str | Path) -> dict[str, torch.Tensor]:
     return load_file(str(path))
 
 
-def save_visual_thought_checkpoint(checkpoint_dir: str | Path, policy, decoder: torch.nn.Module, trainer_state: dict[str, Any], metadata: dict[str, Any], config_snapshot: dict[str, Any], preprocessor=None, postprocessor=None) -> Path:
+def save_visual_thought_checkpoint(checkpoint_dir: str | Path, policy, decoder: torch.nn.Module, trainer_state: dict[str, Any], metadata: dict[str, Any], config_snapshot: dict[str, Any], preprocessor=None, postprocessor=None, decoder_stack_config_path: str | Path | None = None, decoder_task_config_path: str | Path | None = None) -> Path:
     root = Path(checkpoint_dir)
     policy_dir = root / POLICY_DIRNAME
     root.mkdir(parents=True, exist_ok=True)
@@ -35,6 +37,8 @@ def save_visual_thought_checkpoint(checkpoint_dir: str | Path, policy, decoder: 
     torch.save(trainer_state, root / TRAINER_STATE_FILENAME)
     (root / METADATA_FILENAME).write_text(json.dumps(metadata, indent=2, sort_keys=True))
     (root / CONFIG_FILENAME).write_text(json.dumps(config_snapshot, indent=2, sort_keys=True))
+    if decoder_stack_config_path is not None: (root / DECODER_STACK_CONFIG_FILENAME).write_text(Path(decoder_stack_config_path).read_text())
+    if decoder_task_config_path is not None: (root / DECODER_TASK_CONFIG_FILENAME).write_text(Path(decoder_task_config_path).read_text())
     return root
 
 

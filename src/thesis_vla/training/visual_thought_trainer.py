@@ -462,7 +462,7 @@ def _save_checkpoint_if_needed(config: VisualThoughtTrainConfig, runtime: XVLARu
     if not final and (config.save_every <= 0 or step % config.save_every != 0): return
     checkpoint_name = "checkpoint_final" if final else f"checkpoint_{step:07d}"
     checkpoint_dir = Path(config.output_dir) / checkpoint_name
-    save_visual_thought_checkpoint(checkpoint_dir=checkpoint_dir, policy=runtime.policy, decoder=decoder, trainer_state={"step": int(step), "optimizer": optimizer.state_dict()}, metadata=_checkpoint_metadata(config, step), config_snapshot=config.to_json_dict(), preprocessor=runtime.preprocessor, postprocessor=runtime.postprocessor)
+    save_visual_thought_checkpoint(checkpoint_dir=checkpoint_dir, policy=runtime.policy, decoder=decoder, trainer_state={"step": int(step), "optimizer": optimizer.state_dict()}, metadata=_checkpoint_metadata(config, step), config_snapshot=config.to_json_dict(), preprocessor=runtime.preprocessor, postprocessor=runtime.postprocessor, decoder_stack_config_path=config.decoder_stack_config_path, decoder_task_config_path=config.decoder_task_config_path)
     should_push = bool(config.push_to_hub) and bool(config.push_repo_id) and (final or (int(config.push_every) > 0 and step % int(config.push_every) == 0))
     if should_push: _push_checkpoint_to_hub(checkpoint_dir, str(config.push_repo_id), f"Upload visual-thought checkpoint {checkpoint_name}")
 
