@@ -24,6 +24,8 @@ class StudentProjection(nn.Module):
         self.mlp = nn.Sequential(nn.LayerNorm(student_vlm_dim), nn.Linear(student_vlm_dim, hidden_dim), nn.GELU(), nn.Dropout(dropout), nn.Linear(hidden_dim, decoder_dim), nn.Dropout(dropout))
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
+        parameter = next(self.parameters(), None)
+        if parameter is not None and (x.dtype != parameter.dtype or x.device != parameter.device): x = x.to(device=parameter.device, dtype=parameter.dtype)
         if self.mode == "res_mlp": return self.skip(x) + self.mlp(x)
         return self.proj(x)
 
