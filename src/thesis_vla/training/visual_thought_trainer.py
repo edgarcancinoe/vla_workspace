@@ -101,6 +101,9 @@ class XVLARuntime:
     postprocessor: Any
     rename_map: dict[str, str]
     teacher_image_key: str
+    policy_device: str
+    vlm_device: str
+    vlm_only_distill: bool
 
 
 def _resolve_grid_hw(target: TeacherTarget) -> tuple[int, int]:
@@ -164,7 +167,7 @@ def run_visualization(config: VisualThoughtTrainConfig, runtime: XVLARuntime, te
     try:
         raw_batch = next(iter(loader))
         processed_batch = preprocess_batch(runtime, raw_batch)
-        _, enc = build_xvla_inputs(runtime.policy, processed_batch)
+        _, enc = build_xvla_inputs(runtime, processed_batch)
         target = load_teacher_target(config, teacher, raw_batch, runtime.teacher_image_key)
         if config.expert_type != "dino" or target.kind != "token_sequence": return {"vis_skipped": f"{config.expert_type}:{target.kind}"}
         prediction = decoder(enc["vlm_features"])
@@ -184,7 +187,8 @@ def run_visualization(config: VisualThoughtTrainConfig, runtime: XVLARuntime, te
             teacher_pca_img = np.array(Image.fromarray((teacher_pca.reshape(gh, gw, 3) * 255).astype(np.uint8)).resize((image_uint8.shape[1], image_uint8.shape[0]), Image.NEAREST))
             Image.fromarray(_draw_patch_borders(student_pca_img, gh, gw)).save(stem.with_name(stem.name + "_pca_student.png"), compress_level=1)
             Image.fromarray(_draw_patch_borders(teacher_pca_img, gh, gw)).save(stem.with_name(stem.name + "_pca_teacher.png"), compress_level=1)
-            fg_overlay = _overlay_map(teacher_images[sample_idx], torch.from_numpy(fg_mask.reshape(gh, gw).astype(np.float32)))
+            fg_up = F.interpolate(torch.from_numpy(fg_mask.reshape(gh, gw).astype(np.float32)).unsqueeze(0).unsqueeze(0), size=teacher_images[sample_idx].shape[-2:], mode="nearest").squeeze(0).squeeze(0)
+            fg_overlay = _overlay_map(teacher_images[sample_idx], fg_up)
             Image.fromarray(_draw_patch_borders(fg_overlay, gh, gw)).save(stem.with_name(stem.name + "_fg_mask.png"), compress_level=1)
             cos_overlay = _overlay_map(teacher_images[sample_idx], F.interpolate(cosine_maps[sample_idx].unsqueeze(0).unsqueeze(0), size=teacher_images[sample_idx].shape[-2:], mode="bilinear", align_corners=False).squeeze(0).squeeze(0), vmin=-1.0, vmax=1.0)
             err_up = F.interpolate(error_maps[sample_idx].unsqueeze(0).unsqueeze(0), size=teacher_images[sample_idx].shape[-2:], mode="bilinear", align_corners=False).squeeze(0).squeeze(0)
@@ -234,6 +238,27 @@ def _resolve_teacher_image_key(camera_keys: list[str], rename_map: dict[str, str
     return camera_keys[0]
 
 
+def _freeze_module(module: torch.nn.Module) -> None:
+    for parameter in module.parameters(): parameter.requires_grad = False
+
+
+def _resolve_policy_device(config: VisualThoughtTrainConfig) -> str:
+    return "cpu" if config.training_stage == "distill_only" else _as_device(config)
+
+
+def _move_inputs_for_vlm(inputs: dict[str, torch.Tensor], device: str) -> dict[str, torch.Tensor]:
+    return {key: value.to(device) if torch.is_tensor(value) else value for key, value in inputs.items()}
+
+
+def _extract_vlm_features(runtime: XVLARuntime, processed_batch: dict[str, Any]) -> tuple[dict[str, torch.Tensor], dict[str, torch.Tensor]]:
+    inputs = runtime.policy._build_model_inputs(processed_batch)
+    if not runtime.vlm_only_distill: return inputs, runtime.policy.model.forward_vlm(input_ids=inputs["input_ids"], pixel_values=inputs["image_input"], image_mask=inputs["image_mask"])
+    vlm_inputs = _move_inputs_for_vlm({key: inputs[key] for key in ("input_ids", "image_input", "image_mask")}, runtime.vlm_device)
+    with torch.no_grad():
+        enc = runtime.policy.model.forward_vlm(input_ids=vlm_inputs["input_ids"], pixel_values=vlm_inputs["image_input"], image_mask=vlm_inputs["image_mask"])
+    return inputs, enc
+
+
 def build_xvla_runtime(config: VisualThoughtTrainConfig) -> XVLARuntime:
     from lerobot.configs.policies import PreTrainedConfig
     from lerobot.datasets.lerobot_dataset import LeRobotDataset
@@ -243,11 +268,24 @@ def build_xvla_runtime(config: VisualThoughtTrainConfig) -> XVLARuntime:
     rename_map = resolve_xvla_rename_map(getattr(dataset.meta, "camera_keys", []))
     policy_cfg = PreTrainedConfig.from_pretrained(config.xvla_init_path)
     sync_xvla_policy_config(policy_cfg, dataset.meta, rename_map)
-    policy = XVLAPolicy.from_pretrained(config.xvla_init_path, config=policy_cfg, device=_as_device(config))
-    policy = policy.to(dtype=torch.float32)
-    preprocessor, postprocessor = make_xvla_runtime_processors(policy=policy, pretrained_path=config.xvla_init_path, device=_as_device(config), rename_map=rename_map, dataset_stats=dataset.meta.stats, use_dataset_stats=True)
+    policy_device = _resolve_policy_device(config)
+    if hasattr(policy_cfg, "device"): policy_cfg.device = policy_device
+    policy = XVLAPolicy.from_pretrained(config.xvla_init_path, config=policy_cfg, device=policy_device)
+    vlm_only_distill = config.training_stage == "distill_only"
+    if vlm_only_distill:
+        policy.eval()
+        _freeze_module(policy)
+        policy.model.vlm.to(_as_device(config))
+        policy.model.vlm.eval()
+        vlm_device = _as_device(config)
+        processor_device = "cpu"
+    else:
+        policy = policy.to(dtype=torch.float32)
+        vlm_device = _as_device(config)
+        processor_device = _as_device(config)
+    preprocessor, postprocessor = make_xvla_runtime_processors(policy=policy, pretrained_path=config.xvla_init_path, device=processor_device, rename_map=rename_map, dataset_stats=dataset.meta.stats, use_dataset_stats=True)
     teacher_image_key = _resolve_teacher_image_key(list(getattr(dataset.meta, "camera_keys", [])), rename_map, config.teacher_image_feature_key)
-    return XVLARuntime(policy=policy, dataset=dataset, preprocessor=preprocessor, postprocessor=postprocessor, rename_map=rename_map, teacher_image_key=teacher_image_key)
+    return XVLARuntime(policy=policy, dataset=dataset, preprocessor=preprocessor, postprocessor=postprocessor, rename_map=rename_map, teacher_image_key=teacher_image_key, policy_device=policy_device, vlm_device=vlm_device, vlm_only_distill=vlm_only_distill)
 
 
 def build_dataloader(runtime: XVLARuntime, config: VisualThoughtTrainConfig) -> DataLoader:
@@ -322,10 +360,8 @@ def build_optimizer(config: VisualThoughtTrainConfig, policy, decoder: torch.nn.
     return torch.optim.AdamW([{"params": decoder_params, "lr": config.decoder_optimizer_lr}, {"params": xvla_params, "lr": config.xvla_optimizer_lr}], weight_decay=config.weight_decay)
 
 
-def build_xvla_inputs(policy, processed_batch: dict[str, Any]) -> tuple[dict[str, torch.Tensor], dict[str, torch.Tensor]]:
-    inputs = policy._build_model_inputs(processed_batch)
-    enc = policy.model.forward_vlm(input_ids=inputs["input_ids"], pixel_values=inputs["image_input"], image_mask=inputs["image_mask"])
-    return inputs, enc
+def build_xvla_inputs(runtime: XVLARuntime, processed_batch: dict[str, Any]) -> tuple[dict[str, torch.Tensor], dict[str, torch.Tensor]]:
+    return _extract_vlm_features(runtime, processed_batch)
 
 
 def compute_xvla_action_loss_from_encoder(policy, processed_batch: dict[str, Any], inputs: dict[str, torch.Tensor], enc: dict[str, torch.Tensor]) -> tuple[torch.Tensor, dict[str, float]]:
@@ -384,7 +420,7 @@ def prepare_models_and_target(config: VisualThoughtTrainConfig, runtime: XVLARun
     loader, val_loader = build_train_val_dataloaders(runtime, config)
     first_raw_batch = next(iter(loader))
     processed = preprocess_batch(runtime, first_raw_batch)
-    inputs, enc = build_xvla_inputs(runtime.policy, processed)
+    inputs, enc = build_xvla_inputs(runtime, processed)
     target = load_teacher_target(config, teacher, first_raw_batch, runtime.teacher_image_key)
     decoder = build_decoder(config, task_cfg, target, student_vlm_dim=int(enc["vlm_features"].shape[-1])).to(_as_device(config))
     load_decoder_init_if_present(decoder, config.decoder_init_path)
@@ -430,7 +466,7 @@ def run_validation(config: VisualThoughtTrainConfig, runtime: XVLARuntime, task_
     for raw_batch in val_loader:
         if batches >= max(int(config.validation_max_batches), 1): break
         processed_batch = preprocess_batch(runtime, raw_batch)
-        inputs, enc = build_xvla_inputs(runtime.policy, processed_batch)
+        inputs, enc = build_xvla_inputs(runtime, processed_batch)
         target = load_teacher_target(config, teacher, raw_batch, runtime.teacher_image_key)
         expert_loss, expert_stats = compute_expert_loss(config, decoder, task_cfg, target, enc["vlm_features"], step=0)
         total = float(config.expert_loss_weight) * expert_loss
@@ -483,7 +519,7 @@ def train_visual_thought(config: VisualThoughtTrainConfig) -> None:
             step += 1
 
             processed_batch = preprocess_batch(runtime, raw_batch)
-            inputs, enc     = build_xvla_inputs(runtime.policy, processed_batch)
+            inputs, enc     = build_xvla_inputs(runtime, processed_batch)
             target          = load_teacher_target(config, teacher, raw_batch, runtime.teacher_image_key)
             expert_loss, expert_stats = compute_expert_loss(config, decoder, task_cfg, target, enc["vlm_features"], step)
             total_loss      = float(config.expert_loss_weight) * expert_loss
