@@ -24,7 +24,7 @@ from thesis_vla.training.visual_thought_launcher import VisualThoughtExperimentS
 WORKSPACE_DIR = PROJECT_ROOT
 RUN_TS = dt.datetime.now().strftime("%Y%m%d_%H%M%S")
 
-RUNTIME_CONFIG = VisualThoughtRuntimeConfig(launch_mode="single", cuda_devices=(2,), num_workers=2, dry_run=False)
+RUNTIME_CONFIG = VisualThoughtRuntimeConfig(launch_mode="single", cuda_devices=(3,), num_workers=2, dry_run=False)
 
 DEFAULTS = VisualThoughtLaunchConfig(
     hf_user="edgarcancinoe",
@@ -46,74 +46,47 @@ DEFAULTS = VisualThoughtLaunchConfig(
     validation_split_ratio=0.1,
     validation_freq=250,
     validation_max_batches=10,
-    push_to_hub=False,
+    push_to_hub=True,
     push_repo_id=None,
-    push_every=500,
+    push_every=1000,
     action_loss_weight=1.0,
     expert_loss_weight=1.0,
-    steps=2400,
+    steps=2500,
     log_every=20,
     save_every=1000,
     name_prefix=f"visual-thought-{RUN_TS}",
 )
 
+FOLD_CEDIRNET_NAME=f"cedirnet_joint_stage_{RUN_TS}"
 EXPERIMENTS_FOLD_CEDIRNET = [
-    VisualThoughtExperimentSpec(
-        name                        =f"cedirnet_joint_stage_{RUN_TS}",
-        dataset_name                ="cloth-corner-fold_7p5hz",
-        dataset_revision            ="main",
-        training_stage              ="joint_multitask",
-        expert_type                 ="cedirnet",
-        xvla_init_path              ="/home/jose/EMAI-Thesis/vla_workspace/runtime/outputs/train/orange196_pickplace-multicolor_7p5hz_so101_ee6d_am_sm_b16_ga2_eb64_full_adapt_stagedpw_v1_20260604_141258/checkpoints/015000/pretrained_model",
-        decoder_init_path           ="/home/jose/EMAI-Thesis/vla_workspace/models/cedirnet_legacy_32x32",
-        decoder_stack_config_path   ="/home/jose/EMAI-Thesis/vla_workspace/config/visual_thought/cedirnet_stack.yaml",
-        decoder_task_config_path    ="/home/jose/EMAI-Thesis/vla_workspace/config/visual_thought/cedirnet_head.yaml",
-        wandb_run_name              =f"cedirnet_joint_stage_{RUN_TS}",
-        action_loss_weight=1.0,
-        expert_loss_weight=0.25,
-    ),
-    VisualThoughtExperimentSpec(
-        name                        ="cedirnet_joint_stage",
-        dataset_name                ="cloth-corner-fold_7p5hz",
-        wandb_run_name              ="cedirnet_joint_stage",
-        dataset_revision            ="main",
-        training_stage              ="joint_multitask",
-        expert_type                 ="cedirnet",
-        xvla_init_path              ="/home/jose/EMAI-Thesis/vla_workspace/runtime/outputs/train/orange196_pickplace-multicolor_7p5hz_so101_ee6d_am_sm_b16_ga2_eb64_full_adapt_stagedpw_v1_20260604_141258/checkpoints/015000/pretrained_model",
-        decoder_init_path           ="/home/jose/EMAI-Thesis/vla_workspace/models/cedirnet_legacy_32x32",
-        decoder_stack_config_path   ="/home/jose/EMAI-Thesis/vla_workspace/config/visual_thought/cedirnet_stack.yaml",
-        decoder_task_config_path    ="/home/jose/EMAI-Thesis/vla_workspace/config/visual_thought/cedirnet_head.yaml",
-        action_loss_weight=1.0,
-        expert_loss_weight=0.5,
-    ),
-    VisualThoughtExperimentSpec(
-        name                        ="cedirnet_joint_stage",
-        dataset_name                ="cloth-corner-fold_7p5hz",
-        wandb_run_name              ="cedirnet_joint_stage",
-        dataset_revision            ="main",
-        training_stage              ="joint_multitask",
-        expert_type                 ="cedirnet",
-        xvla_init_path              ="/home/jose/EMAI-Thesis/vla_workspace/runtime/outputs/train/orange196_pickplace-multicolor_7p5hz_so101_ee6d_am_sm_b16_ga2_eb64_full_adapt_stagedpw_v1_20260604_141258/checkpoints/015000/pretrained_model",
-        decoder_init_path           ="/home/jose/EMAI-Thesis/vla_workspace/models/cedirnet_legacy_32x32",
-        decoder_stack_config_path   ="/home/jose/EMAI-Thesis/vla_workspace/config/visual_thought/cedirnet_stack.yaml",
-        decoder_task_config_path    ="/home/jose/EMAI-Thesis/vla_workspace/config/visual_thought/cedirnet_head.yaml",
-        action_loss_weight=1.0,
-        expert_loss_weight=1.0,
-    ),
-    VisualThoughtExperimentSpec(
-        name                        ="cedirnet_joint_stage",
-        dataset_name                ="cloth-corner-fold_7p5hz",
-        wandb_run_name              ="cedirnet_joint_stage",
-        dataset_revision            ="main",
-        training_stage              ="joint_multitask",
-        expert_type                 ="cedirnet",
-        xvla_init_path              ="/home/jose/EMAI-Thesis/vla_workspace/runtime/outputs/train/orange196_pickplace-multicolor_7p5hz_so101_ee6d_am_sm_b16_ga2_eb64_full_adapt_stagedpw_v1_20260604_141258/checkpoints/015000/pretrained_model",
-        decoder_init_path           ="/home/jose/EMAI-Thesis/vla_workspace/models/cedirnet_legacy_32x32",
-        decoder_stack_config_path   ="/home/jose/EMAI-Thesis/vla_workspace/config/visual_thought/cedirnet_stack.yaml",
-        decoder_task_config_path    ="/home/jose/EMAI-Thesis/vla_workspace/config/visual_thought/cedirnet_head.yaml",
-        action_loss_weight=1.0,
-        expert_loss_weight=0.5,
-    ),
+    # VisualThoughtExperimentSpec(
+    #     name                        =FOLD_CEDIRNET_NAME
+    #     dataset_name                ="cloth-corner-fold_7p5hz",
+    #     dataset_revision            ="main",
+    #     training_stage              ="joint_multitask",
+    #     expert_type                 ="cedirnet",
+    #     xvla_init_path              ="/home/jose/EMAI-Thesis/vla_workspace/runtime/outputs/train/orange196_pickplace-multicolor_7p5hz_so101_ee6d_am_sm_b16_ga2_eb64_full_adapt_stagedpw_v1_20260604_141258/checkpoints/015000/pretrained_model",
+    #     decoder_init_path           ="/home/jose/EMAI-Thesis/vla_workspace/models/cedirnet_legacy_32x32",
+    #     decoder_stack_config_path   ="/home/jose/EMAI-Thesis/vla_workspace/config/visual_thought/cedirnet_stack.yaml",
+    #     decoder_task_config_path    ="/home/jose/EMAI-Thesis/vla_workspace/config/visual_thought/cedirnet_head.yaml",
+    #     wandb_run_name              =f"cedirnet_joint_stage_{RUN_TS}",
+    #     action_loss_weight=1.0,
+    #     expert_loss_weight=0.25,
+    # ),
+    # VisualThoughtExperimentSpec(
+    #     name                        ="cedirnet_joint_stage",
+    #     dataset_name                ="cloth-corner-fold_7p5hz",
+    #     wandb_run_name              ="cedirnet_joint_stage",
+    #     dataset_revision            ="main",
+    #     training_stage              ="joint_multitask",
+    #     expert_type                 ="cedirnet",
+    #     xvla_init_path              ="/home/jose/EMAI-Thesis/vla_workspace/runtime/outputs/train/orange196_pickplace-multicolor_7p5hz_so101_ee6d_am_sm_b16_ga2_eb64_full_adapt_stagedpw_v1_20260604_141258/checkpoints/015000/pretrained_model",
+    #     decoder_init_path           ="/home/jose/EMAI-Thesis/vla_workspace/models/cedirnet_legacy_32x32",
+    #     decoder_stack_config_path   ="/home/jose/EMAI-Thesis/vla_workspace/config/visual_thought/cedirnet_stack.yaml",
+    #     decoder_task_config_path    ="/home/jose/EMAI-Thesis/vla_workspace/config/visual_thought/cedirnet_head.yaml",
+    #     action_loss_weight=1.0,
+    #     expert_loss_weight=0.5,
+    # ),
     VisualThoughtExperimentSpec(
         name                        ="cedirnet_joint_stage",
         dataset_name                ="cloth-corner-fold_7p5hz",
@@ -127,18 +100,34 @@ EXPERIMENTS_FOLD_CEDIRNET = [
         decoder_task_config_path    ="/home/jose/EMAI-Thesis/vla_workspace/config/visual_thought/cedirnet_head.yaml",
         action_loss_weight=1.0,
         expert_loss_weight=1.0,
-    ),
-    
+    )
+]
+
+DROP_CEDIRNET_NAME=f"cedirnet_joint_stage_{RUN_TS}_cloth_box"
+EXPERIMENTS_CLOTH_DROP_CEDIRNET = [
+    VisualThoughtExperimentSpec(
+        name                        =DROP_CEDIRNET_NAME,
+        dataset_name                ="cloth-corner-box_7p5hz",
+        wandb_run_name              ="cedirnet_joint_stage",
+        dataset_revision            ="main",
+        training_stage              ="joint_multitask",
+        expert_type                 ="cedirnet",
+        xvla_init_path              ="/home/jose/EMAI-Thesis/vla_workspace/runtime/outputs/train/orange196_pickplace-multicolor_7p5hz_so101_ee6d_am_sm_b16_ga2_eb64_full_adapt_stagedpw_v1_20260604_141258/checkpoints/015000/pretrained_model",
+        decoder_init_path           ="/home/jose/EMAI-Thesis/vla_workspace/models/cedirnet_legacy_32x32",
+        decoder_stack_config_path   ="/home/jose/EMAI-Thesis/vla_workspace/config/visual_thought/cedirnet_stack.yaml",
+        decoder_task_config_path    ="/home/jose/EMAI-Thesis/vla_workspace/config/visual_thought/cedirnet_head.yaml",
+        action_loss_weight=1.0,
+        expert_loss_weight=1.0,
+    )
 ]
 
 EXPERIMENTS_FOLD_DINO = []
-
-EXPERIMENTS_CLOTH_DROP_CEDIRNET = []
 EXPERIMENTS_CLOTH_DROP_DINO = []
 
+FOLD_CEDIRNET_DINO = f"cedirnet_dino_joint_stage_{RUN_TS}"
 EXPERIMENTS_CUBES_DINO = [
     VisualThoughtExperimentSpec(
-        name="dino_joint_stage",
+        name=FOLD_CEDIRNET_DINO,
         dataset_name="cloth-corner-fold_7p5hz",
         dataset_revision="v3.0",
         training_stage="joint_multitask",
@@ -153,7 +142,7 @@ EXPERIMENTS_CUBES_DINO = [
     )
 ]
 
-EXPERIMENTS = EXPERIMENTS_FOLD_CEDIRNET
+EXPERIMENTS = EXPERIMENTS_CLOTH_DROP_CEDIRNET
 def main() -> None:
     run_experiments(workspace_dir=WORKSPACE_DIR, defaults=DEFAULTS, experiments=EXPERIMENTS)
 
