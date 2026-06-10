@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import datetime as dt
 import os
 import sys
 from pathlib import Path
@@ -21,6 +22,7 @@ from thesis_vla.common.paths import CONFIG_ROOT, PROJECT_ROOT
 from thesis_vla.training.visual_thought_launcher import VisualThoughtExperimentSpec, VisualThoughtLaunchConfig, VisualThoughtRuntimeConfig, run_experiments
 
 WORKSPACE_DIR = PROJECT_ROOT
+RUN_TS = dt.datetime.now().strftime("%Y%m%d_%H%M%S")
 
 RUNTIME_CONFIG = VisualThoughtRuntimeConfig(launch_mode="single", cuda_devices=(0,), num_workers=0, dry_run=False)
 
@@ -41,7 +43,7 @@ DEFAULTS = VisualThoughtLaunchConfig(
     steps=2500,
     log_every=20,
     save_every=500,
-    name_prefix="visual-thought",
+    name_prefix=f"visual-thought-{RUN_TS}",
 )
 
 EXPERIMENTS = [

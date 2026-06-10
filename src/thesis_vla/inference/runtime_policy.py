@@ -91,5 +91,6 @@ def build_runtime_policy_processors(
         policy_cfg=policy.config,
         pretrained_path=pretrained_path,
         dataset_stats=stats,
-        preprocessor_overrides={"device_processor": {"device": device}, "rename_observations_processor": {"rename_map": rename_map}},
+        preprocessor_overrides={"device_processor": {"device": device}, 
+                                "rename_observations_processor": {"rename_map": rename_map}},
     )

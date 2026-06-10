@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import datetime as dt
 import os
 import sys
 from pathlib import Path
@@ -21,6 +22,7 @@ from thesis_vla.common.paths import CONFIG_ROOT, PROJECT_ROOT
 from thesis_vla.training.xvla_guided_launcher import GuidedExperimentSpec, GuidedLaunchConfig, GuidedRuntimeConfig, run_experiments
 
 WORKSPACE_DIR = PROJECT_ROOT
+RUN_TS = dt.datetime.now().strftime("%Y%m%d_%H%M%S")
 
 RUNTIME_CONFIG = GuidedRuntimeConfig(launch_mode="single", cuda_devices=(0,), num_workers=0, dry_run=False)
 
@@ -40,7 +42,7 @@ DEFAULTS = GuidedLaunchConfig(
     steps=2500,
     log_every=20,
     save_every=500,
-    name_prefix="xvla-guided",
+    name_prefix=f"xvla-guided-{RUN_TS}",
 )
 
 EXPERIMENTS = []
