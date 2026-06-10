@@ -183,6 +183,8 @@ def train_guided_xvla(config: GuidedXVLATrainConfig) -> None:
     if config.dry_run: return
     policy.train()
     step = 0
+    accum_steps = max(int(config.gradient_accumulation_steps), 1)
+    optimizer.zero_grad(set_to_none=True)
     progress = tqdm(total=config.steps, desc=config.name)
     while step < config.steps:
         for raw_batch in loader:
@@ -200,9 +202,10 @@ def train_guided_xvla(config: GuidedXVLATrainConfig) -> None:
                 expert_loss = action_loss.new_zeros(())
                 expert_stats = {"expert_total": 0.0}
             total_loss = float(config.action_loss_weight) * action_loss + float(config.expert_loss_weight) * expert_loss
-            optimizer.zero_grad(set_to_none=True)
-            total_loss.backward()
-            optimizer.step()
+            (total_loss / accum_steps).backward()
+            if step % accum_steps == 0 or step == config.steps:
+                optimizer.step()
+                optimizer.zero_grad(set_to_none=True)
             if step % max(int(config.log_every), 1) == 0:
                 progress.set_postfix({"loss": f"{float(total_loss.detach().item()):.4f}", "action": f"{action_stats['action_total']:.4f}", "expert": f"{expert_stats['expert_total']:.4f}"})
             progress.update(1)

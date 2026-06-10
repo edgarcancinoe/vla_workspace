@@ -362,6 +362,8 @@ def train_visual_thought(config: VisualThoughtTrainConfig) -> None:
     if config.dry_run: return
 
     step = 0
+    accum_steps = max(int(config.gradient_accumulation_steps), 1)
+    optimizer.zero_grad(set_to_none=True)
     progress = tqdm(total=config.steps, desc=config.name)
     while step < config.steps:
         for raw_batch in loader:
@@ -379,8 +381,8 @@ def train_visual_thought(config: VisualThoughtTrainConfig) -> None:
                 action_loss, action_stats = compute_xvla_action_loss_from_encoder(runtime.policy, processed_batch, inputs, enc)
                 total_loss = float(config.action_loss_weight) * action_loss + float(config.expert_loss_weight) * expert_loss
             
-            total_loss.backward()
-            if step % max(int(config.gradient_accumulation_steps), 1) == 0:
+            (total_loss / accum_steps).backward()
+            if step % accum_steps == 0 or step == config.steps:
                 optimizer.step()
                 optimizer.zero_grad(set_to_none=True)
             
