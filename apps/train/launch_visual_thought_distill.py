@@ -32,10 +32,10 @@ DEFAULTS = VisualThoughtLaunchConfig(
     dataset_revision="v3.0",
     runtime=RUNTIME_CONFIG,
     training_stage="distill_only",
-    expert_type="cedirnet",
+    expert_type="dino",
     xvla_init_path="lerobot/xvla-base",
-    decoder_stack_config_path=str(CONFIG_ROOT / "visual_thought" / "cedirnet_stack.yaml"),
-    decoder_task_config_path=str(CONFIG_ROOT / "visual_thought" / "cedirnet_head.yaml"),
+    decoder_stack_config_path=str(CONFIG_ROOT / "visual_thought" / "dino_stack.yaml"),
+    decoder_task_config_path=str(CONFIG_ROOT / "visual_thought" / "dino_decoder.yaml"),  # target_kind: token_sequence
     batch_size=8,
     gradient_accumulation_steps=1,
     decoder_optimizer_lr=1e-4,
@@ -46,11 +46,13 @@ DEFAULTS = VisualThoughtLaunchConfig(
     name_prefix=f"visual-thought-{RUN_TS}",
 )
 
+# DINO distill_only: no target cache needed (teacher = stock dinov2 vitb14 from torch.hub).
+# decoder_init_path is NOT required for distill_only — the student decoder is trained from scratch.
+# The empty spec inherits expert_type/dataset/configs from DEFAULTS above.
 EXPERIMENTS = [
     VisualThoughtExperimentSpec(
-        expert_type="cedirnet",
-        decoder_stack_config_path=str(CONFIG_ROOT / "visual_thought" / "cedirnet_stack.yaml"),
-        decoder_task_config_path=str(CONFIG_ROOT / "visual_thought" / "cedirnet_head.yaml"),
+        name=f"dino_tokenseq_distill_cubes_{RUN_TS}",
+        wandb_run_name=f"dino_tokenseq_distill_cubes_{RUN_TS}",
     ),
 ]
 
