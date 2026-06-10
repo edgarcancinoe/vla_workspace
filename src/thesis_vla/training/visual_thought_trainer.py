@@ -25,6 +25,11 @@ from thesis_vla.visual_thought.teachers import DinoV2Teacher
 TrainingStage = Literal["distill_only", "joint_multitask"]
 ExpertType = Literal["cedirnet", "dino"]
 
+# Match the normal XVLA finetune loop (lerobot uses accelerator.accumulate, which averages
+# the loss across the accumulation window and clips grad norm at the boundary). XVLA's
+# optimizer default is grad_clip_norm=10.0 (configuration_xvla.optimizer_grad_clip_norm).
+XVLA_GRAD_CLIP_NORM = 10.0
+
 
 @dataclass
 class VisualThoughtTrainConfig:
@@ -319,18 +324,21 @@ def run_validation(config: VisualThoughtTrainConfig, runtime: XVLARuntime, task_
     decoder.eval()
     runtime.policy.eval()
     total_loss, total_action, total_expert, batches = 0.0, 0.0, 0.0, 0
+    component_totals: dict[str, float] = {}
     for raw_batch in val_loader:
         if batches >= max(int(config.validation_max_batches), 1): break
         processed_batch = preprocess_batch(runtime, raw_batch)
         inputs, enc = build_xvla_inputs(runtime.policy, processed_batch)
         target = load_teacher_target(config, teacher, raw_batch, runtime.teacher_image_key)
-        expert_loss, _ = compute_expert_loss(config, decoder, task_cfg, target, enc["vlm_features"], step=0)
+        expert_loss, expert_stats = compute_expert_loss(config, decoder, task_cfg, target, enc["vlm_features"], step=0)
         total = float(config.expert_loss_weight) * expert_loss
         action_value = 0.0
+        for key, value in expert_stats.items(): component_totals[f"val_{key}"] = component_totals.get(f"val_{key}", 0.0) + float(value)
         if config.training_stage == "joint_multitask":
-            action_loss, _ = compute_xvla_action_loss_from_encoder(runtime.policy, processed_batch, inputs, enc)
+            action_loss, action_stats = compute_xvla_action_loss_from_encoder(runtime.policy, processed_batch, inputs, enc)
             action_value = float(action_loss.detach().item())
             total = float(config.action_loss_weight) * action_loss + float(config.expert_loss_weight) * expert_loss
+            for key, value in action_stats.items(): component_totals[f"val_{key}"] = component_totals.get(f"val_{key}", 0.0) + float(value)
         total_loss += float(total.detach().item())
         total_action += action_value
         total_expert += float(expert_loss.detach().item())
@@ -338,7 +346,9 @@ def run_validation(config: VisualThoughtTrainConfig, runtime: XVLARuntime, task_
     if decoder_was_training: decoder.train()
     if policy_was_training: runtime.policy.train()
     denom = max(batches, 1)
-    return {"val_loss": total_loss / denom, "val_expert_total": total_expert / denom, "val_action_total": total_action / denom, "val_batches": float(batches)}
+    metrics = {"val_loss": total_loss / denom, "val_expert_total": total_expert / denom, "val_action_total": total_action / denom, "val_batches": float(batches)}
+    metrics.update({key: value / denom for key, value in component_totals.items()})
+    return metrics
 
 
 def train_visual_thought(config: VisualThoughtTrainConfig) -> None:
@@ -383,6 +393,7 @@ def train_visual_thought(config: VisualThoughtTrainConfig) -> None:
             
             (total_loss / accum_steps).backward()
             if step % accum_steps == 0 or step == config.steps:
+                torch.nn.utils.clip_grad_norm_([parameter for group in optimizer.param_groups for parameter in group["params"]], XVLA_GRAD_CLIP_NORM)
                 optimizer.step()
                 optimizer.zero_grad(set_to_none=True)
             
