@@ -160,15 +160,18 @@ def _overlay_map(image_chw: torch.Tensor, map_hw: torch.Tensor, alpha: float = 0
 
 
 @torch.no_grad()
-def run_visualization(config: VisualThoughtTrainConfig, runtime: XVLARuntime, teacher, decoder: torch.nn.Module, loader: DataLoader, step: int) -> dict[str, Any]:
+def run_visualization(config: VisualThoughtTrainConfig, runtime: XVLARuntime, teacher, decoder: torch.nn.Module, loader: DataLoader | None, step: int, raw_batch: dict[str, Any] | None = None, enc: dict[str, torch.Tensor] | None = None, target: TeacherTarget | None = None) -> dict[str, Any]:
     if int(config.vis_num_samples) <= 0: return {"vis_skipped": "vis_num_samples"}
     decoder_was_training, policy_was_training = decoder.training, runtime.policy.training
     decoder.eval(); runtime.policy.eval()
     try:
-        raw_batch = next(iter(loader))
-        processed_batch = preprocess_batch(runtime, raw_batch)
-        _, enc = build_xvla_inputs(runtime, processed_batch)
-        target = load_teacher_target(config, teacher, raw_batch, runtime.teacher_image_key)
+        if raw_batch is None:
+            if loader is None: raise ValueError("loader is required when raw_batch is not provided.")
+            raw_batch = next(iter(loader))
+        if enc is None:
+            processed_batch = preprocess_batch(runtime, raw_batch)
+            _, enc = build_xvla_inputs(runtime, processed_batch)
+        if target is None: target = load_teacher_target(config, teacher, raw_batch, runtime.teacher_image_key)
         if config.expert_type != "dino" or target.kind != "token_sequence": return {"vis_skipped": f"{config.expert_type}:{target.kind}"}
         prediction = decoder(enc["vlm_features"])
         gh, gw = _resolve_grid_hw(target); sample_count = min(int(config.vis_num_samples), int(prediction.shape[0]))
@@ -544,7 +547,7 @@ def train_visual_thought(config: VisualThoughtTrainConfig) -> None:
                 print(json.dumps(val_metrics))
                 if wandb_run is not None: wandb_run.log({key: value for key, value in val_metrics.items() if key != "event"}, step=int(step))
             if int(config.vis_every) > 0 and step % max(int(config.vis_every), 1) == 0:
-                vis_metrics = {"event": "visualization_step", "step": int(step), **run_visualization(config, runtime, teacher, decoder, val_loader or loader, step)}
+                vis_metrics = {"event": "visualization_step", "step": int(step), **run_visualization(config, runtime, teacher, decoder, None, step, raw_batch=raw_batch, enc=enc, target=target)}
                 print(json.dumps(vis_metrics))
             _save_checkpoint_if_needed(config, runtime, decoder, optimizer, step, final=False)
             progress.update(1)
