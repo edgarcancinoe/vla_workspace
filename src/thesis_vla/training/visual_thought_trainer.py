@@ -199,6 +199,13 @@ def compute_xvla_action_loss_from_encoder(policy, processed_batch: dict[str, Any
     target_dtype = policy.model._get_target_dtype()
     t, action_noisy = policy.model._build_corrupted_action(action=targets, device=inputs["input_ids"].device, target_dtype=target_dtype)
     proprio_m, action_noisy_m = policy.model.action_space.preprocess(inputs["proprio"].to(dtype=target_dtype), action_noisy)
+    transformer_parameters = policy.model.transformer.parameters() if hasattr(policy.model.transformer, "parameters") else iter(())
+    transformer_parameter = next(transformer_parameters, None)
+    transformer_dtype = transformer_parameter.dtype if transformer_parameter is not None else action_noisy_m.dtype
+    action_noisy_m = action_noisy_m.to(dtype=transformer_dtype)
+    proprio_m = proprio_m.to(dtype=transformer_dtype)
+    t = t.to(dtype=transformer_dtype)
+    enc = {key: value.to(dtype=transformer_dtype) if torch.is_tensor(value) and value.is_floating_point() else value for key, value in enc.items()}
     pred_action = policy.model.transformer(domain_id=inputs["domain_id"], action_with_noise=action_noisy_m, t=t, proprio=proprio_m, **enc)
     loss_dict = policy.model.action_space.compute_loss(pred_action, targets)
     action_loss = sum(loss_dict.values())
