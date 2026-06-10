@@ -27,7 +27,7 @@ RUN_TS = dt.datetime.now().strftime("%Y%m%d_%H%M%S")
 RUNTIME_CONFIG = VisualThoughtRuntimeConfig(launch_mode="single", cuda_devices=(0,), num_workers=0, dry_run=False)
 
 DEFAULTS = VisualThoughtLaunchConfig(
-    hf_user="edgarcancinoe",
+    hf_user     ="edgarcancinoe",
     dataset_name="soarm101_pickplace_multicolor_v1_7p5hz",
     dataset_revision="v3.0",
     runtime=RUNTIME_CONFIG,

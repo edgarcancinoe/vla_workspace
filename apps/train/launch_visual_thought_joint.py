@@ -57,77 +57,83 @@ DEFAULTS = VisualThoughtLaunchConfig(
     name_prefix=f"visual-thought-{RUN_TS}",
 )
 
-FOLD_CEDIRNET_NAME=f"cedirnet_joint_stage_{RUN_TS}"
+# STARTING POINTS
+# =====================================================================================
+# XVLA -------------------------------------------------------------------------------
+OUT = "/home/jose/EMAI-Thesis/vla_workspace/runtime/outputs/train/"
+XVLA_INIT_CUBES         = OUT + "orange196_pickplace-multicolor_7p5hz_so101_ee6d_am_sm_b16_ga2_eb64_full_adapt_stagedpw_v1_20260604_141258/checkpoints/015000/pretrained_model"
+XVLA_INIT_CLOTHFOLD     = OUT + "orange196_cloth-corner-fold_7p5hz_so101_ee6d_am_sm_b16_ga2_eb64_full_adapt_stagedpw_v1_20260604_230620/checkpoints/015000/pretrained_model"  
+XVLA_INIT_CLOTHDROP     = OUT + "orange196_cloth-corner-box_7p5hz_so101_ee6d_am_sm_b8_ga4_eb64_full_adapt_stagedpw_v1_20260603_111556/checkpoints/030000/pretrained_model"
+
+# CEDIRNET DECODER ----------------------------------------------------------------------
+CEDIRNET_DECODER_INIT               = "/home/jose/EMAI-Thesis/vla_workspace/models/cedirnet_legacy_32x32"
+CEDIRNET_DECODER_INIT_CONFIG        = "/home/jose/EMAI-Thesis/vla_workspace/config/visual_thought/cedirnet_decoder.yaml"
+CEDIRNET_DECODER_INIT_STACK_CONFIG  = "/home/jose/EMAI-Thesis/vla_workspace/config/visual_thought/cedirnet_stack.yaml"
+CEDIRNET_DECODER_INIT_TASK_CONFIG   = "/home/jose/EMAI-Thesis/vla_workspace/config/visual_thought/cedirnet_head.yaml"
+
+# DINO DECODER --------------------------------------------------------------------------
+DINO_CUBES_DECODER_INIT = None
+DINO_CLOTH_DECODER_INIT = None
+DINO_STACK_CONFIG     = str(CONFIG_ROOT / "visual_thought" / "dino_stack.yaml")
+DINO_TOKENSEQ_CONFIG  = str(CONFIG_ROOT / "visual_thought" / "dino_decoder.yaml")  # target_kind: token_sequence
+# =====================================================================================
+
+
+# EXP NAMING
+# =====================================================================================
+FOLD_CEDIRNET_NAME      = f"cedirnet_joint_stage_{RUN_TS}"
+DROP_CEDIRNET_NAME      = f"cedirnet_joint_stage_{RUN_TS}_cloth_box"
+DINO_CUBES_NAME         = f"dino_tokenseq_joint_cubes_{RUN_TS}"
+DINO_CLOTH_FOLD_NAME    = f"dino_tokenseq_joint_clothfold_{RUN_TS}"
+# =====================================================================================
+
+# DATASETS
+# =====================================================================================
+CLOTH_FOLD_DS = ("cloth-corner-fold_7p5hz", "main")
+CLOTH_DROP_DS = ("cloth-corner-box_7p5hz", "main")
+CUBES_DS      = ("pickplace-multicolor_7p5hz", "main")
+# =====================================================================================
+
+
 EXPERIMENTS_FOLD_CEDIRNET = [
-    # VisualThoughtExperimentSpec(
-    #     name                        =FOLD_CEDIRNET_NAME
-    #     dataset_name                ="cloth-corner-fold_7p5hz",
-    #     dataset_revision            ="main",
-    #     training_stage              ="joint_multitask",
-    #     expert_type                 ="cedirnet",
-    #     xvla_init_path              ="/home/jose/EMAI-Thesis/vla_workspace/runtime/outputs/train/orange196_pickplace-multicolor_7p5hz_so101_ee6d_am_sm_b16_ga2_eb64_full_adapt_stagedpw_v1_20260604_141258/checkpoints/015000/pretrained_model",
-    #     decoder_init_path           ="/home/jose/EMAI-Thesis/vla_workspace/models/cedirnet_legacy_32x32",
-    #     decoder_stack_config_path   ="/home/jose/EMAI-Thesis/vla_workspace/config/visual_thought/cedirnet_stack.yaml",
-    #     decoder_task_config_path    ="/home/jose/EMAI-Thesis/vla_workspace/config/visual_thought/cedirnet_head.yaml",
-    #     wandb_run_name              =f"cedirnet_joint_stage_{RUN_TS}",
-    #     action_loss_weight=1.0,
-    #     expert_loss_weight=0.25,
-    # ),
-    # VisualThoughtExperimentSpec(
-    #     name                        ="cedirnet_joint_stage",
-    #     dataset_name                ="cloth-corner-fold_7p5hz",
-    #     wandb_run_name              ="cedirnet_joint_stage",
-    #     dataset_revision            ="main",
-    #     training_stage              ="joint_multitask",
-    #     expert_type                 ="cedirnet",
-    #     xvla_init_path              ="/home/jose/EMAI-Thesis/vla_workspace/runtime/outputs/train/orange196_pickplace-multicolor_7p5hz_so101_ee6d_am_sm_b16_ga2_eb64_full_adapt_stagedpw_v1_20260604_141258/checkpoints/015000/pretrained_model",
-    #     decoder_init_path           ="/home/jose/EMAI-Thesis/vla_workspace/models/cedirnet_legacy_32x32",
-    #     decoder_stack_config_path   ="/home/jose/EMAI-Thesis/vla_workspace/config/visual_thought/cedirnet_stack.yaml",
-    #     decoder_task_config_path    ="/home/jose/EMAI-Thesis/vla_workspace/config/visual_thought/cedirnet_head.yaml",
-    #     action_loss_weight=1.0,
-    #     expert_loss_weight=0.5,
-    # ),
     VisualThoughtExperimentSpec(
-        name                        ="cedirnet_joint_stage",
-        dataset_name                ="cloth-corner-fold_7p5hz",
-        wandb_run_name              ="cedirnet_joint_stage",
-        dataset_revision            ="main",
-        training_stage              ="joint_multitask",
         expert_type                 ="cedirnet",
-        xvla_init_path              ="/home/jose/EMAI-Thesis/vla_workspace/runtime/outputs/train/orange196_pickplace-multicolor_7p5hz_so101_ee6d_am_sm_b16_ga2_eb64_full_adapt_stagedpw_v1_20260604_141258/checkpoints/015000/pretrained_model",
-        decoder_init_path           ="/home/jose/EMAI-Thesis/vla_workspace/models/cedirnet_legacy_32x32",
-        decoder_stack_config_path   ="/home/jose/EMAI-Thesis/vla_workspace/config/visual_thought/cedirnet_stack.yaml",
-        decoder_task_config_path    ="/home/jose/EMAI-Thesis/vla_workspace/config/visual_thought/cedirnet_head.yaml",
+        training_stage              ="joint_multitask",
+        name                        =FOLD_CEDIRNET_NAME,
+        wandb_run_name              =FOLD_CEDIRNET_NAME,
+        dataset_name                =CLOTH_FOLD_DS[0],
+        dataset_revision            =CLOTH_FOLD_DS[1],
+        xvla_init_path              =XVLA_INIT_CLOTHFOLD,
+        decoder_init_path           =CEDIRNET_DECODER_INIT,
+        decoder_stack_config_path   =CEDIRNET_DECODER_INIT_STACK_CONFIG,
+        decoder_task_config_path    =CEDIRNET_DECODER_INIT_TASK_CONFIG,
         action_loss_weight=1.0,
         expert_loss_weight=1.0,
     )
 ]
 
-DROP_CEDIRNET_NAME=f"cedirnet_joint_stage_{RUN_TS}_cloth_box"
 EXPERIMENTS_CLOTH_DROP_CEDIRNET = [
     VisualThoughtExperimentSpec(
-        name                        =DROP_CEDIRNET_NAME,
-        dataset_name                ="cloth-corner-box_7p5hz",
-        wandb_run_name              ="cedirnet_joint_stage",
-        dataset_revision            ="main",
-        training_stage              ="joint_multitask",
         expert_type                 ="cedirnet",
-        xvla_init_path              ="/home/jose/EMAI-Thesis/vla_workspace/runtime/outputs/train/orange196_pickplace-multicolor_7p5hz_so101_ee6d_am_sm_b16_ga2_eb64_full_adapt_stagedpw_v1_20260604_141258/checkpoints/015000/pretrained_model",
-        decoder_init_path           ="/home/jose/EMAI-Thesis/vla_workspace/models/cedirnet_legacy_32x32",
-        decoder_stack_config_path   ="/home/jose/EMAI-Thesis/vla_workspace/config/visual_thought/cedirnet_stack.yaml",
-        decoder_task_config_path    ="/home/jose/EMAI-Thesis/vla_workspace/config/visual_thought/cedirnet_head.yaml",
+        training_stage              ="joint_multitask",
+        name                        =DROP_CEDIRNET_NAME,
+        wandb_run_name              =DROP_CEDIRNET_NAME,
+        dataset_name                =CLOTH_DROP_DS[0],
+        dataset_revision            =CLOTH_DROP_DS[1],
+        xvla_init_path              =XVLA_INIT_CLOTHDROP,
+        decoder_init_path           =CEDIRNET_DECODER_INIT,
+        decoder_stack_config_path   =CEDIRNET_DECODER_INIT_STACK_CONFIG,
+        decoder_task_config_path    =CEDIRNET_DECODER_INIT_TASK_CONFIG,
         action_loss_weight=1.0,
         expert_loss_weight=1.0,
     )
 ]
-
 
 # =====================================================================================
 # DINO (token_sequence) joint experiments
 # -------------------------------------------------------------------------------------
-# Teacher = stock dinov2 vitb14 from torch.hub (configs/dino: checkpoint=null), identical
-# to how XVLA-VisualThought/scripts/train/train_dino.py distilled the student decoder.
-#
+# Teacher = stock dinov2 vitb14 from torch.hub (configs/dino: checkpoint=null)
+
 # decoder_init_path must point at a CONVERTED student decoder (a directory containing
 # decoder.safetensors), produced from the train_dino.py output via:
 #   python apps/train/convert_dino_checkpoint.py \
@@ -137,29 +143,18 @@ EXPERIMENTS_CLOTH_DROP_CEDIRNET = [
 #
 # IMPORTANT: the converted decoder's num_decoder_tokens is fixed by the dinov2 patch grid
 # at distillation time, so use the cloth-fold decoder for the cloth-fold joint run and the
-# cubes decoder for the cubes joint run (same camera resolution / teacher config on both
-# sides), otherwise the strict decoder load will fail on a shape mismatch.
+# cubes decoder for the cubes joint run (same camera resolution / teacher config on both)
 # =====================================================================================
-DINO_STACK_CONFIG     = str(CONFIG_ROOT / "visual_thought" / "dino_stack.yaml")
-DINO_TOKENSEQ_CONFIG  = str(CONFIG_ROOT / "visual_thought" / "dino_decoder.yaml")  # target_kind: token_sequence
-
-# XVLA inits (cloth-fold reuses the same orange196 pickplace init as the cedirnet specs).
-DINO_XVLA_INIT_CLOTHFOLD = "/home/jose/EMAI-Thesis/vla_workspace/runtime/outputs/train/orange196_pickplace-multicolor_7p5hz_so101_ee6d_am_sm_b16_ga2_eb64_full_adapt_stagedpw_v1_20260604_141258/checkpoints/015000/pretrained_model"
-DINO_XVLA_INIT_CUBES     = None  # TODO: provide the XVLA init checkpoint for the cubes joint run
-
-# Converted student-decoder dirs (output of convert_dino_checkpoint.py).
-DINO_DECODER_INIT_CLOTHFOLD = None  # TODO: provide converted cloth-fold DINO decoder dir
-DINO_DECODER_INIT_CUBES     = None  # TODO: provide converted cubes DINO decoder dir
 
 DINO_CLOTH_FOLD = [
     VisualThoughtExperimentSpec(
-        name                        =f"dino_tokenseq_joint_clothfold_{RUN_TS}",
-        dataset_name                ="cloth-corner-fold_7p5hz",
-        dataset_revision            ="main",
-        training_stage              ="joint_multitask",
         expert_type                 ="dino",
-        xvla_init_path              =DINO_XVLA_INIT_CLOTHFOLD,
-        decoder_init_path           =DINO_DECODER_INIT_CLOTHFOLD,
+        training_stage              ="joint_multitask",
+        name                        =DINO_CLOTH_FOLD_NAME,
+        dataset_name                =CLOTH_FOLD_DS[0],
+        dataset_revision            =CLOTH_FOLD_DS[1],
+        xvla_init_path              =XVLA_INIT_CLOTHFOLD,
+        decoder_init_path           =DINO_CLOTH_DECODER_INIT,
         decoder_stack_config_path   =DINO_STACK_CONFIG,
         decoder_task_config_path    =DINO_TOKENSEQ_CONFIG,
         wandb_run_name              =f"dino_tokenseq_joint_clothfold_{RUN_TS}",
@@ -170,13 +165,13 @@ DINO_CLOTH_FOLD = [
 
 DINO_CUBES = [
     VisualThoughtExperimentSpec(
-        name                        =f"dino_tokenseq_joint_cubes_{RUN_TS}",
-        dataset_name                ="pickplace-multicolor_7p5hz",
-        dataset_revision            ="main",
-        training_stage              ="joint_multitask",
         expert_type                 ="dino",
-        xvla_init_path              =DINO_XVLA_INIT_CUBES,
-        decoder_init_path           =DINO_DECODER_INIT_CUBES,
+        training_stage              ="joint_multitask",
+        name                        =DINO_CUBES_NAME,
+        dataset_name                =CUBES_DS[0],
+        dataset_revision            =CUBES_DS[1],
+        xvla_init_path              =XVLA_INIT_CUBES,
+        decoder_init_path           =DINO_CUBES_DECODER_INIT,
         decoder_stack_config_path   =DINO_STACK_CONFIG,
         decoder_task_config_path    =DINO_TOKENSEQ_CONFIG,
         wandb_run_name              =f"dino_tokenseq_joint_cubes_{RUN_TS}",
@@ -184,28 +179,8 @@ DINO_CUBES = [
         expert_loss_weight=0.25,
     ),
 ]
-EXPERIMENTS_FOLD_DINO = []
-EXPERIMENTS_CLOTH_DROP_DINO = []
 
-FOLD_CEDIRNET_DINO = f"cedirnet_dino_joint_stage_{RUN_TS}"
-EXPERIMENTS_CUBES_DINO = [
-    VisualThoughtExperimentSpec(
-        name=FOLD_CEDIRNET_DINO,
-        dataset_name="cloth-corner-fold_7p5hz",
-        dataset_revision="v3.0",
-        training_stage="joint_multitask",
-        expert_type="dino",
-        xvla_init_path="/home/jose/EMAI-Thesis/vla_workspace/runtime/outputs/train/orange196_pickplace-multicolor_7p5hz_so101_ee6d_am_sm_b16_ga2_eb64_full_adapt_stagedpw_v1_20260604_141258/checkpoints/015000/pretrained_model",
-        decoder_init_path="/home/jose/EMAI-Thesis/vla_workspace/PATH/TO/YOUR_DINO_DISTILL_CHECKPOINT",
-        decoder_stack_config_path="/home/jose/EMAI-Thesis/vla_workspace/config/visual_thought/dino_stack.yaml",
-        decoder_task_config_path="/home/jose/EMAI-Thesis/vla_workspace/config/visual_thought/dino_decoder.yaml",
-        wandb_run_name="dino_joint_stage",
-        action_loss_weight=1.0,
-        expert_loss_weight=0.25,
-    )
-]
-
-EXPERIMENTS = EXPERIMENTS_CLOTH_DROP_CEDIRNET
+EXPERIMENTS = DINO_CLOTH_FOLD + DINO_CUBES
 def main() -> None:
     run_experiments(workspace_dir=WORKSPACE_DIR, defaults=DEFAULTS, experiments=EXPERIMENTS)
 
