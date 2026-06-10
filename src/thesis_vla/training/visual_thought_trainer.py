@@ -125,6 +125,7 @@ def build_xvla_runtime(config: VisualThoughtTrainConfig) -> XVLARuntime:
     policy_cfg = PreTrainedConfig.from_pretrained(config.xvla_init_path)
     sync_xvla_policy_config(policy_cfg, dataset.meta, rename_map)
     policy = XVLAPolicy.from_pretrained(config.xvla_init_path, config=policy_cfg, device=_as_device(config))
+    policy = policy.to(dtype=torch.float32)
     preprocessor, _ = make_xvla_runtime_processors(policy=policy, pretrained_path=config.xvla_init_path, device=_as_device(config), rename_map=rename_map, dataset_stats=dataset.meta.stats, use_dataset_stats=True)
     teacher_image_key = _resolve_teacher_image_key(list(getattr(dataset.meta, "camera_keys", [])), rename_map, config.teacher_image_feature_key)
     return XVLARuntime(policy=policy, dataset=dataset, preprocessor=preprocessor, rename_map=rename_map, teacher_image_key=teacher_image_key)
