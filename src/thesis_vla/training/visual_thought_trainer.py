@@ -4,6 +4,7 @@ import argparse
 import dataclasses
 import json
 import os
+import random
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Literal
@@ -150,6 +151,10 @@ def _compute_token_pca(tokens: torch.Tensor) -> tuple[np.ndarray, np.ndarray]:
     return pca_rgb, fg_mask
 
 
+def _select_fixed_vis_indices(n: int, seed: int, count: int) -> list[int]:
+    return random.Random(int(seed)).sample(list(range(n)), min(max(int(count), 0), int(n))) if int(n) > 0 and int(count) > 0 else []
+
+
 def _overlay_map(image_chw: torch.Tensor, map_hw: torch.Tensor, alpha: float = 0.45, vmin: float | None = None, vmax: float | None = None) -> np.ndarray:
     image = _to_uint8_image(image_chw).astype(np.float32)
     map_np = map_hw.detach().cpu().float().numpy()
@@ -160,22 +165,20 @@ def _overlay_map(image_chw: torch.Tensor, map_hw: torch.Tensor, alpha: float = 0
 
 
 @torch.no_grad()
-def run_visualization(config: VisualThoughtTrainConfig, runtime: XVLARuntime, teacher, decoder: torch.nn.Module, loader: DataLoader | None, step: int, raw_batch: dict[str, Any] | None = None, enc: dict[str, torch.Tensor] | None = None, target: TeacherTarget | None = None) -> dict[str, Any]:
+def run_visualization(config: VisualThoughtTrainConfig, runtime: XVLARuntime, teacher, decoder: torch.nn.Module, loader: DataLoader, step: int) -> dict[str, Any]:
     if int(config.vis_num_samples) <= 0: return {"vis_skipped": "vis_num_samples"}
     decoder_was_training, policy_was_training = decoder.training, runtime.policy.training
     decoder.eval(); runtime.policy.eval()
     try:
-        if raw_batch is None:
-            if loader is None: raise ValueError("loader is required when raw_batch is not provided.")
-            raw_batch = next(iter(loader))
-        if enc is None:
-            processed_batch = preprocess_batch(runtime, raw_batch)
-            _, enc = build_xvla_inputs(runtime, processed_batch)
-        if target is None: target = load_teacher_target(config, teacher, raw_batch, runtime.teacher_image_key)
+        raw_batch = next(iter(loader))
+        processed_batch = preprocess_batch(runtime, raw_batch)
+        _, enc = build_xvla_inputs(runtime, processed_batch)
+        target = load_teacher_target(config, teacher, raw_batch, runtime.teacher_image_key)
         if config.expert_type != "dino" or target.kind != "token_sequence": return {"vis_skipped": f"{config.expert_type}:{target.kind}"}
         prediction = decoder(enc["vlm_features"])
         gh, gw = _resolve_grid_hw(target); sample_count = min(int(config.vis_num_samples), int(prediction.shape[0]))
         vis_root = Path(config.output_dir) / "visualizations" / f"step_{int(step):07d}"; vis_root.mkdir(parents=True, exist_ok=True)
+        teacher_pca_root = Path(config.output_dir) / "teacher_pca"; teacher_pca_root.mkdir(parents=True, exist_ok=True)
         teacher_images = get_teacher_images(raw_batch, runtime.teacher_image_key); gallery = []
         pred_tokens = prediction.detach().cpu(); target_tokens = target.tensor.detach().cpu()
         cosine_maps = F.cosine_similarity(pred_tokens, target_tokens, dim=-1).view(pred_tokens.shape[0], gh, gw)
@@ -185,11 +188,14 @@ def run_visualization(config: VisualThoughtTrainConfig, runtime: XVLARuntime, te
             sample_id = int(sample_ids[sample_idx].item()) if torch.is_tensor(sample_ids) else int(sample_idx)
             stem = vis_root / f"sample{sample_idx:02d}_{sample_id}"
             image_uint8 = _to_uint8_image(teacher_images[sample_idx]); Image.fromarray(_draw_patch_borders(image_uint8, gh, gw)).save(stem.with_name(stem.name + "_image.png"), compress_level=1)
-            student_pca, fg_mask = _compute_token_pca(pred_tokens[sample_idx]); teacher_pca, _ = _compute_token_pca(target_tokens[sample_idx])
+            student_pca, fg_mask = _compute_token_pca(pred_tokens[sample_idx])
             student_pca_img = np.array(Image.fromarray((student_pca.reshape(gh, gw, 3) * 255).astype(np.uint8)).resize((image_uint8.shape[1], image_uint8.shape[0]), Image.NEAREST))
-            teacher_pca_img = np.array(Image.fromarray((teacher_pca.reshape(gh, gw, 3) * 255).astype(np.uint8)).resize((image_uint8.shape[1], image_uint8.shape[0]), Image.NEAREST))
             Image.fromarray(_draw_patch_borders(student_pca_img, gh, gw)).save(stem.with_name(stem.name + "_pca_student.png"), compress_level=1)
-            Image.fromarray(_draw_patch_borders(teacher_pca_img, gh, gw)).save(stem.with_name(stem.name + "_pca_teacher.png"), compress_level=1)
+            teacher_pca_path = teacher_pca_root / f"sample{sample_id}_pca_teacher.png"
+            if not teacher_pca_path.exists():
+                teacher_pca, _ = _compute_token_pca(target_tokens[sample_idx])
+                teacher_pca_img = np.array(Image.fromarray((teacher_pca.reshape(gh, gw, 3) * 255).astype(np.uint8)).resize((image_uint8.shape[1], image_uint8.shape[0]), Image.NEAREST))
+                Image.fromarray(_draw_patch_borders(teacher_pca_img, gh, gw)).save(teacher_pca_path, compress_level=1)
             fg_up = F.interpolate(torch.from_numpy(fg_mask.reshape(gh, gw).astype(np.float32)).unsqueeze(0).unsqueeze(0), size=teacher_images[sample_idx].shape[-2:], mode="nearest").squeeze(0).squeeze(0)
             fg_overlay = _overlay_map(teacher_images[sample_idx], fg_up)
             Image.fromarray(_draw_patch_borders(fg_overlay, gh, gw)).save(stem.with_name(stem.name + "_fg_mask.png"), compress_level=1)
@@ -198,7 +204,7 @@ def run_visualization(config: VisualThoughtTrainConfig, runtime: XVLARuntime, te
             err_overlay = _overlay_map(teacher_images[sample_idx], err_up, vmin=0.0, vmax=float(err_up.max().item()) if float(err_up.max().item()) > 0.0 else 1.0)
             Image.fromarray(cos_overlay).save(stem.with_name(stem.name + "_cosine_overlay.png"), compress_level=1)
             Image.fromarray(err_overlay).save(stem.with_name(stem.name + "_error_overlay.png"), compress_level=1)
-            gallery.append({"sample_id": sample_id, "mean_cosine": float(cosine_maps[sample_idx].mean().item()), "token_mse": float(error_maps[sample_idx].mean().item()), "image": str(stem.with_name(stem.name + "_image.png")), "pca_student": str(stem.with_name(stem.name + "_pca_student.png")), "pca_teacher": str(stem.with_name(stem.name + "_pca_teacher.png")), "fg_mask": str(stem.with_name(stem.name + "_fg_mask.png")), "cosine_overlay": str(stem.with_name(stem.name + "_cosine_overlay.png")), "error_overlay": str(stem.with_name(stem.name + "_error_overlay.png"))})
+            gallery.append({"sample_id": sample_id, "mean_cosine": float(cosine_maps[sample_idx].mean().item()), "token_mse": float(error_maps[sample_idx].mean().item()), "image": str(stem.with_name(stem.name + "_image.png")), "pca_student": str(stem.with_name(stem.name + "_pca_student.png")), "pca_teacher": str(teacher_pca_path), "fg_mask": str(stem.with_name(stem.name + "_fg_mask.png")), "cosine_overlay": str(stem.with_name(stem.name + "_cosine_overlay.png")), "error_overlay": str(stem.with_name(stem.name + "_error_overlay.png"))})
         gallery_path = vis_root / "gallery.json"; gallery_path.write_text(json.dumps(gallery, indent=2))
         return {"vis_path": str(vis_root), "vis_gallery": str(gallery_path), "vis_samples": len(gallery)}
     finally:
@@ -295,18 +301,28 @@ def build_dataloader(runtime: XVLARuntime, config: VisualThoughtTrainConfig) -> 
     return DataLoader(runtime.dataset, batch_size=config.batch_size, shuffle=True, num_workers=config.num_workers, collate_fn=default_collate, drop_last=False)
 
 
-def build_train_val_dataloaders(runtime: XVLARuntime, config: VisualThoughtTrainConfig) -> tuple[DataLoader, DataLoader | None]:
-    if not config.validation_enable or float(config.validation_split_ratio) <= 0.0: return build_dataloader(runtime, config), None
+def build_train_val_dataloaders(runtime: XVLARuntime, config: VisualThoughtTrainConfig) -> tuple[DataLoader, DataLoader | None, DataLoader | None, list[int]]:
+    if not config.validation_enable or float(config.validation_split_ratio) <= 0.0:
+        loader = build_dataloader(runtime, config)
+        vis_indices = _select_fixed_vis_indices(len(runtime.dataset), config.seed, config.vis_num_samples)
+        vis_loader = DataLoader(Subset(runtime.dataset, vis_indices), batch_size=max(1, min(int(config.batch_size), len(vis_indices))), shuffle=False, num_workers=config.num_workers, collate_fn=default_collate, drop_last=False) if vis_indices else None
+        return loader, None, vis_loader, vis_indices
     dataset_len = len(runtime.dataset)
     val_len = min(max(int(round(dataset_len * float(config.validation_split_ratio))), 1), max(dataset_len - 1, 1))
-    if dataset_len < 2 or val_len >= dataset_len: return build_dataloader(runtime, config), None
+    if dataset_len < 2 or val_len >= dataset_len:
+        loader = build_dataloader(runtime, config)
+        vis_indices = _select_fixed_vis_indices(len(runtime.dataset), config.seed, config.vis_num_samples)
+        vis_loader = DataLoader(Subset(runtime.dataset, vis_indices), batch_size=max(1, min(int(config.batch_size), len(vis_indices))), shuffle=False, num_workers=config.num_workers, collate_fn=default_collate, drop_last=False) if vis_indices else None
+        return loader, None, vis_loader, vis_indices
     generator = torch.Generator().manual_seed(int(config.validation_seed))
     permutation = torch.randperm(dataset_len, generator=generator).tolist()
     val_indices, train_indices = permutation[:val_len], permutation[val_len:]
     train_dataset, val_dataset = Subset(runtime.dataset, train_indices), Subset(runtime.dataset, val_indices)
     train_loader = DataLoader(train_dataset, batch_size=config.batch_size, shuffle=True, num_workers=config.num_workers, collate_fn=default_collate, drop_last=False)
     val_loader = DataLoader(val_dataset, batch_size=config.batch_size, shuffle=False, num_workers=config.num_workers, collate_fn=default_collate, drop_last=False)
-    return train_loader, val_loader
+    vis_subset_indices = _select_fixed_vis_indices(len(val_dataset), config.seed, config.vis_num_samples)
+    vis_loader = DataLoader(Subset(val_dataset, vis_subset_indices), batch_size=max(1, min(int(config.batch_size), len(vis_subset_indices))), shuffle=False, num_workers=config.num_workers, collate_fn=default_collate, drop_last=False) if vis_subset_indices else None
+    return train_loader, val_loader, vis_loader, [val_indices[index] for index in vis_subset_indices]
 
 
 def preprocess_batch(runtime: XVLARuntime, raw_batch: dict[str, Any]) -> dict[str, Any]:
@@ -420,14 +436,14 @@ def compute_expert_loss(config: VisualThoughtTrainConfig, decoder: torch.nn.Modu
 
 
 def prepare_models_and_target(config: VisualThoughtTrainConfig, runtime: XVLARuntime, task_cfg, teacher):
-    loader, val_loader = build_train_val_dataloaders(runtime, config)
+    loader, val_loader, vis_loader, vis_indices = build_train_val_dataloaders(runtime, config)
     first_raw_batch = next(iter(loader))
     processed = preprocess_batch(runtime, first_raw_batch)
     inputs, enc = build_xvla_inputs(runtime, processed)
     target = load_teacher_target(config, teacher, first_raw_batch, runtime.teacher_image_key)
     decoder = build_decoder(config, task_cfg, target, student_vlm_dim=int(enc["vlm_features"].shape[-1])).to(_as_device(config))
     load_decoder_init_if_present(decoder, config.decoder_init_path)
-    return loader, val_loader, decoder, target
+    return loader, val_loader, vis_loader, vis_indices, decoder, target
 
 
 def _checkpoint_metadata(config: VisualThoughtTrainConfig, step: int) -> dict[str, Any]:
@@ -501,7 +517,8 @@ def train_visual_thought(config: VisualThoughtTrainConfig) -> None:
 
     set_policy_trainability(runtime.policy, config.training_stage)
     task_cfg, teacher = build_teacher(config, runtime)
-    loader, val_loader, decoder, _ = prepare_models_and_target(config, runtime, task_cfg, teacher)
+    loader, val_loader, vis_loader, vis_indices, decoder, _ = prepare_models_and_target(config, runtime, task_cfg, teacher)
+    if vis_loader is not None: print(json.dumps({"event": "visualization_config", "vis_fixed_indices": vis_indices, "vis_num_samples": int(config.vis_num_samples), "vis_every": int(config.vis_every)}))
     if config.training_stage == "joint_multitask":
         for parameter in decoder.parameters(): parameter.requires_grad = True
         runtime.policy.train()
@@ -546,14 +563,14 @@ def train_visual_thought(config: VisualThoughtTrainConfig) -> None:
                 val_metrics = {"event": "validation_step", "step": int(step), **run_validation(config, runtime, task_cfg, teacher, decoder, val_loader)}
                 print(json.dumps(val_metrics))
                 if wandb_run is not None: wandb_run.log({key: value for key, value in val_metrics.items() if key != "event"}, step=int(step))
-            if int(config.vis_every) > 0 and step % max(int(config.vis_every), 1) == 0:
-                vis_metrics = {"event": "visualization_step", "step": int(step), **run_visualization(config, runtime, teacher, decoder, None, step, raw_batch=raw_batch, enc=enc, target=target)}
+            if vis_loader is not None and int(config.vis_every) > 0 and step % max(int(config.vis_every), 1) == 0:
+                vis_metrics = {"event": "visualization_step", "step": int(step), **run_visualization(config, runtime, teacher, decoder, vis_loader, step)}
                 print(json.dumps(vis_metrics))
             _save_checkpoint_if_needed(config, runtime, decoder, optimizer, step, final=False)
             progress.update(1)
     progress.close()
-    if bool(config.vis_final):
-        vis_metrics = {"event": "visualization_final", "step": int(step), **run_visualization(config, runtime, teacher, decoder, val_loader or loader, step)}
+    if bool(config.vis_final) and vis_loader is not None:
+        vis_metrics = {"event": "visualization_final", "step": int(step), **run_visualization(config, runtime, teacher, decoder, vis_loader, step)}
         print(json.dumps(vis_metrics))
     if config.save_final_checkpoint: 
         _save_checkpoint_if_needed(config, runtime, decoder, optimizer, step, final=True)
