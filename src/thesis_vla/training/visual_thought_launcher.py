@@ -188,6 +188,8 @@ def resolve_experiment(workspace_dir: Path, defaults: VisualThoughtLaunchConfig,
     run_timestamp = timestamp or dt.datetime.now().strftime("%Y%m%d_%H%M%S")
     name = experiment.name or f"{defaults.name_prefix}_{training_stage}_{expert_type}_{_slug(dataset_repo_id)}_{run_timestamp}"
     output_dir = experiment.output_dir or str(TRAIN_OUTPUT_DIR / name)
+    push_to_hub = experiment.push_to_hub if experiment.push_to_hub is not None else defaults.push_to_hub
+    push_repo_id = experiment.push_repo_id or defaults.push_repo_id or (_resolve_hf_repo_id(name, defaults.hf_user) if push_to_hub else None)
     return ResolvedVisualThoughtExperiment(
         name=name,
         output_dir=output_dir,
@@ -212,8 +214,8 @@ def resolve_experiment(workspace_dir: Path, defaults: VisualThoughtLaunchConfig,
         validation_freq=experiment.validation_freq if experiment.validation_freq is not None else defaults.validation_freq,
         validation_max_batches=experiment.validation_max_batches if experiment.validation_max_batches is not None else defaults.validation_max_batches,
         validation_seed=experiment.validation_seed if experiment.validation_seed is not None else defaults.validation_seed,
-        push_to_hub=experiment.push_to_hub if experiment.push_to_hub is not None else defaults.push_to_hub,
-        push_repo_id=experiment.push_repo_id or defaults.push_repo_id,
+        push_to_hub=push_to_hub,
+        push_repo_id=push_repo_id,
         push_every=experiment.push_every if experiment.push_every is not None else defaults.push_every,
         batch_size=experiment.batch_size if experiment.batch_size is not None else defaults.batch_size,
         gradient_accumulation_steps=experiment.gradient_accumulation_steps if experiment.gradient_accumulation_steps is not None else defaults.gradient_accumulation_steps,
