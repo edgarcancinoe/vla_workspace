@@ -56,6 +56,9 @@ class VisualThoughtTrainConfig:
     teacher_target_cache_root: str | None = None
     dataset_video_backend: str = "pyav"
     dataset_tolerance_s: float = 1e-4
+    wandb_enable: bool = False
+    wandb_project: str = "visual-thought"
+    wandb_run_name: str | None = None
     align_feature_until_step: int = 0
     save_final_checkpoint: bool = True
     seed: int = 42
@@ -266,9 +269,17 @@ def _save_checkpoint_if_needed(config: VisualThoughtTrainConfig, policy, decoder
     save_visual_thought_checkpoint(checkpoint_dir=checkpoint_dir, policy=policy, decoder=decoder, trainer_state={"step": int(step), "optimizer": optimizer.state_dict()}, metadata=_checkpoint_metadata(config, step), config_snapshot=config.to_json_dict())
 
 
+def _maybe_init_wandb(config: VisualThoughtTrainConfig):
+    if not config.wandb_enable: return None
+    import wandb
+
+    return wandb.init(project=config.wandb_project, name=config.wandb_run_name or config.name, config=config.to_json_dict(), dir=config.output_dir)
+
+
 def train_visual_thought(config: VisualThoughtTrainConfig) -> None:
     _set_seed(config.seed)
     Path(config.output_dir).mkdir(parents=True, exist_ok=True)
+    wandb_run = _maybe_init_wandb(config)
 
     runtime = build_xvla_runtime(config)
 
@@ -309,12 +320,15 @@ def train_visual_thought(config: VisualThoughtTrainConfig) -> None:
                 optimizer.zero_grad(set_to_none=True)
             
             if step % max(int(config.log_every), 1) == 0:
-                print(json.dumps({"event": "train_step", "step": int(step), "loss": float(total_loss.detach().item()), **expert_stats, **action_stats}))
+                metrics = {"event": "train_step", "step": int(step), "loss": float(total_loss.detach().item()), **expert_stats, **action_stats}
+                print(json.dumps(metrics))
+                if wandb_run is not None: wandb_run.log({key: value for key, value in metrics.items() if key != "event"}, step=int(step))
             _save_checkpoint_if_needed(config, runtime.policy, decoder, optimizer, step, final=False)
             progress.update(1)
     progress.close()
     if config.save_final_checkpoint: 
         _save_checkpoint_if_needed(config, runtime.policy, decoder, optimizer, step, final=True)
+    if wandb_run is not None: wandb_run.finish()
 
 
 def main() -> None:

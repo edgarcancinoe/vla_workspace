@@ -44,6 +44,9 @@ class VisualThoughtLaunchConfig:
     teacher_image_feature_key: str = "observation.images.image"
     dataset_video_backend: str = "pyav"
     dataset_tolerance_s: float = 1e-4
+    wandb_enable: bool = False
+    wandb_project: str = "visual-thought"
+    wandb_run_name: str | None = None
     batch_size: int = 8
     gradient_accumulation_steps: int = 1
     weight_decay: float = 0.01
@@ -76,6 +79,9 @@ class VisualThoughtExperimentSpec:
     teacher_image_feature_key: str | None = None
     dataset_video_backend: str | None = None
     dataset_tolerance_s: float | None = None
+    wandb_enable: bool | None = None
+    wandb_project: str | None = None
+    wandb_run_name: str | None = None
     batch_size: int | None = None
     gradient_accumulation_steps: int | None = None
     decoder_optimizer_lr: float | None = None
@@ -109,6 +115,9 @@ class ResolvedVisualThoughtExperiment:
     teacher_image_feature_key: str
     dataset_video_backend: str
     dataset_tolerance_s: float
+    wandb_enable: bool
+    wandb_project: str
+    wandb_run_name: str | None
     batch_size: int
     gradient_accumulation_steps: int
     weight_decay: float
@@ -171,6 +180,9 @@ def resolve_experiment(workspace_dir: Path, defaults: VisualThoughtLaunchConfig,
         teacher_image_feature_key=experiment.teacher_image_feature_key or defaults.teacher_image_feature_key,
         dataset_video_backend=experiment.dataset_video_backend or defaults.dataset_video_backend,
         dataset_tolerance_s=experiment.dataset_tolerance_s if experiment.dataset_tolerance_s is not None else defaults.dataset_tolerance_s,
+        wandb_enable=experiment.wandb_enable if experiment.wandb_enable is not None else defaults.wandb_enable,
+        wandb_project=experiment.wandb_project or defaults.wandb_project,
+        wandb_run_name=experiment.wandb_run_name or defaults.wandb_run_name or name,
         batch_size=experiment.batch_size if experiment.batch_size is not None else defaults.batch_size,
         gradient_accumulation_steps=experiment.gradient_accumulation_steps if experiment.gradient_accumulation_steps is not None else defaults.gradient_accumulation_steps,
         weight_decay=defaults.weight_decay,
@@ -252,6 +264,9 @@ def print_run_summary(index: int, total: int, resolved: ResolvedVisualThoughtExp
     print(f"  Dataset:            {resolved.dataset_repo_id}")
     print(f"  Video Backend:      {resolved.dataset_video_backend}")
     print(f"  Timestamp Tol:      {resolved.dataset_tolerance_s}")
+    print(f"  W&B Enabled:        {resolved.wandb_enable}")
+    print(f"  W&B Project:        {resolved.wandb_project}")
+    print(f"  W&B Run:            {resolved.wandb_run_name}")
     print(f"  Output Dir:         {resolved.output_dir}")
     print(f"  Steps:              {resolved.steps}")
     print(f"  Batch Size:         {resolved.batch_size}")
