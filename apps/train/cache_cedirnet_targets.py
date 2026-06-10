@@ -57,6 +57,12 @@ def _get_teacher_images(raw_batch: dict[str, object], teacher_image_key: str) ->
     return images[:, -1] if getattr(images, "ndim", 0) == 5 else images
 
 
+def _get_teacher_image_sample(raw_sample: dict[str, object], teacher_image_key: str) -> torch.Tensor:
+    image = raw_sample[teacher_image_key]
+    if not isinstance(image, torch.Tensor): image = torch.as_tensor(image)
+    return image[-1] if getattr(image, "ndim", 0) == 4 else image
+
+
 def _build_dataset(args) -> tuple[object, Path, str]:
     from lerobot.datasets.lerobot_dataset import LeRobotDataset
 
@@ -134,6 +140,16 @@ def _channel_image(channel: np.ndarray) -> Image.Image:
     return Image.fromarray(normalized, mode="L").convert("RGB")
 
 
+def _reference_image(image: torch.Tensor) -> Image.Image:
+    tensor = image.detach().cpu().float()
+    if tensor.ndim != 3: raise CeDiRNetTargetCacheError(f"Expected reference image tensor [C,H,W], got {tuple(tensor.shape)}.")
+    if tensor.shape[0] == 1: tensor = tensor.repeat(3, 1, 1)
+    if tensor.shape[0] > 3: tensor = tensor[:3]
+    if tensor.max().item() > 1.0: tensor = tensor / 255.0
+    array = (tensor.clamp(0.0, 1.0).permute(1, 2, 0).numpy() * 255.0).astype(np.uint8)
+    return Image.fromarray(array, mode="RGB")
+
+
 def _tile_with_label(image: Image.Image, label: str, panel_size: int, header_height: int = 28) -> Image.Image:
     resized = image.resize((panel_size, panel_size), resample=Image.Resampling.NEAREST)
     tile = Image.new("RGB", (panel_size, panel_size + header_height), color=(16, 16, 16))
@@ -145,7 +161,7 @@ def _tile_with_label(image: Image.Image, label: str, panel_size: int, header_hei
 
 def visualize_cache(args) -> None:
     task_cfg = load_cedirnet_decoder_config(args.decoder_stack_config_path, args.decoder_task_config_path)
-    dataset, resolved_root, _ = _build_dataset(args)
+    dataset, resolved_root, teacher_image_key = _build_dataset(args)
     cache = CeDiRNetTargetCache.resolve(dataset_repo_id=args.dataset_repo_id, dataset_revision=args.dataset_revision, dataset_root=resolved_root, dataset_length=len(dataset), teacher_cfg=task_cfg.teacher, cache_root=args.cache_root)
     indices = [int(item.strip()) for item in str(args.indices).split(",") if item.strip()]
     if not indices: raise CeDiRNetTargetCacheError("visualize requires at least one --indices entry.")
@@ -155,7 +171,9 @@ def visualize_cache(args) -> None:
     for index in indices:
         target = cache.target_for_absolute_indices([index], device="cpu")
         tensor = target.tensor[0].detach().cpu().numpy()
-        panels = [_tile_with_label(_channel_image(tensor[channel]), f"idx={index} ch={channel}", panel_size) for channel in range(int(tensor.shape[0]))]
+        sample = dataset[index]
+        reference = _tile_with_label(_reference_image(_get_teacher_image_sample(sample, teacher_image_key)), f"idx={index} reference", panel_size)
+        panels = [reference] + [_tile_with_label(_channel_image(tensor[channel]), f"idx={index} ch={channel}", panel_size) for channel in range(int(tensor.shape[0]))]
         canvas = Image.new("RGB", (panel_size * len(panels), panels[0].height), color=(0, 0, 0))
         for i, panel in enumerate(panels): canvas.paste(panel, (i * panel_size, 0))
         out_path = output_dir / f"cedirnet_cache_{index:06d}.png"
