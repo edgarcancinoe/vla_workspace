@@ -23,3 +23,4 @@ teacher:
   checkpoint: /home/jose/EMAI-Thesis/repos/CeDiRNet-3DoF/exp/vicos_towel/backbone=tu-convnext_base_size=768x768/num_train_epoch=10/depth=False/multitask_weight=uw/checkpoint.pth
   repo_src: /home/jose/EMAI-Thesis/repos/CeDiRNet-3DoF/src
   config_path: /home/jose/EMAI-Thesis/repos/CeDiRNet-3DoF/src/config/config_infer/ConvNext-B-RGB.json
+  localization_checkpoint: /home/jose/EMAI-Thesis/repos/CeDiRNet-3DoF/models/localization_checkpoint.pth

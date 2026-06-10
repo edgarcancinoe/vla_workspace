@@ -8,8 +8,8 @@ stack:
   ffn_dropout: 0.1
   self_attn_queries: true
   self_attn_student: false
-  gating_enabled: false
-  gating_mode: none
+  gating_enabled: true
+  gating_mode: flamingo
   cross_attn_residual: true
   student_projection_mode: res_mlp
   student_projection_mlp_ratio: 4.0
