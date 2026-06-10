@@ -121,6 +121,69 @@ EXPERIMENTS_CLOTH_DROP_CEDIRNET = [
     )
 ]
 
+
+# =====================================================================================
+# DINO (token_sequence) joint experiments
+# -------------------------------------------------------------------------------------
+# Teacher = stock dinov2 vitb14 from torch.hub (configs/dino: checkpoint=null), identical
+# to how XVLA-VisualThought/scripts/train/train_dino.py distilled the student decoder.
+#
+# decoder_init_path must point at a CONVERTED student decoder (a directory containing
+# decoder.safetensors), produced from the train_dino.py output via:
+#   python apps/train/convert_dino_checkpoint.py \
+#       --checkpoint <train_dino .../checkpoint_final.pt> \
+#       --config     <XVLA-VisualThought/configs/dino/train.yaml> \
+#       --output-dir <runtime/outputs/train/visual_thought_imports/dino_...>
+#
+# IMPORTANT: the converted decoder's num_decoder_tokens is fixed by the dinov2 patch grid
+# at distillation time, so use the cloth-fold decoder for the cloth-fold joint run and the
+# cubes decoder for the cubes joint run (same camera resolution / teacher config on both
+# sides), otherwise the strict decoder load will fail on a shape mismatch.
+# =====================================================================================
+DINO_STACK_CONFIG     = str(CONFIG_ROOT / "visual_thought" / "dino_stack.yaml")
+DINO_TOKENSEQ_CONFIG  = str(CONFIG_ROOT / "visual_thought" / "dino_decoder.yaml")  # target_kind: token_sequence
+
+# XVLA inits (cloth-fold reuses the same orange196 pickplace init as the cedirnet specs).
+DINO_XVLA_INIT_CLOTHFOLD = "/home/jose/EMAI-Thesis/vla_workspace/runtime/outputs/train/orange196_pickplace-multicolor_7p5hz_so101_ee6d_am_sm_b16_ga2_eb64_full_adapt_stagedpw_v1_20260604_141258/checkpoints/015000/pretrained_model"
+DINO_XVLA_INIT_CUBES     = None  # TODO: provide the XVLA init checkpoint for the cubes joint run
+
+# Converted student-decoder dirs (output of convert_dino_checkpoint.py).
+DINO_DECODER_INIT_CLOTHFOLD = None  # TODO: provide converted cloth-fold DINO decoder dir
+DINO_DECODER_INIT_CUBES     = None  # TODO: provide converted cubes DINO decoder dir
+
+DINO_CLOTH_FOLD = [
+    VisualThoughtExperimentSpec(
+        name                        =f"dino_tokenseq_joint_clothfold_{RUN_TS}",
+        dataset_name                ="cloth-corner-fold_7p5hz",
+        dataset_revision            ="main",
+        training_stage              ="joint_multitask",
+        expert_type                 ="dino",
+        xvla_init_path              =DINO_XVLA_INIT_CLOTHFOLD,
+        decoder_init_path           =DINO_DECODER_INIT_CLOTHFOLD,
+        decoder_stack_config_path   =DINO_STACK_CONFIG,
+        decoder_task_config_path    =DINO_TOKENSEQ_CONFIG,
+        wandb_run_name              =f"dino_tokenseq_joint_clothfold_{RUN_TS}",
+        action_loss_weight=1.0,
+        expert_loss_weight=0.25,
+    ),
+]
+
+DINO_CUBES = [
+    VisualThoughtExperimentSpec(
+        name                        =f"dino_tokenseq_joint_cubes_{RUN_TS}",
+        dataset_name                ="pickplace-multicolor_7p5hz",
+        dataset_revision            ="main",
+        training_stage              ="joint_multitask",
+        expert_type                 ="dino",
+        xvla_init_path              =DINO_XVLA_INIT_CUBES,
+        decoder_init_path           =DINO_DECODER_INIT_CUBES,
+        decoder_stack_config_path   =DINO_STACK_CONFIG,
+        decoder_task_config_path    =DINO_TOKENSEQ_CONFIG,
+        wandb_run_name              =f"dino_tokenseq_joint_cubes_{RUN_TS}",
+        action_loss_weight=1.0,
+        expert_loss_weight=0.25,
+    ),
+]
 EXPERIMENTS_FOLD_DINO = []
 EXPERIMENTS_CLOTH_DROP_DINO = []
 

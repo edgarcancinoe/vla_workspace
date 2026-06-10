@@ -220,7 +220,7 @@ FOLD_128_50K        = None
 
 
 # WITH IMPLICIT CEDIRNET
-IMPLICIT_CEDIRNET = "/Users/edgarcancino/models/cedirnet_joint_stage_2500_10jun_repaired"
+IMPLICIT_CEDIRNET = "edgarcancinoe/cedirnet_joint_stage_final_policy"
 # -----------------------------------------------------------------------------------------------
 
 # PICKPLACE -------------------------------------------------------------------------------------
