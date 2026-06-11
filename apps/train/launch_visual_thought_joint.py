@@ -24,7 +24,7 @@ from thesis_vla.training.visual_thought_launcher import VisualThoughtExperimentS
 WORKSPACE_DIR = PROJECT_ROOT
 RUN_TS = dt.datetime.now().strftime("%Y%m%d_%H%M%S")
 
-RUNTIME_CONFIG = VisualThoughtRuntimeConfig(launch_mode="single", cuda_devices=(5,), num_workers=2, dry_run=False)
+RUNTIME_CONFIG = VisualThoughtRuntimeConfig(launch_mode="single", cuda_devices=(0,1), num_workers=2, dry_run=False)
 
 DEFAULTS = VisualThoughtLaunchConfig(
     hf_user="edgarcancinoe",
@@ -211,7 +211,7 @@ DINO_CUBES = [
 ]
 
 # Pendiente correr estos. Ajustar a bs 32. Dino antes habia corrido con un mal pre-trained decoder. Los otros hay q volver a correrlos solo extended
-EXPERIMENTS = DINO_CLOTH_FOLD + DINO_CLOTH_DROP + DINO_CUBES
+EXPERIMENTS = DINO_CLOTH_FOLD# + DINO_CLOTH_DROP + DINO_CUBES
 
 def main() -> None:
     run_experiments(workspace_dir=WORKSPACE_DIR, defaults=DEFAULTS, experiments=EXPERIMENTS)
