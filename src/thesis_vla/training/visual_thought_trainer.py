@@ -71,6 +71,7 @@ class VisualThoughtTrainConfig:
     xvla_freeze_steps: int | None = None
     xvla_warmup_steps: int | None = None
     xvla_learning_coef: float | None = None
+    xvla_optimizer_lr: float | None = None
     xvla_optimizer_soft_prompt_lr_scale: float | None = None
     xvla_optimizer_soft_prompt_warmup_lr_scale: float | None = None
     xvla_scheduler_warmup_steps: int | None = None
@@ -115,7 +116,6 @@ class VisualThoughtTrainConfig:
     @classmethod
     def from_json(cls, path: str | Path) -> "VisualThoughtTrainConfig":
         payload = json.loads(Path(path).read_text())
-        payload.pop("xvla_optimizer_lr", None)
         if "cuda_visible_devices" in payload: payload["cuda_visible_devices"] = tuple(int(device) for device in payload["cuda_visible_devices"])
         if "expert_types" in payload and payload["expert_types"] is not None: payload["expert_types"] = tuple(str(expert) for expert in payload["expert_types"])
         return cls(**payload)
@@ -240,6 +240,7 @@ def _select_fixed_vis_indices(n: int, seed: int, count: int) -> list[int]:
 
 def _overlay_map(image_chw: torch.Tensor, map_hw: torch.Tensor, alpha: float = 0.45, vmin: float | None = None, vmax: float | None = None) -> np.ndarray:
     image = _to_uint8_image(image_chw).astype(np.float32)
+    if tuple(map_hw.shape[-2:]) != tuple(image.shape[:2]): map_hw = F.interpolate(map_hw.detach().float().unsqueeze(0).unsqueeze(0), size=image.shape[:2], mode="bilinear", align_corners=False).squeeze(0).squeeze(0)
     map_np = map_hw.detach().cpu().float().numpy()
     lo = float(map_np.min()) if vmin is None else float(vmin); hi = float(map_np.max()) if vmax is None else float(vmax)
     denom = max(hi - lo, 1e-8); norm = np.clip((map_np - lo) / denom, 0.0, 1.0)
@@ -375,6 +376,7 @@ def _apply_xvla_training_overrides(policy_cfg, config: VisualThoughtTrainConfig)
         "freeze_steps": config.xvla_freeze_steps,
         "warmup_steps": config.xvla_warmup_steps,
         "learning_coef": config.xvla_learning_coef,
+        "optimizer_lr": config.xvla_optimizer_lr,
         "optimizer_soft_prompt_lr_scale": config.xvla_optimizer_soft_prompt_lr_scale,
         "optimizer_soft_prompt_warmup_lr_scale": config.xvla_optimizer_soft_prompt_warmup_lr_scale,
         "scheduler_warmup_steps": config.xvla_scheduler_warmup_steps,

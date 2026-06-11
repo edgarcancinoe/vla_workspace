@@ -8,7 +8,7 @@ from torch.optim.lr_scheduler import LambdaLR
 sys.path.append(str(Path(__file__).resolve().parents[1] / "src"))
 
 from thesis_vla.common.hf_hub import FAILED_HUB_UPLOAD_FILENAME, HubUploadConfig, HubUploadResult, push_folder_to_hub
-from thesis_vla.training.visual_thought_trainer import JointTrainingState, VisualThoughtTrainConfig, _hub_step_dir, _push_checkpoint_to_hub, build_optimizer, build_policy_scheduler, compute_expert_loss, compute_expert_losses, compute_xvla_action_loss_from_encoder, load_decoder_init_if_present, optimizer_metrics, set_policy_trainability, trainer_state_dict
+from thesis_vla.training.visual_thought_trainer import JointTrainingState, VisualThoughtTrainConfig, _apply_xvla_training_overrides, _hub_step_dir, _push_checkpoint_to_hub, build_optimizer, build_policy_scheduler, compute_expert_loss, compute_expert_losses, compute_xvla_action_loss_from_encoder, load_decoder_init_if_present, optimizer_metrics, set_policy_trainability, trainer_state_dict
 from thesis_vla.visual_thought import CeDirNetDistillationModel, DinoFeatureAlignmentModel, DinoTokenSequenceModel, TeacherTarget, load_cedirnet_decoder_config, load_dino_decoder_config
 from thesis_vla.visual_thought.checkpoints import DECODER_STATE_FILENAME, save_decoder_state, save_visual_thought_checkpoint
 
@@ -187,6 +187,15 @@ def test_joint_training_uses_split_policy_and_decoder_optimizers():
     assert metrics["decoder_lr"] == 2e-4
     assert metrics["policy_lr_vlm"] == 1e-4
     assert metrics["policy_lr_transformer_core"] == 1e-3
+
+
+def test_xvla_training_overrides_can_force_base_optimizer_lr():
+    cfg = type("Cfg", (), {"adaptation_mode": "joint", "freeze_steps": 0, "warmup_steps": 0, "learning_coef": 0.1, "optimizer_lr": 1e-4, "optimizer_soft_prompt_lr_scale": 1.0, "optimizer_soft_prompt_warmup_lr_scale": None, "scheduler_warmup_steps": 1000, "scheduler_decay_steps": 30000, "scheduler_decay_lr": 1e-5})()
+    trainer_cfg = VisualThoughtTrainConfig(name="demo", training_stage="joint_multitask", expert_type="cedirnet", xvla_init_path="x", decoder_init_path=None, decoder_stack_config_path="a", decoder_task_config_path="b", dataset_repo_id="repo", dataset_revision="main", dataset_root=None, output_dir="/tmp/out", device="cpu", xvla_adaptation_mode="staged_prompt_warmup", xvla_learning_coef=0.2, xvla_optimizer_lr=3e-5)
+    _apply_xvla_training_overrides(cfg, trainer_cfg)
+    assert cfg.adaptation_mode == "staged_prompt_warmup"
+    assert cfg.learning_coef == 0.2
+    assert cfg.optimizer_lr == 3e-5
 
 
 def test_decoder_checkpoint_roundtrip():
