@@ -96,6 +96,7 @@ class VisualThoughtLaunchConfig:
     align_feature_until_step: int = 0
     steps: int = 2_500
     log_every: int = 20
+    profile_step_time_every: int = 0
     save_every: int = 500
     save_final_checkpoint: bool = True
     seed: int = 42
@@ -168,6 +169,7 @@ class VisualThoughtExperimentSpec:
     align_feature_until_step: int | None = None
     steps: int | None = None
     log_every: int | None = None
+    profile_step_time_every: int | None = None
     save_every: int | None = None
     seed: int | None = None
     num_workers: int | None = None
@@ -243,6 +245,7 @@ class ResolvedVisualThoughtExperiment:
     align_feature_until_step: int
     steps: int
     log_every: int
+    profile_step_time_every: int
     save_every: int
     save_final_checkpoint: bool
     seed: int
@@ -380,6 +383,7 @@ def resolve_experiment(workspace_dir: Path, defaults: VisualThoughtLaunchConfig,
         align_feature_until_step=experiment.align_feature_until_step if experiment.align_feature_until_step is not None else defaults.align_feature_until_step,
         steps=experiment.steps if experiment.steps is not None else defaults.steps,
         log_every=experiment.log_every if experiment.log_every is not None else defaults.log_every,
+        profile_step_time_every=experiment.profile_step_time_every if experiment.profile_step_time_every is not None else defaults.profile_step_time_every,
         save_every=experiment.save_every if experiment.save_every is not None else defaults.save_every,
         save_final_checkpoint=defaults.save_final_checkpoint,
         seed=experiment.seed if experiment.seed is not None else defaults.seed,
@@ -498,6 +502,7 @@ def print_run_summary(index: int, total: int, resolved: ResolvedVisualThoughtExp
     print(f"  Steps:              {resolved.steps}")
     print(f"  Batch Size:         {resolved.batch_size}")
     print(f"  Grad Accum:         {resolved.gradient_accumulation_steps}")
+    print(f"  Step Timing Every:  {resolved.profile_step_time_every}")
     print(f"  XVLA Adaptation:    {resolved.xvla_adaptation_mode}")
     print(f"  XVLA Freeze Steps:  {resolved.xvla_freeze_steps}")
     print(f"  XVLA Warmup Steps:  {resolved.xvla_warmup_steps}")
