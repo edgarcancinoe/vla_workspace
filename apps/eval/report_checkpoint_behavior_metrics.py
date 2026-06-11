@@ -59,6 +59,7 @@ OUTPUT_JSON = ""
 EVALUATE_TRAIN_SPLIT = False
 DEAD_POLICY_THRESHOLD_MM = 5.0
 PROGRESS_EVERY = 10
+DATASET_TOLERANCE_S_OVERRIDE: float | None = 0.2
 
 VISUAL_THOUGHT_CONFIG_NAME = "visual_thought_config.json"
 METADATA_FILENAME = "metadata.json"
@@ -77,6 +78,7 @@ class ResolvedCheckpoint:
     checkpoint_root: Path
     policy_path: str
     config_kind: str
+    config_source_root: Path | None = None
     train_cfg: TrainPipelineConfig | None = None
     vt_cfg: VisualThoughtTrainConfig | None = None
 
@@ -173,17 +175,26 @@ def _resolve_local_checkpoint_root(candidate: Path) -> Path:
     raise ValueError(f"Could not resolve checkpoint root from {candidate}")
 
 
+def _find_visual_thought_config_source(candidate: Path) -> Path | None:
+    if (candidate / VISUAL_THOUGHT_CONFIG_NAME).exists(): return candidate
+    parent = candidate.parent
+    sibling_roots = sorted([path for path in parent.iterdir() if path.is_dir() and path.name.startswith("checkpoint_") and (path / VISUAL_THOUGHT_CONFIG_NAME).exists()]) if parent.exists() else []
+    return sibling_roots[-1] if sibling_roots else None
+
+
 def resolve_checkpoint(spec: EvalSpec) -> ResolvedCheckpoint:
     candidate = Path(spec.checkpoint).expanduser()
     checkpoint_root = _resolve_local_checkpoint_root(candidate.resolve()) if candidate.exists() else _download_checkpoint_root(spec.checkpoint)
-    if (checkpoint_root / VISUAL_THOUGHT_CONFIG_NAME).exists():
-        vt_cfg = VisualThoughtTrainConfig.from_json(checkpoint_root / VISUAL_THOUGHT_CONFIG_NAME)
+    config_source_root = checkpoint_root if (checkpoint_root / VISUAL_THOUGHT_CONFIG_NAME).exists() else _find_visual_thought_config_source(checkpoint_root)
+    if config_source_root is not None:
+        if config_source_root != checkpoint_root: logging.warning("%s: checkpoint %s is missing %s; reusing config from sibling checkpoint %s", spec.name, checkpoint_root, VISUAL_THOUGHT_CONFIG_NAME, config_source_root)
+        vt_cfg = VisualThoughtTrainConfig.from_json(config_source_root / VISUAL_THOUGHT_CONFIG_NAME)
         policy_path = str((checkpoint_root / "policy").resolve()) if (checkpoint_root / "policy" / "config.json").exists() else str(checkpoint_root.resolve())
-        return ResolvedCheckpoint(name=spec.name, checkpoint=spec.checkpoint, checkpoint_root=checkpoint_root, policy_path=policy_path, config_kind="visual_thought", vt_cfg=vt_cfg)
+        return ResolvedCheckpoint(name=spec.name, checkpoint=spec.checkpoint, checkpoint_root=checkpoint_root, policy_path=policy_path, config_kind="visual_thought", config_source_root=config_source_root, vt_cfg=vt_cfg)
     if (checkpoint_root / TRAIN_CONFIG_NAME).exists():
         train_cfg = TrainPipelineConfig.from_pretrained(str(checkpoint_root))
         train_cfg.policy.pretrained_path = str(checkpoint_root)
-        return ResolvedCheckpoint(name=spec.name, checkpoint=spec.checkpoint, checkpoint_root=checkpoint_root, policy_path=str(checkpoint_root), config_kind="lerobot_train", train_cfg=train_cfg)
+        return ResolvedCheckpoint(name=spec.name, checkpoint=spec.checkpoint, checkpoint_root=checkpoint_root, policy_path=str(checkpoint_root), config_kind="lerobot_train", config_source_root=checkpoint_root, train_cfg=train_cfg)
     raise ValueError(f"{spec.checkpoint}: checkpoint root {checkpoint_root} does not contain {TRAIN_CONFIG_NAME} or {VISUAL_THOUGHT_CONFIG_NAME}.")
 
 
@@ -206,7 +217,8 @@ def resolve_validation_config(name: str, resolved: ResolvedCheckpoint) -> tuple[
 
 
 def make_visual_thought_dataset(cfg: VisualThoughtTrainConfig):
-    return LeRobotDataset(cfg.dataset_repo_id, root=cfg.dataset_root, revision=cfg.dataset_revision, video_backend=cfg.dataset_video_backend, tolerance_s=float(cfg.dataset_tolerance_s))
+    tolerance_s = float(DATASET_TOLERANCE_S_OVERRIDE) if DATASET_TOLERANCE_S_OVERRIDE is not None else float(cfg.dataset_tolerance_s)
+    return LeRobotDataset(cfg.dataset_repo_id, root=cfg.dataset_root, revision=cfg.dataset_revision, video_backend=cfg.dataset_video_backend, tolerance_s=tolerance_s)
 
 
 def split_visual_thought_dataset(dataset, validation_cfg: ValidationConfig) -> tuple[Subset, Subset, list[int], list[int]]:
@@ -225,6 +237,7 @@ def prepare_datasets_and_policy_config(resolved: ResolvedCheckpoint, validation_
         cfg = resolved.train_cfg
         cfg.policy.device = str(resolve_device(DEVICE))
         cfg.dataset = dataclasses.replace(cfg.dataset, image_transforms=dataclasses.replace(cfg.dataset.image_transforms, enable=False))
+        if DATASET_TOLERANCE_S_OVERRIDE is not None: cfg.dataset.tolerance_s = float(DATASET_TOLERANCE_S_OVERRIDE)
         base_dataset = make_dataset(cfg)
         train_episodes, val_episodes = split_train_validation_episodes(base_dataset, validation_cfg.split_ratio, validation_cfg.seed)
         train_dataset = make_dataset_with_episodes(cfg, train_episodes, disable_augmentation=True)
@@ -453,6 +466,7 @@ def evaluate_checkpoint(spec: EvalSpec, device: torch.device, batch_size_overrid
         "name": spec.name,
         "checkpoint": spec.checkpoint,
         "resolved_checkpoint_root": str(resolved.checkpoint_root),
+        "config_source_root": str((resolved.config_source_root or resolved.checkpoint_root)),
         "policy_path": resolved.policy_path,
         "config_kind": resolved.config_kind,
         "device": str(device),
@@ -463,6 +477,7 @@ def evaluate_checkpoint(spec: EvalSpec, device: torch.device, batch_size_overrid
         "eval_num_workers": eval_num_workers,
         "max_batches": max_batches,
         "dead_policy_threshold_mm": float(DEAD_POLICY_THRESHOLD_MM),
+        "dataset_tolerance_s_override": DATASET_TOLERANCE_S_OVERRIDE,
         **split_info,
         "train_metrics": train_metrics,
         "validation_metrics": val_metrics,
@@ -473,6 +488,7 @@ def print_payload(payload: dict[str, Any], index: int, total: int) -> None:
     print(f"\n=== [{index}/{total}] {payload['name']} ===")
     print(f"Checkpoint: {payload['checkpoint']}")
     print(f"Resolved root: {payload['resolved_checkpoint_root']}")
+    print(f"Config source: {payload['config_source_root']}")
     print(f"Policy path: {payload['policy_path']}")
     print(f"Config kind: {payload['config_kind']}")
     print(f"Device: {payload['device']}")
@@ -480,7 +496,7 @@ def print_payload(payload: dict[str, Any], index: int, total: int) -> None:
     if "train_episode_count" in payload or "val_episode_count" in payload: print(f"Episodes: train={payload.get('train_episode_count', 0)} val={payload.get('val_episode_count', 0)}")
     if "train_index_count" in payload or "val_index_count" in payload: print(f"Indices: train={payload.get('train_index_count', 0)} val={payload.get('val_index_count', 0)}")
     for warning in payload.get("warnings", []): print(f"Warning: {warning}")
-    print(f"Evaluation: batch_size={payload['eval_batch_size']} num_workers={payload['eval_num_workers']} max_batches={'all' if payload['max_batches'] is None else payload['max_batches']} dead_mm<{payload['dead_policy_threshold_mm']}")
+    print(f"Evaluation: batch_size={payload['eval_batch_size']} num_workers={payload['eval_num_workers']} max_batches={'all' if payload['max_batches'] is None else payload['max_batches']} dead_mm<{payload['dead_policy_threshold_mm']} tol_override={payload['dataset_tolerance_s_override']}")
     print_metric_block("Validation Split Metrics", payload["validation_metrics"])
     if payload.get("train_metrics") is not None: print_metric_block("Train Split Metrics", payload["train_metrics"])
 
