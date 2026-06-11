@@ -5,6 +5,7 @@ import dataclasses
 import json
 import os
 import random
+import time
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Literal
@@ -97,6 +98,7 @@ class VisualThoughtTrainConfig:
     vis_every: int = 0
     vis_num_samples: int = 4
     vis_final: bool = True
+    profile_step_time_every: int = 0
     cutout_enable: bool = False
     cutout_prob: float = 0.3
     cutout_num_patches: int = 1
@@ -829,7 +831,8 @@ def train_visual_thought(config: VisualThoughtTrainConfig) -> None:
 
     _validate_config(config)
     accum_steps = max(int(config.gradient_accumulation_steps), 1)
-    accelerator = Accelerator(step_scheduler_with_optimizer=False, kwargs_handlers=[DistributedDataParallelKwargs(find_unused_parameters=True)], gradient_accumulation_steps=accum_steps)
+    find_unused_parameters = not (config.training_stage == "joint_multitask" and not is_combined_expert_run(config))
+    accelerator = Accelerator(step_scheduler_with_optimizer=False, kwargs_handlers=[DistributedDataParallelKwargs(find_unused_parameters=find_unused_parameters)], gradient_accumulation_steps=accum_steps)
     # Pin this rank's CUDA device so the existing `_as_device()` -> "cuda" resolves to
     # cuda:local_rank (Accelerator already set it, but be explicit for the policy/VLM loads).
     if torch.cuda.is_available(): torch.cuda.set_device(accelerator.local_process_index)
@@ -889,12 +892,16 @@ def train_visual_thought(config: VisualThoughtTrainConfig) -> None:
     step = 0
     zero_optimizer_grad(optimizer)
     progress = tqdm(total=config.steps, desc=config.name, disable=not is_main)
+    if is_main: print(json.dumps({"event": "ddp_config", "find_unused_parameters": bool(find_unused_parameters), "gradient_accumulation_steps": int(accum_steps), "num_processes": int(accelerator.num_processes)}))
     while step < config.steps:
         for raw_batch in loader:
             if step >= config.steps: break
             current_step = step + 1
+            t0 = time.perf_counter()
             processed_batch = preprocess_batch(runtime, raw_batch)
+            t1 = time.perf_counter()
             target = {expert_type: load_teacher_target(config, teacher[expert_type], raw_batch, runtime.teacher_image_key, expert_type=expert_type) for expert_type in resolve_expert_types(config)} if isinstance(decoder, dict) else load_teacher_target(config, teacher, raw_batch, runtime.teacher_image_key)
+            t2 = time.perf_counter()
             with accelerator.accumulate(train_module):
                 if is_joint:
                     total_loss, expert_stats, action_stats = train_module(processed_batch, target, current_step)
@@ -903,13 +910,18 @@ def train_visual_thought(config: VisualThoughtTrainConfig) -> None:
                     expert_loss, expert_stats = compute_expert_loss(config, decoder, task_cfg, target, enc["vlm_features"], current_step); total_loss, action_stats = float(config.expert_loss_weight) * expert_loss, {}
                 accelerator.backward(total_loss)
                 if not accelerator.sync_gradients: continue
+                if torch.cuda.is_available() and int(config.profile_step_time_every) > 0 and current_step % max(int(config.profile_step_time_every), 1) == 0: torch.cuda.synchronize()
+                t3 = time.perf_counter()
                 accelerator.clip_grad_norm_(train_module.parameters(), XVLA_GRAD_CLIP_NORM)
                 step_optimizer(optimizer)
                 zero_optimizer_grad(optimizer)
+                if torch.cuda.is_available() and int(config.profile_step_time_every) > 0 and current_step % max(int(config.profile_step_time_every), 1) == 0: torch.cuda.synchronize()
+                t4 = time.perf_counter()
 
             step = current_step
             if is_main and step % max(int(config.log_every), 1) == 0:
                 metrics = {"event": "train_step", "step": int(step), "loss": float(total_loss.detach().item()), **expert_stats, **action_stats, **optimizer_metrics(optimizer)}
+                if int(config.profile_step_time_every) > 0 and step % max(int(config.profile_step_time_every), 1) == 0: metrics.update({"time_preprocess_s": t1 - t0, "time_teacher_s": t2 - t1, "time_forward_backward_s": t3 - t2, "time_step_s": t4 - t3, "time_total_s": t4 - t0})
                 print(json.dumps(metrics))
                 if wandb_run is not None: wandb_run.log({key: value for key, value in metrics.items() if key != "event"}, step=int(step))
             if is_main and val_loader is not None and step % max(int(config.validation_freq), 1) == 0:
