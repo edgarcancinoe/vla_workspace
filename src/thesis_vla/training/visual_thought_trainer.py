@@ -420,28 +420,54 @@ def build_dataloader(runtime: XVLARuntime, config: VisualThoughtTrainConfig) -> 
     return DataLoader(runtime.dataset, batch_size=config.batch_size, shuffle=True, num_workers=config.num_workers, collate_fn=default_collate, drop_last=False)
 
 
-def build_train_val_dataloaders(runtime: XVLARuntime, config: VisualThoughtTrainConfig) -> tuple[DataLoader, DataLoader | None, DataLoader | None, list[int]]:
+def _build_loader_for_subset(dataset, config: VisualThoughtTrainConfig, shuffle: bool) -> DataLoader:
+    return DataLoader(dataset, batch_size=config.batch_size, shuffle=shuffle, num_workers=config.num_workers, collate_fn=default_collate, drop_last=False)
+
+
+def _episode_split_indices(runtime: XVLARuntime, config: VisualThoughtTrainConfig) -> tuple[list[int], list[int]] | None:
+    dataset = runtime.dataset
+    hf_dataset = getattr(dataset, "hf_dataset", None)
+    if hf_dataset is None: return None
+    episode_column = hf_dataset["episode_index"]
+    episode_indices = [int(value.item()) if torch.is_tensor(value) else int(value) for value in episode_column]
+    unique_episodes = sorted(set(episode_indices))
+    if len(unique_episodes) < 2: return None
+    val_episode_len = min(max(int(round(len(unique_episodes) * float(config.validation_split_ratio))), 1), max(len(unique_episodes) - 1, 1))
+    if val_episode_len <= 0 or val_episode_len >= len(unique_episodes): return None
+    generator = torch.Generator().manual_seed(int(config.validation_seed))
+    permutation = torch.randperm(len(unique_episodes), generator=generator).tolist()
+    val_episode_ids = {unique_episodes[index] for index in permutation[:val_episode_len]}
+    train_indices, val_indices = [], []
+    for sample_index, episode_index in enumerate(episode_indices):
+        (val_indices if episode_index in val_episode_ids else train_indices).append(sample_index)
+    if not train_indices or not val_indices: return None
+    return train_indices, val_indices
+
+
+def build_train_val_dataloaders(runtime: XVLARuntime, config: VisualThoughtTrainConfig) -> tuple[DataLoader, DataLoader | None, DataLoader | None, DataLoader | None, list[int]]:
     if not config.validation_enable or float(config.validation_split_ratio) <= 0.0:
         loader = build_dataloader(runtime, config)
         vis_indices = _select_fixed_vis_indices(len(runtime.dataset), config.seed, config.vis_num_samples)
         vis_loader = DataLoader(Subset(runtime.dataset, vis_indices), batch_size=max(1, min(int(config.batch_size), len(vis_indices))), shuffle=False, num_workers=config.num_workers, collate_fn=default_collate, drop_last=False) if vis_indices else None
-        return loader, None, vis_loader, vis_indices
+        return loader, None, None, vis_loader, vis_indices
     dataset_len = len(runtime.dataset)
     val_len = min(max(int(round(dataset_len * float(config.validation_split_ratio))), 1), max(dataset_len - 1, 1))
     if dataset_len < 2 or val_len >= dataset_len:
         loader = build_dataloader(runtime, config)
         vis_indices = _select_fixed_vis_indices(len(runtime.dataset), config.seed, config.vis_num_samples)
         vis_loader = DataLoader(Subset(runtime.dataset, vis_indices), batch_size=max(1, min(int(config.batch_size), len(vis_indices))), shuffle=False, num_workers=config.num_workers, collate_fn=default_collate, drop_last=False) if vis_indices else None
-        return loader, None, vis_loader, vis_indices
+        return loader, None, None, vis_loader, vis_indices
     generator = torch.Generator().manual_seed(int(config.validation_seed))
     permutation = torch.randperm(dataset_len, generator=generator).tolist()
     val_indices, train_indices = permutation[:val_len], permutation[val_len:]
     train_dataset, val_dataset = Subset(runtime.dataset, train_indices), Subset(runtime.dataset, val_indices)
-    train_loader = DataLoader(train_dataset, batch_size=config.batch_size, shuffle=True, num_workers=config.num_workers, collate_fn=default_collate, drop_last=False)
-    val_loader = DataLoader(val_dataset, batch_size=config.batch_size, shuffle=False, num_workers=config.num_workers, collate_fn=default_collate, drop_last=False)
+    train_loader = _build_loader_for_subset(train_dataset, config, shuffle=True)
+    val_loader = _build_loader_for_subset(val_dataset, config, shuffle=False)
+    episode_split = _episode_split_indices(runtime, config)
+    val_loader_episode = _build_loader_for_subset(Subset(runtime.dataset, episode_split[1]), config, shuffle=False) if episode_split is not None else None
     vis_subset_indices = _select_fixed_vis_indices(len(val_dataset), config.seed, config.vis_num_samples)
     vis_loader = DataLoader(Subset(val_dataset, vis_subset_indices), batch_size=max(1, min(int(config.batch_size), len(vis_subset_indices))), shuffle=False, num_workers=config.num_workers, collate_fn=default_collate, drop_last=False) if vis_subset_indices else None
-    return train_loader, val_loader, vis_loader, [val_indices[index] for index in vis_subset_indices]
+    return train_loader, val_loader, val_loader_episode, vis_loader, [val_indices[index] for index in vis_subset_indices]
 
 
 def preprocess_batch(runtime: XVLARuntime, raw_batch: dict[str, Any]) -> dict[str, Any]:
@@ -497,8 +523,8 @@ def load_decoder_init_if_present(decoder: torch.nn.Module, decoder_init_path: st
     state = load_decoder_state(root / DECODER_STATE_FILENAME if root.is_dir() else root)
     decoder.load_state_dict(state, strict=True)
 
-def build_decoder_bundle(config: VisualThoughtTrainConfig, runtime: XVLARuntime, teacher_bundle: dict[ExpertType, tuple[Any, Any]]) -> tuple[DataLoader, DataLoader | None, DataLoader | None, list[int], dict[ExpertType, torch.nn.Module], dict[ExpertType, TeacherTarget]]:
-    loader, val_loader, vis_loader, vis_indices = build_train_val_dataloaders(runtime, config)
+def build_decoder_bundle(config: VisualThoughtTrainConfig, runtime: XVLARuntime, teacher_bundle: dict[ExpertType, tuple[Any, Any]]) -> tuple[DataLoader, DataLoader | None, DataLoader | None, DataLoader | None, list[int], dict[ExpertType, torch.nn.Module], dict[ExpertType, TeacherTarget]]:
+    loader, val_loader, val_loader_episode, vis_loader, vis_indices = build_train_val_dataloaders(runtime, config)
     first_raw_batch = next(iter(loader))
     processed = preprocess_batch(runtime, first_raw_batch)
     _, enc = build_xvla_inputs(runtime, processed, config)
@@ -508,7 +534,7 @@ def build_decoder_bundle(config: VisualThoughtTrainConfig, runtime: XVLARuntime,
         decoder = build_decoder(config, task_cfg, target, student_vlm_dim=int(enc["vlm_features"].shape[-1]), expert_type=expert_type).to(_as_device(config))
         load_decoder_init_if_present(decoder, decoder_init_path_for(config, expert_type))
         decoders[expert_type], targets[expert_type] = decoder, target
-    return loader, val_loader, vis_loader, vis_indices, decoders, targets
+    return loader, val_loader, val_loader_episode, vis_loader, vis_indices, decoders, targets
 
 
 def build_optimizer(config: VisualThoughtTrainConfig, policy, decoder: torch.nn.Module | dict[ExpertType, torch.nn.Module]) -> torch.optim.Optimizer:
@@ -590,8 +616,8 @@ def compute_expert_losses(config: VisualThoughtTrainConfig, decoders: dict[Exper
 
 
 def prepare_models_and_target(config: VisualThoughtTrainConfig, runtime: XVLARuntime, task_cfg, teacher):
-    loader, val_loader, vis_loader, vis_indices, decoders, targets = build_decoder_bundle(config, runtime, {config.expert_type: (task_cfg, teacher)})
-    return loader, val_loader, vis_loader, vis_indices, decoders[config.expert_type], targets[config.expert_type]
+    loader, val_loader, val_loader_episode, vis_loader, vis_indices, decoders, targets = build_decoder_bundle(config, runtime, {config.expert_type: (task_cfg, teacher)})
+    return loader, val_loader, val_loader_episode, vis_loader, vis_indices, decoders[config.expert_type], targets[config.expert_type]
 
 
 def _checkpoint_metadata(config: VisualThoughtTrainConfig, step: int) -> dict[str, Any]:
@@ -628,7 +654,7 @@ def _maybe_init_wandb(config: VisualThoughtTrainConfig):
 
 
 @torch.no_grad()
-def run_validation(config: VisualThoughtTrainConfig, runtime: XVLARuntime, task_cfg, teacher, decoder: torch.nn.Module | dict[ExpertType, torch.nn.Module], val_loader: DataLoader) -> dict[str, float]:
+def run_validation(config: VisualThoughtTrainConfig, runtime: XVLARuntime, task_cfg, teacher, decoder: torch.nn.Module | dict[ExpertType, torch.nn.Module], val_loader: DataLoader, prefix: str = "val") -> dict[str, float]:
     decoder_was_training = {expert_type: module.training for expert_type, module in decoder.items()} if isinstance(decoder, dict) else decoder.training
     policy_was_training = runtime.policy.training
     if isinstance(decoder, dict):
@@ -651,11 +677,11 @@ def run_validation(config: VisualThoughtTrainConfig, runtime: XVLARuntime, task_
             expert_loss, expert_stats = compute_expert_loss(config, decoder, task_cfg, target, enc["vlm_features"], step=0)
             total = float(config.expert_loss_weight) * expert_loss
         action_value = 0.0
-        for key, value in expert_stats.items(): component_totals[f"val_{key}"] = component_totals.get(f"val_{key}", 0.0) + float(value)
+        for key, value in expert_stats.items(): component_totals[f"{prefix}_{key}"] = component_totals.get(f"{prefix}_{key}", 0.0) + float(value)
         if config.training_stage == "joint_multitask":
             action_loss, action_stats = compute_xvla_action_loss_from_encoder(runtime.policy, processed_batch, inputs, enc)
             action_value = float(action_loss.detach().item()); total = float(config.action_loss_weight) * action_loss + total
-            for key, value in action_stats.items(): component_totals[f"val_{key}"] = component_totals.get(f"val_{key}", 0.0) + float(value)
+            for key, value in action_stats.items(): component_totals[f"{prefix}_{key}"] = component_totals.get(f"{prefix}_{key}", 0.0) + float(value)
         total_loss += float(total.detach().item())
         total_action += action_value
         total_expert += float(expert_loss.detach().item())
@@ -667,7 +693,7 @@ def run_validation(config: VisualThoughtTrainConfig, runtime: XVLARuntime, task_
         decoder.train()
     if policy_was_training: runtime.policy.train()
     denom = max(batches, 1)
-    metrics = {"val_loss": total_loss / denom, "val_expert_total": total_expert / denom, "val_action_total": total_action / denom, "val_batches": float(batches)}
+    metrics = {f"{prefix}_loss": total_loss / denom, f"{prefix}_expert_total": total_expert / denom, f"{prefix}_action_total": total_action / denom, f"{prefix}_batches": float(batches)}
     metrics.update({key: value / denom for key, value in component_totals.items()})
     return metrics
 
@@ -721,11 +747,11 @@ def train_visual_thought(config: VisualThoughtTrainConfig) -> None:
     set_policy_trainability(runtime.policy, config.training_stage)
     if is_combined_expert_run(config):
         teacher_bundle = build_teacher_bundle(config, runtime)
-        loader, val_loader, vis_loader, vis_indices, decoder, _ = build_decoder_bundle(config, runtime, teacher_bundle)
+        loader, val_loader, val_loader_episode, vis_loader, vis_indices, decoder, _ = build_decoder_bundle(config, runtime, teacher_bundle)
         task_cfg, teacher = {expert_type: bundle[0] for expert_type, bundle in teacher_bundle.items()}, {expert_type: bundle[1] for expert_type, bundle in teacher_bundle.items()}
     else:
         task_cfg, teacher = build_teacher(config, runtime)
-        loader, val_loader, vis_loader, vis_indices, decoder, _ = prepare_models_and_target(config, runtime, task_cfg, teacher)
+        loader, val_loader, val_loader_episode, vis_loader, vis_indices, decoder, _ = prepare_models_and_target(config, runtime, task_cfg, teacher)
     if is_main and vis_loader is not None: print(json.dumps({"event": "visualization_config", "vis_fixed_indices": vis_indices, "vis_num_samples": int(config.vis_num_samples), "vis_every": int(config.vis_every)}))
     if is_joint:
         if isinstance(decoder, dict):
@@ -785,7 +811,8 @@ def train_visual_thought(config: VisualThoughtTrainConfig) -> None:
                 print(json.dumps(metrics))
                 if wandb_run is not None: wandb_run.log({key: value for key, value in metrics.items() if key != "event"}, step=int(step))
             if is_main and val_loader is not None and step % max(int(config.validation_freq), 1) == 0:
-                val_metrics = {"event": "validation_step", "step": int(step), **run_validation(config, runtime, task_cfg, teacher, unwrapped_decoder(), val_loader)}
+                val_metrics = {"event": "validation_step", "step": int(step), **run_validation(config, runtime, task_cfg, teacher, unwrapped_decoder(), val_loader, prefix="val")}
+                if val_loader_episode is not None: val_metrics.update(run_validation(config, runtime, task_cfg, teacher, unwrapped_decoder(), val_loader_episode, prefix="val_ep"))
                 print(json.dumps(val_metrics))
                 if wandb_run is not None: wandb_run.log({key: value for key, value in val_metrics.items() if key != "event"}, step=int(step))
             if is_main and vis_loader is not None and int(config.vis_every) > 0 and step % max(int(config.vis_every), 1) == 0:
