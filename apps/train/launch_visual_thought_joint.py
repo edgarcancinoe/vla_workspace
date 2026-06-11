@@ -92,6 +92,7 @@ DROP_CEDIRNET_NAME      = f"cedirnet_joint_stage_{RUN_TS}_cloth_box"
 DINO_CUBES_NAME         = f"dino_tokenseq_joint_cubes_{RUN_TS}"
 DINO_CLOTH_FOLD_NAME    = f"dino_tokenseq_joint_clothfold_{RUN_TS}"
 DINO_CLOTH_DROP_NAME    = f"dino_tokenseq_joint_clothbox_{RUN_TS}"
+BOTH_CLOTH_FOLD_NAME    = f"cedirnet_dino_joint_clothfold_{RUN_TS}"
 # =====================================================================================
 
 # DATASETS
@@ -167,6 +168,28 @@ DINO_CLOTH_DROP = [
         decoder_task_config_path    =DINO_TOKENSEQ_CONFIG,
         action_loss_weight=1.0,
         expert_loss_weight=1.0,
+    ),
+]
+
+BOTH_CLOTH_FOLD = [
+    VisualThoughtExperimentSpec(
+        expert_type                     ="cedirnet",
+        expert_types                    =("cedirnet", "dino"),
+        training_stage                  ="joint_multitask",
+        name                            =BOTH_CLOTH_FOLD_NAME,
+        dataset_name                    =CLOTH_FOLD_DS[0],
+        dataset_revision                =CLOTH_FOLD_DS[1],
+        xvla_init_path                  =XVLA_INIT_CLOTHFOLD,
+        cedirnet_decoder_init_path      =CEDIRNET_DECODER_INIT,
+        cedirnet_decoder_stack_config_path=CEDIRNET_DECODER_INIT_STACK_CONFIG,
+        cedirnet_decoder_task_config_path=CEDIRNET_DECODER_INIT_TASK_CONFIG,
+        dino_decoder_init_path          =DINO_CLOTH_DECODER_INIT,
+        dino_decoder_stack_config_path  =DINO_STACK_CONFIG,
+        dino_decoder_task_config_path   =DINO_TOKENSEQ_CONFIG,
+        wandb_run_name                  =BOTH_CLOTH_FOLD_NAME,
+        action_loss_weight=1.0,
+        cedirnet_expert_loss_weight=1.0,
+        dino_expert_loss_weight=0.25,
     ),
 ]
 

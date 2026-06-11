@@ -9,6 +9,19 @@ from huggingface_hub.constants import CONFIG_NAME
 from lerobot.configs.policies import PreTrainedConfig
 from lerobot.policies.xvla.configuration_xvla import XVLAConfig
 
+
+GUIDANCE_FUSION_MODES = frozenset({"concat", "gated_concat", "cross_attention", "gated_cross_attention"})
+
+
+def normalize_guidance_fusion_mode(mode: str, gated: bool | None = None) -> str:
+    mode = str(mode).strip()
+    if mode == "concat": return "gated_concat" if bool(gated) else "concat"
+    if mode == "cross_attention": return "gated_cross_attention" if bool(gated) else "cross_attention"
+    if mode == "cross_attn": return "gated_cross_attention" if bool(gated) else "cross_attention"
+    if mode in {"gated_concat", "gated_cross_attention"}: return mode
+    raise ValueError(f"guidance_fusion_mode must be one of: {', '.join(sorted(GUIDANCE_FUSION_MODES))}. Got {mode!r}.")
+
+
 @PreTrainedConfig.register_subclass("xvla_guided")
 @dataclass
 class XVLAGuidedConfig(XVLAConfig):
@@ -25,9 +38,10 @@ class XVLAGuidedConfig(XVLAConfig):
 
     def __post_init__(self) -> None:
         super().__post_init__()
+        self.guidance_fusion_mode = normalize_guidance_fusion_mode(self.guidance_fusion_mode, self.guidance_gated)
+        self.guidance_gated = self.guidance_fusion_mode.startswith("gated_")
         if self.guidance_expert_type != "cedirnet": raise ValueError(f"Only CeDirNet guidance is supported in v1, got {self.guidance_expert_type!r}.")
         if self.guidance_source != "decoder_tokens": raise ValueError(f"Only decoder_tokens guidance_source is supported in v1, got {self.guidance_source!r}.")
-        if self.guidance_fusion_mode not in {"concat", "cross_attn"}: raise ValueError(f"guidance_fusion_mode must be one of: concat, cross_attn. Got {self.guidance_fusion_mode!r}.")
         if self.guidance_train_mode not in {"warmup_freeze", "train_from_start", "frozen"}: raise ValueError(f"guidance_train_mode must be one of: warmup_freeze, train_from_start, frozen. Got {self.guidance_train_mode!r}.")
         if int(self.guidance_unfreeze_step) < 0: raise ValueError("guidance_unfreeze_step must be >= 0.")
         if not isinstance(self.guidance_decoder_stack, dict) or not self.guidance_decoder_stack: raise ValueError("guidance_decoder_stack must be a non-empty mapping.")
@@ -72,11 +86,12 @@ class XVLAGuidedConfig(XVLAConfig):
         guidance_num_heads: int | None = None,
     ) -> "XVLAGuidedConfig":
         payload = {field.name: getattr(base, field.name) for field in dataclasses.fields(base)}
-        if str(guidance_fusion_mode) == "concat": payload["max_len_seq"] = int(base.max_len_seq) + int(guidance_decoder_stack["num_decoder_tokens"])
+        guidance_fusion_mode = normalize_guidance_fusion_mode(guidance_fusion_mode, guidance_gated)
+        if guidance_fusion_mode in {"concat", "gated_concat"}: payload["max_len_seq"] = int(base.max_len_seq) + int(guidance_decoder_stack["num_decoder_tokens"])
         return cls(
             **payload,
-            guidance_fusion_mode=str(guidance_fusion_mode),
-            guidance_gated=bool(guidance_gated),
+            guidance_fusion_mode=guidance_fusion_mode,
+            guidance_gated=guidance_fusion_mode.startswith("gated_"),
             guidance_train_mode=str(guidance_train_mode),
             guidance_unfreeze_step=int(guidance_unfreeze_step),
             guidance_num_heads=guidance_num_heads,

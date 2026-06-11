@@ -15,7 +15,7 @@ from lerobot.policies.pretrained import T
 from lerobot.policies.xvla.modeling_xvla import XVLAModel, XVLAPolicy
 from lerobot.policies.xvla.soft_transformer import DomainAwareLinear, TransformerBlock, basic_init, timestep_embedding
 
-from thesis_vla.policies.xvla_guided.configuration_xvla_guided import XVLAGuidedConfig
+from thesis_vla.policies.xvla_guided.configuration_xvla_guided import XVLAGuidedConfig, normalize_guidance_fusion_mode
 from thesis_vla.visual_thought.cedirnet_decoder import CeDirNetDistillationModel
 from thesis_vla.visual_thought.config import CeDirNetDecoderConfig, CeDirNetTeacherConfig, DecoderStackConfig, DenseMapHeadConfig
 
@@ -54,8 +54,8 @@ class GuidedSoftPromptedTransformer(nn.Module):
         self.dim_time = int(dim_time)
         self.len_soft_prompts = int(len_soft_prompts)
         self.use_hetero_proj = bool(use_hetero_proj)
-        self.guidance_fusion_mode = str(guidance_fusion_mode)
-        self.guidance_gated = bool(guidance_gated)
+        self.guidance_fusion_mode = normalize_guidance_fusion_mode(guidance_fusion_mode, guidance_gated)
+        self.guidance_gated = self.guidance_fusion_mode.startswith("gated_")
         self.blocks = nn.ModuleList([TransformerBlock(hidden_size, num_heads, mlp_ratio=mlp_ratio) for _ in range(depth)])
         if self.use_hetero_proj:
             self.vlm_proj = DomainAwareLinear(multi_modal_input_size, hidden_size, num_domains=num_domains)
@@ -73,12 +73,12 @@ class GuidedSoftPromptedTransformer(nn.Module):
         if self.len_soft_prompts > 0:
             self.soft_prompt_hub = nn.Embedding(num_domains, self.len_soft_prompts * hidden_size)
             nn.init.normal_(self.soft_prompt_hub.weight, std=0.02)
-        if self.guidance_gated and self.guidance_fusion_mode == "concat": self.concat_gate = nn.Linear(hidden_size * 2, 1)
-        if self.guidance_fusion_mode == "cross_attn":
+        if self.guidance_fusion_mode == "gated_concat": self.concat_gate = nn.Linear(hidden_size * 2, 1)
+        if self.guidance_fusion_mode in {"cross_attention", "gated_cross_attention"}:
             self.cross_attn_query_norm = nn.LayerNorm(hidden_size)
             self.cross_attn_guidance_norm = nn.LayerNorm(hidden_size)
             self.cross_attn = nn.MultiheadAttention(hidden_size, num_heads=guidance_num_heads, batch_first=True, dropout=0.1)
-            if self.guidance_gated: self.cross_gate = nn.Linear(hidden_size * 2, 1)
+            if self.guidance_fusion_mode == "gated_cross_attention": self.cross_attn_gamma = nn.Parameter(torch.zeros(()))
         self.apply(basic_init)
 
     def _project_guidance(self, guidance_tokens: torch.Tensor, domain_id: torch.LongTensor) -> torch.Tensor:
@@ -97,16 +97,15 @@ class GuidedSoftPromptedTransformer(nn.Module):
         return action_proj, self.vlm_proj(vlm_features), self.aux_visual_proj(aux_visual_inputs)
 
     def _apply_concat_fusion(self, native_context: torch.Tensor, guidance_tokens: torch.Tensor) -> torch.Tensor:
-        if not self.guidance_gated: return torch.cat([native_context, guidance_tokens], dim=1)
-        pooled_native = native_context.mean(dim=1, keepdim=True).expand(-1, guidance_tokens.shape[1], -1)
-        gate = torch.sigmoid(self.concat_gate(torch.cat([guidance_tokens, pooled_native], dim=-1)))
+        if self.guidance_fusion_mode == "concat": return torch.cat([native_context, guidance_tokens], dim=1)
+        pooled_native = native_context.mean(dim=1)
+        pooled_guidance = guidance_tokens.mean(dim=1)
+        gate = torch.sigmoid(self.concat_gate(torch.cat([pooled_native, pooled_guidance], dim=-1))).view(-1, 1, 1)
         return torch.cat([native_context, gate * guidance_tokens], dim=1)
 
     def _apply_cross_attention_fusion(self, z_proj: torch.Tensor, guidance_tokens: torch.Tensor) -> torch.Tensor:
         attn, _ = self.cross_attn(self.cross_attn_query_norm(z_proj), self.cross_attn_guidance_norm(guidance_tokens), self.cross_attn_guidance_norm(guidance_tokens), need_weights=False)
-        if self.guidance_gated:
-            gate = torch.sigmoid(self.cross_gate(torch.cat([z_proj, attn], dim=-1)))
-            return z_proj + gate * attn
+        if self.guidance_fusion_mode == "gated_cross_attention": return z_proj + torch.tanh(self.cross_attn_gamma) * attn
         return z_proj + attn
 
     def _append_soft_prompts(self, x: torch.Tensor, domain_id: torch.LongTensor) -> torch.Tensor:
@@ -117,7 +116,7 @@ class GuidedSoftPromptedTransformer(nn.Module):
     def forward(self, *, domain_id: torch.LongTensor, vlm_features: torch.Tensor, aux_visual_inputs: torch.Tensor, guidance_tokens: torch.Tensor, action_with_noise: torch.Tensor, proprio: torch.Tensor, t: torch.Tensor) -> torch.Tensor:
         action_proj, z_proj, aux_proj = self._project_native_tokens(domain_id, vlm_features, aux_visual_inputs, action_with_noise, proprio, t)
         guidance_proj = self._project_guidance(guidance_tokens, domain_id)
-        if self.guidance_fusion_mode == "concat":
+        if self.guidance_fusion_mode in {"concat", "gated_concat"}:
             x = self._apply_concat_fusion(torch.cat([action_proj, z_proj, aux_proj], dim=1), guidance_proj)
         else:
             z_guided = self._apply_cross_attention_fusion(z_proj, guidance_proj)

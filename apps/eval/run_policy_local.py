@@ -151,6 +151,9 @@ def validate_configuration():
 
 
 def resolve_pretrained_policy_path(path: str) -> str:
+    download_allow_patterns = ["policy", "policy/*", "policy/**"]
+    revision = None
+
     def _resolved_dir(candidate: Path) -> str:
         migrated = candidate.parent / f"{candidate.name}_migrated"
         nested_policy = candidate / "policy"
@@ -167,9 +170,11 @@ def resolve_pretrained_policy_path(path: str) -> str:
         return _resolved_dir(candidate)
     if candidate.is_absolute() or path.startswith(".") or path.startswith("~"):
         raise FileNotFoundError(f"Local policy path does not exist: {candidate}")
+    if path.count("/") == 1 and "@" in path.split("/", 1)[1]:
+        path, revision = path.rsplit("@", 1)
     if "/" not in path:
         return path
-    local_root = Path(snapshot_download(repo_id=path, repo_type="model"))
+    local_root = Path(snapshot_download(repo_id=path, repo_type="model", allow_patterns=download_allow_patterns, revision=revision))
     migrated = local_root.parent / f"{local_root.name}_migrated"
     if migrated.exists() and (migrated / "config.json").exists():
         return str(migrated)
@@ -220,7 +225,7 @@ FOLD_128_50K        = None
 
 
 # WITH IMPLICIT CEDIRNET
-IMPLICIT_CEDIRNET = "edgarcancinoe/cedirnet_joint_stage_final_policy"
+IMPLICIT_CEDIRNET = FOLD_64_15K
 # -----------------------------------------------------------------------------------------------
 
 # PICKPLACE -------------------------------------------------------------------------------------
@@ -232,7 +237,7 @@ PICKPLACE_32_60K    = "edgarcancinoe/orange196_pickplace-multicolor_7p5hz_so101_
 PICKPLACE_32_64K    = "edgarcancinoe/orange196_pickplace-multicolor_7p5hz_so101_ee6d_am_sm_b8_ga2_eb32_full_ad-02a199f2"
 
 PICKPLACE_64_5K     = "/Users/edgarcancino/models/orange196_pickplace-multicolor_7p5hz_so101_ee6d_am_sm_b32_ga2_eb64_full_adapt_stagedpw_v1_005000"
-PICKPLACE_64_15K   = "edgarcancinoe/orange196_pickplace-multicolor_7p5hz_so101_ee6d_am_sm_b16_ga2_eb64_full_a-2fa29795-step-15000"
+PICKPLACE_64_15K    = "edgarcancinoe/orange196_pickplace-multicolor_7p5hz_so101_ee6d_am_sm_b16_ga2_eb64_full_a-2fa29795-step-15000"
 PICKPLACE_64_30K    = "edgarcancinoe/orange196_pickplace-multicolor_7p5hz_so101_ee6d_am_sm_b16_ga2_eb64_full_a-2fa29795-step-30000"
 PICKPLACE_64_45K    = "edgarcancinoe/orange196_pickplace-multicolor_7p5hz_so101_ee6d_am_sm_b16_ga2_eb64_full_a-2fa29795-step-45000"
 PICKPLACE_64_50K    = "edgarcancinoe/orange196_pickplace-multicolor_7p5hz_so101_ee6d_am_sm_b16_ga2_eb64_full_a-2fa29795"
@@ -339,8 +344,9 @@ def get_eval_config(task: str, batch_size: int | str | None, step_k: int | None)
     }
 
 
-experiment = get_eval_config("fold", batch_size=64, step_k=15)
+# experiment = get_eval_config("fold", batch_size=64, step_k=15)
 # experiment = get_eval_config("pickplace", batch_size="old_winner", step_k=None)
+experiment = get_eval_config("fold", batch_size="implicit_cedirnet", step_k=None)
 
 CONTROL_FPS                = 10 #7.5
 NUM_EPISODES               = 16
@@ -1177,6 +1183,7 @@ def set_trajectory_visualization(policy, so101: SO101Control, viz, postprocessor
         return
 
     original_select_action = policy.select_action
+    _last_first_xyz = [None]
 
     def _ensure_dict(action) -> dict | None:
         """Convert postprocessed action (dict or tensor) → dictionary of named features."""
@@ -1315,6 +1322,7 @@ def set_trajectory_visualization(policy, so101: SO101Control, viz, postprocessor
                     xyz_arr = np.array(xyz_list)
                     total_disp = np.linalg.norm(xyz_arr[-1] - xyz_arr[0])
                     max_step = max(np.linalg.norm(xyz_arr[i+1] - xyz_arr[i]) for i in range(len(xyz_arr)-1)) if len(xyz_arr) > 1 else 0
+                    chunk_span = xyz_arr.max(axis=0) - xyz_arr.min(axis=0)
                     print(
                         f"[viz] Predicted trajectory: {len(xyz_list)}/{len(chunk)} valid | "
                         f"x=[{xyz_arr[:,0].min():.4f},{xyz_arr[:,0].max():.4f}]  "
@@ -1327,6 +1335,21 @@ def set_trajectory_visualization(policy, so101: SO101Control, viz, postprocessor
                         f"Start: ({xyz_arr[0,0]:.4f},{xyz_arr[0,1]:.4f},{xyz_arr[0,2]:.4f}) "
                         f"End: ({xyz_arr[-1,0]:.4f},{xyz_arr[-1,1]:.4f},{xyz_arr[-1,2]:.4f})"
                     )
+                    print(
+                        f"[viz] Chunk span: dx={chunk_span[0]*1000:.1f}mm "
+                        f"dy={chunk_span[1]*1000:.1f}mm dz={chunk_span[2]*1000:.1f}mm"
+                    )
+                    if np.linalg.norm(chunk_span) < 0.01:
+                        print("[viz][warn] Chunk is nearly constant (<1cm xyz span).")
+                    if _last_first_xyz[0] is not None:
+                        first_delta = xyz_arr[0] - _last_first_xyz[0]
+                        print(
+                            f"[viz] First target delta vs previous inference: "
+                            f"dx={first_delta[0]*1000:.1f}mm dy={first_delta[1]*1000:.1f}mm dz={first_delta[2]*1000:.1f}mm"
+                        )
+                        if np.linalg.norm(first_delta) < 0.01:
+                            print("[viz][warn] First target changed by <1cm from previous inference.")
+                    _last_first_xyz[0] = xyz_arr[0].copy()
                     # Replace the previous trajectory entirely
                     viz.viewer["infer_traj"].delete()
                     for i, (xyz, R) in enumerate(zip(xyz_list, rot_list)):
@@ -1519,6 +1542,8 @@ def main():
         DBG.info(f"Total dataset_features: {list(dataset_features.keys())}")
 
         dataset, episode_idx = get_dataset(dataset_features, robot.name)
+        DBG.pre(f"dataset.features['observation.state'] = {dataset.features.get('observation.state')}")
+        DBG.pre(f"dataset.features['action'] = {dataset.features.get('action')}")
         if POLICY_TYPE == "xvla":
             global ACTIVE_XVLA_RENAME_MAP
             ACTIVE_XVLA_RENAME_MAP = resolve_xvla_rename_map(dataset.meta.camera_keys)
