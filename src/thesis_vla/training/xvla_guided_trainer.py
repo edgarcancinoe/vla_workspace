@@ -11,6 +11,7 @@ import torch
 from torch.utils.data import DataLoader
 from tqdm import tqdm
 
+from thesis_vla.policies.xvla_guided.configuration_xvla_guided import normalize_guidance_fusion_mode
 from thesis_vla.inference.xvla_runtime import sync_xvla_policy_config
 from thesis_vla.training.visual_thought_trainer import XVLARuntime, _as_device, _resolve_dataset_root, _resolve_teacher_image_key, _set_seed, build_dataloader, preprocess_batch
 from thesis_vla.visual_thought import load_cedirnet_decoder_config
@@ -53,12 +54,16 @@ class GuidedXVLATrainConfig:
     dataset_video_backend: str = "pyav"
     dataset_tolerance_s: float = 1e-4
     fusion_mode: str = "concat"
-    gated_fusion: bool = False
-    guidance_train_mode: str = "warmup_freeze"
+    gated_fusion: bool | None = None
+    guidance_train_mode: str = "frozen"
     guidance_unfreeze_step: int = 1_000
+    freeze_xvla_vlm: bool = True
     save_final_checkpoint: bool = True
     seed: int = 42
     dry_run: bool = False
+
+    def __post_init__(self) -> None:
+        self.fusion_mode = normalize_guidance_fusion_mode(self.fusion_mode, self.gated_fusion)
 
     @classmethod
     def from_json(cls, path: str | Path) -> "GuidedXVLATrainConfig":
@@ -93,6 +98,12 @@ def _load_decoder_init(model, decoder_init_path: str) -> None:
     model.model.guidance_decoder.load_state_dict(state, strict=True)
 
 
+def _configure_explicit_stage_trainability(policy, config: GuidedXVLATrainConfig) -> None:
+    if not bool(config.freeze_xvla_vlm): return
+    for parameter in policy.model.vlm.parameters(): parameter.requires_grad = False
+    policy.model.vlm.eval()
+
+
 def _init_guided_policy_from_base(runtime: XVLARuntime, config: GuidedXVLATrainConfig, task_cfg):
     from lerobot.configs.policies import PreTrainedConfig
     from lerobot.policies.xvla.modeling_xvla import XVLAPolicy
@@ -106,7 +117,7 @@ def _init_guided_policy_from_base(runtime: XVLARuntime, config: GuidedXVLATrainC
         guidance_decoder_head=dataclasses.asdict(task_cfg.head),
         guidance_decoder_teacher=dataclasses.asdict(task_cfg.teacher),
         guidance_fusion_mode=config.fusion_mode,
-        guidance_gated=config.gated_fusion,
+        guidance_gated=bool(config.gated_fusion),
         guidance_train_mode=config.guidance_train_mode,
         guidance_unfreeze_step=config.guidance_unfreeze_step,
     )
@@ -119,6 +130,7 @@ def _init_guided_policy_from_base(runtime: XVLARuntime, config: GuidedXVLATrainC
     if getattr(incompat, "unexpected_keys", None): print(f"[guided-init] unexpected keys: {incompat.unexpected_keys}")
     _load_decoder_init(policy, config.decoder_init_path)
     policy.to(_as_device(config))
+    _configure_explicit_stage_trainability(policy, config)
     return policy
 
 
@@ -166,7 +178,7 @@ def _save_checkpoint(config: GuidedXVLATrainConfig, runtime: XVLARuntime, optimi
     if runtime.preprocessor is not None: runtime.preprocessor.save_pretrained(checkpoint_dir)
     if runtime.postprocessor is not None: runtime.postprocessor.save_pretrained(checkpoint_dir)
     torch.save({"step": int(step), "optimizer": optimizer.state_dict()}, checkpoint_dir / TRAINER_STATE_FILENAME)
-    (checkpoint_dir / METADATA_FILENAME).write_text(json.dumps({"name": config.name, "global_step": int(step), "xvla_init_path": config.xvla_init_path, "decoder_init_path": config.decoder_init_path, "fusion_mode": config.fusion_mode, "gated_fusion": bool(config.gated_fusion)}, indent=2, sort_keys=True))
+    (checkpoint_dir / METADATA_FILENAME).write_text(json.dumps({"name": config.name, "global_step": int(step), "xvla_init_path": config.xvla_init_path, "decoder_init_path": config.decoder_init_path, "fusion_mode": config.fusion_mode, "freeze_xvla_vlm": bool(config.freeze_xvla_vlm)}, indent=2, sort_keys=True))
     (checkpoint_dir / CONFIG_FILENAME).write_text(json.dumps(config.to_json_dict(), indent=2, sort_keys=True))
 
 
@@ -182,6 +194,7 @@ def train_guided_xvla(config: GuidedXVLATrainConfig) -> None:
     loader = build_dataloader(runtime, config)
     if config.dry_run: return
     policy.train()
+    if config.freeze_xvla_vlm: policy.model.vlm.eval()
     step = 0
     accum_steps = max(int(config.gradient_accumulation_steps), 1)
     optimizer.zero_grad(set_to_none=True)

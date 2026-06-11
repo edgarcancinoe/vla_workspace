@@ -13,6 +13,7 @@ from typing import Literal
 import yaml
 
 from thesis_vla.common.paths import CONFIG_ROOT, RUNTIME_CACHE_DIR, RUNTIME_TMP_DIR, TRAIN_OUTPUT_DIR
+from thesis_vla.policies.xvla_guided.configuration_xvla_guided import normalize_guidance_fusion_mode
 
 
 LaunchMode = Literal["single", "accelerate"]
@@ -51,9 +52,10 @@ class GuidedLaunchConfig:
     action_loss_weight: float = 1.0
     expert_loss_weight: float = 0.25
     fusion_mode: str = "concat"
-    gated_fusion: bool = False
-    guidance_train_mode: str = "warmup_freeze"
+    gated_fusion: bool | None = None
+    guidance_train_mode: str = "frozen"
     guidance_unfreeze_step: int = 1_000
+    freeze_xvla_vlm: bool = True
     steps: int = 2_500
     log_every: int = 20
     save_every: int = 500
@@ -86,6 +88,7 @@ class GuidedExperimentSpec:
     gated_fusion: bool | None = None
     guidance_train_mode: str | None = None
     guidance_unfreeze_step: int | None = None
+    freeze_xvla_vlm: bool | None = None
     steps: int | None = None
     log_every: int | None = None
     save_every: int | None = None
@@ -118,9 +121,9 @@ class ResolvedGuidedExperiment:
     action_loss_weight: float
     expert_loss_weight: float
     fusion_mode: str
-    gated_fusion: bool
     guidance_train_mode: str
     guidance_unfreeze_step: int
+    freeze_xvla_vlm: bool
     steps: int
     log_every: int
     save_every: int
@@ -151,7 +154,14 @@ def _with_overrides(base, **overrides):
 
 def _stage_defaults(path: str | Path) -> dict:
     payload = _read_yaml(path)
-    return {key: payload[key] for key in ["fusion_mode", "gated_fusion", "guidance_train_mode", "guidance_unfreeze_step", "action_loss_weight", "expert_loss_weight"] if key in payload}
+    return {key: payload[key] for key in ["fusion_mode", "guidance_fusion_mode", "gated_fusion", "guidance_train_mode", "guidance_unfreeze_step", "freeze_xvla_vlm", "action_loss_weight", "expert_loss_weight"] if key in payload}
+
+
+def _resolve_fusion_mode(*, defaults: GuidedLaunchConfig, experiment: GuidedExperimentSpec, stage_defaults: dict) -> str:
+    if experiment.fusion_mode is not None: return normalize_guidance_fusion_mode(experiment.fusion_mode, experiment.gated_fusion)
+    if "guidance_fusion_mode" in stage_defaults: return normalize_guidance_fusion_mode(stage_defaults["guidance_fusion_mode"])
+    if "fusion_mode" in stage_defaults: return normalize_guidance_fusion_mode(stage_defaults["fusion_mode"], stage_defaults.get("gated_fusion"))
+    return normalize_guidance_fusion_mode(defaults.fusion_mode, defaults.gated_fusion)
 
 
 def resolve_experiment(workspace_dir: Path, defaults: GuidedLaunchConfig, experiment: GuidedExperimentSpec, timestamp: str | None = None) -> ResolvedGuidedExperiment:
@@ -160,6 +170,7 @@ def resolve_experiment(workspace_dir: Path, defaults: GuidedLaunchConfig, experi
     stage_defaults = _stage_defaults(defaults.guided_stage_config_path)
     xvla_init_path = experiment.xvla_init_path or defaults.xvla_init_path
     decoder_init_path = experiment.decoder_init_path or defaults.decoder_init_path
+    fusion_mode = _resolve_fusion_mode(defaults=defaults, experiment=experiment, stage_defaults=stage_defaults)
     if not xvla_init_path: raise ValueError("xvla_init_path is required.")
     if not decoder_init_path: raise ValueError("decoder_init_path is required.")
     timestamp = timestamp or dt.datetime.now().strftime("%Y%m%d_%H%M%S")
@@ -186,10 +197,10 @@ def resolve_experiment(workspace_dir: Path, defaults: GuidedLaunchConfig, experi
         xvla_optimizer_lr=experiment.xvla_optimizer_lr if experiment.xvla_optimizer_lr is not None else defaults.xvla_optimizer_lr,
         action_loss_weight=experiment.action_loss_weight if experiment.action_loss_weight is not None else float(stage_defaults.get("action_loss_weight", defaults.action_loss_weight)),
         expert_loss_weight=experiment.expert_loss_weight if experiment.expert_loss_weight is not None else float(stage_defaults.get("expert_loss_weight", defaults.expert_loss_weight)),
-        fusion_mode=experiment.fusion_mode or str(stage_defaults.get("fusion_mode", defaults.fusion_mode)),
-        gated_fusion=experiment.gated_fusion if experiment.gated_fusion is not None else bool(stage_defaults.get("gated_fusion", defaults.gated_fusion)),
+        fusion_mode=fusion_mode,
         guidance_train_mode=experiment.guidance_train_mode or str(stage_defaults.get("guidance_train_mode", defaults.guidance_train_mode)),
         guidance_unfreeze_step=experiment.guidance_unfreeze_step if experiment.guidance_unfreeze_step is not None else int(stage_defaults.get("guidance_unfreeze_step", defaults.guidance_unfreeze_step)),
+        freeze_xvla_vlm=experiment.freeze_xvla_vlm if experiment.freeze_xvla_vlm is not None else bool(stage_defaults.get("freeze_xvla_vlm", defaults.freeze_xvla_vlm)),
         steps=experiment.steps if experiment.steps is not None else defaults.steps,
         log_every=experiment.log_every if experiment.log_every is not None else defaults.log_every,
         save_every=experiment.save_every if experiment.save_every is not None else defaults.save_every,
@@ -257,8 +268,9 @@ def print_run_summary(index: int, total: int, resolved: ResolvedGuidedExperiment
     print(f"  Name:               {resolved.name}")
     print(f"  XVLA Init:          {resolved.xvla_init_path}")
     print(f"  Decoder Init:       {resolved.decoder_init_path}")
-    print(f"  Fusion:             {resolved.fusion_mode} (gated={resolved.gated_fusion})")
+    print(f"  Fusion:             {resolved.fusion_mode}")
     print(f"  Guidance Train:     {resolved.guidance_train_mode} @ step {resolved.guidance_unfreeze_step}")
+    print(f"  Freeze XVLA VLM:    {resolved.freeze_xvla_vlm}")
     print(f"  Dataset:            {resolved.dataset_repo_id}")
     print(f"  Video Backend:      {resolved.dataset_video_backend}")
     print(f"  Timestamp Tol:      {resolved.dataset_tolerance_s}")

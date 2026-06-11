@@ -90,16 +90,42 @@ def _make_guided_config():
 
 
 def test_guided_transformer_fusion_variants():
-    for fusion_mode, gated in [("concat", False), ("concat", True), ("cross_attn", False), ("cross_attn", True)]:
-        model = GuidedSoftPromptedTransformer(hidden_size=16, multi_modal_input_size=16, guidance_input_size=8, depth=2, num_heads=4, guidance_num_heads=4, mlp_ratio=2.0, num_domains=3, dim_action=4, dim_propio=4, dim_time=8, len_soft_prompts=2, max_len_seq=64, use_hetero_proj=False, guidance_fusion_mode=fusion_mode, guidance_gated=gated)
+    for fusion_mode in ["concat", "gated_concat", "cross_attention", "gated_cross_attention"]:
+        model = GuidedSoftPromptedTransformer(hidden_size=16, multi_modal_input_size=16, guidance_input_size=8, depth=2, num_heads=4, guidance_num_heads=4, mlp_ratio=2.0, num_domains=3, dim_action=4, dim_propio=4, dim_time=8, len_soft_prompts=2, max_len_seq=64, use_hetero_proj=False, guidance_fusion_mode=fusion_mode, guidance_gated=False)
         out = model(domain_id=torch.zeros(2, dtype=torch.long), vlm_features=torch.randn(2, 6, 16), aux_visual_inputs=torch.randn(2, 4, 16), guidance_tokens=torch.randn(2, 5, 8), action_with_noise=torch.randn(2, 4, 4), proprio=torch.randn(2, 4), t=torch.rand(2))
         assert out.shape == (2, 4, 4)
+
+
+def test_guided_transformer_sequence_shape_rules():
+    domain_id = torch.zeros(2, dtype=torch.long)
+    vlm_features, aux_visual_inputs, guidance_tokens = torch.randn(2, 6, 16), torch.randn(2, 4, 16), torch.randn(2, 5, 8)
+    action_with_noise, proprio, t = torch.randn(2, 4, 4), torch.randn(2, 4), torch.rand(2)
+    for fusion_mode in ["concat", "gated_concat", "cross_attention", "gated_cross_attention"]:
+        model = GuidedSoftPromptedTransformer(hidden_size=16, multi_modal_input_size=16, guidance_input_size=8, depth=2, num_heads=4, guidance_num_heads=4, mlp_ratio=2.0, num_domains=3, dim_action=4, dim_propio=4, dim_time=8, len_soft_prompts=2, max_len_seq=64, use_hetero_proj=False, guidance_fusion_mode=fusion_mode, guidance_gated=False)
+        action_proj, z_proj, aux_proj = model._project_native_tokens(domain_id, vlm_features, aux_visual_inputs, action_with_noise, proprio, t)
+        guidance_proj = model._project_guidance(guidance_tokens, domain_id)
+        native_len = action_proj.shape[1] + z_proj.shape[1] + aux_proj.shape[1]
+        if fusion_mode in {"concat", "gated_concat"}:
+            fused = model._apply_concat_fusion(torch.cat([action_proj, z_proj, aux_proj], dim=1), guidance_proj)
+            assert fused.shape[1] == native_len + guidance_proj.shape[1]
+        else:
+            z_guided = model._apply_cross_attention_fusion(z_proj, guidance_proj)
+            fused = torch.cat([action_proj, z_guided, aux_proj], dim=1)
+            assert fused.shape[1] == native_len
+
+
+def test_gated_cross_attention_starts_with_near_zero_effect():
+    model = GuidedSoftPromptedTransformer(hidden_size=16, multi_modal_input_size=16, guidance_input_size=8, depth=2, num_heads=4, guidance_num_heads=4, mlp_ratio=2.0, num_domains=3, dim_action=4, dim_propio=4, dim_time=8, len_soft_prompts=2, max_len_seq=64, use_hetero_proj=False, guidance_fusion_mode="gated_cross_attention", guidance_gated=False)
+    z_proj, guidance_proj = torch.randn(2, 6, 16), torch.randn(2, 5, 16)
+    assert torch.allclose(model._apply_cross_attention_fusion(z_proj, guidance_proj), z_proj)
+    assert float(model.cross_attn_gamma.detach().item()) == 0.0
 
 
 def test_guided_policy_save_load_and_runtime_resolution(monkeypatch):
     _patch_dummy_vlm(monkeypatch)
     config = _make_guided_config()
     policy = XVLAGuidedPolicy(config)
+    assert all(not parameter.requires_grad for parameter in policy.model.guidance_decoder.parameters())
     with tempfile.TemporaryDirectory() as tmpdir:
         save_dir = Path(tmpdir)
         policy.save_pretrained(save_dir)

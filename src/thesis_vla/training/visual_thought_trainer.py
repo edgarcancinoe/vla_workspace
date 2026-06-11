@@ -13,10 +13,12 @@ import numpy as np
 import torch
 import torch.nn.functional as F
 from PIL import Image
+from torch.optim.lr_scheduler import LRScheduler
 from torch.utils.data import DataLoader, Subset
 from torch.utils.data._utils.collate import default_collate
 from tqdm import tqdm
 
+from thesis_vla.common.hf_hub import HubUploadConfig, clear_hub_upload_failure_marker, push_folder_to_hub, write_hub_upload_failure_marker
 from thesis_vla.common.paths import RUNTIME_CACHE_DIR
 from thesis_vla.inference.xvla_runtime import make_xvla_runtime_processors, resolve_xvla_rename_map, sync_xvla_policy_config
 from thesis_vla.visual_thought import CeDirNetDistillationModel, DinoFeatureAlignmentModel, DinoTokenSequenceModel, compute_feature_alignment_loss, load_cedirnet_decoder_config, load_dino_decoder_config
@@ -33,6 +35,7 @@ ExpertType = Literal["cedirnet", "dino"]
 # the loss across the accumulation window and clips grad norm at the boundary). XVLA's
 # optimizer default is grad_clip_norm=10.0 (configuration_xvla.optimizer_grad_clip_norm).
 XVLA_GRAD_CLIP_NORM = 10.0
+TRAINING_HUB_UPLOAD_CONFIG = HubUploadConfig(max_retries=5, retry_backoff_s=5.0)
 
 
 @dataclass
@@ -123,6 +126,13 @@ class XVLARuntime:
     policy_device: str
     vlm_device: str
     vlm_only_distill: bool
+
+
+@dataclass
+class JointTrainingState:
+    policy_optimizer: torch.optim.Optimizer
+    decoder_optimizer: torch.optim.Optimizer
+    policy_scheduler: LRScheduler | None = None
 
 
 def resolve_expert_types(config: VisualThoughtTrainConfig) -> tuple[ExpertType, ...]:
@@ -537,12 +547,67 @@ def build_decoder_bundle(config: VisualThoughtTrainConfig, runtime: XVLARuntime,
     return loader, val_loader, val_loader_episode, vis_loader, vis_indices, decoders, targets
 
 
-def build_optimizer(config: VisualThoughtTrainConfig, policy, decoder: torch.nn.Module | dict[ExpertType, torch.nn.Module]) -> torch.optim.Optimizer:
+def _decoder_parameters(decoder: torch.nn.Module | dict[ExpertType, torch.nn.Module]) -> list[torch.nn.Parameter]:
     if isinstance(decoder, dict): decoder_params = [parameter for module in decoder.values() for parameter in module.parameters() if parameter.requires_grad]
     else: decoder_params = [parameter for parameter in decoder.parameters() if parameter.requires_grad]
-    if config.training_stage == "distill_only": return torch.optim.AdamW(decoder_params, lr=config.decoder_optimizer_lr, weight_decay=config.weight_decay)
-    xvla_params = [parameter for parameter in policy.parameters() if parameter.requires_grad]
-    return torch.optim.AdamW([{"params": decoder_params, "lr": config.decoder_optimizer_lr}, {"params": xvla_params, "lr": config.xvla_optimizer_lr}], weight_decay=config.weight_decay)
+    return decoder_params
+
+
+def build_optimizer(config: VisualThoughtTrainConfig, policy, decoder: torch.nn.Module | dict[ExpertType, torch.nn.Module]) -> torch.optim.Optimizer | JointTrainingState:
+    decoder_params = _decoder_parameters(decoder)
+    decoder_optimizer = torch.optim.AdamW(decoder_params, lr=config.decoder_optimizer_lr, weight_decay=config.weight_decay)
+    if config.training_stage == "distill_only": return decoder_optimizer
+    policy_optimizer = policy.config.get_optimizer_preset().build(policy.get_optim_params())
+    return JointTrainingState(policy_optimizer=policy_optimizer, decoder_optimizer=decoder_optimizer)
+
+
+def build_policy_scheduler(config: VisualThoughtTrainConfig, policy, policy_optimizer: torch.optim.Optimizer) -> LRScheduler | None:
+    if config.training_stage != "joint_multitask": return None
+    return policy.config.get_scheduler_preset().build(policy_optimizer, config.steps)
+
+
+def zero_optimizer_grad(optimizer: torch.optim.Optimizer | JointTrainingState) -> None:
+    if isinstance(optimizer, JointTrainingState):
+        optimizer.policy_optimizer.zero_grad(set_to_none=True)
+        optimizer.decoder_optimizer.zero_grad(set_to_none=True)
+        return
+    optimizer.zero_grad(set_to_none=True)
+
+
+def step_optimizer(optimizer: torch.optim.Optimizer | JointTrainingState) -> None:
+    if isinstance(optimizer, JointTrainingState):
+        optimizer.policy_optimizer.step()
+        optimizer.decoder_optimizer.step()
+        if optimizer.policy_scheduler is not None: optimizer.policy_scheduler.step()
+        return
+    optimizer.step()
+
+
+def trainer_state_dict(optimizer: torch.optim.Optimizer | JointTrainingState) -> dict[str, Any]:
+    if isinstance(optimizer, JointTrainingState):
+        state = {
+            "format": "joint_policy_decoder_v1",
+            "optimizers": {
+                "policy": optimizer.policy_optimizer.state_dict(),
+                "decoder": optimizer.decoder_optimizer.state_dict(),
+            },
+        }
+        if optimizer.policy_scheduler is not None: state["schedulers"] = {"policy": optimizer.policy_scheduler.state_dict()}
+        return state
+    return {"format": "single_optimizer_v1", "optimizer": optimizer.state_dict()}
+
+
+def optimizer_metrics(optimizer: torch.optim.Optimizer | JointTrainingState) -> dict[str, float]:
+    if isinstance(optimizer, JointTrainingState):
+        metrics = {
+            "policy_lr": float(optimizer.policy_optimizer.param_groups[0]["lr"]),
+            "decoder_lr": float(optimizer.decoder_optimizer.param_groups[0]["lr"]),
+        }
+        for group in optimizer.policy_optimizer.param_groups:
+            name = group.get("name")
+            if name: metrics[f"policy_lr_{name}"] = float(group["lr"])
+        return metrics
+    return {"decoder_lr": float(optimizer.param_groups[0]["lr"])}
 
 
 def build_xvla_inputs(runtime: XVLARuntime, processed_batch: dict[str, Any], config: VisualThoughtTrainConfig, apply_cutout: bool = False) -> tuple[dict[str, torch.Tensor], dict[str, torch.Tensor]]:
@@ -627,23 +692,30 @@ def _checkpoint_metadata(config: VisualThoughtTrainConfig, step: int) -> dict[st
     return payload
 
 
-def _push_checkpoint_to_hub(checkpoint_dir: Path, repo_id: str, commit_message: str) -> None:
-    from huggingface_hub import HfApi
-
-    api = HfApi()
-    api.create_repo(repo_id=repo_id, repo_type="model", exist_ok=True)
-    api.upload_folder(folder_path=str(checkpoint_dir), repo_id=repo_id, repo_type="model", commit_message=commit_message)
+def _hub_step_dir(step: int) -> str:
+    return f"step_{int(step):07d}"
 
 
-def _save_checkpoint_if_needed(config: VisualThoughtTrainConfig, runtime: XVLARuntime, decoder: torch.nn.Module | dict[ExpertType, torch.nn.Module], optimizer: torch.optim.Optimizer, step: int, final: bool = False) -> None:
+def _push_checkpoint_to_hub(checkpoint_dir: Path, repo_id: str, step: int, commit_message: str) -> bool:
+    path_in_repo = _hub_step_dir(step)
+    result = push_folder_to_hub(folder_path=checkpoint_dir, repo_id=repo_id, repo_type="model", path_in_repo=path_in_repo, commit_message=commit_message, upload_config=TRAINING_HUB_UPLOAD_CONFIG)
+    if result.ok:
+        clear_hub_upload_failure_marker(checkpoint_dir)
+        return True
+    marker_path = write_hub_upload_failure_marker(folder_path=checkpoint_dir, repo_id=repo_id, repo_type="model", path_in_repo=path_in_repo, commit_message=commit_message, result=result)
+    print(f"[push] WARNING: failed to upload checkpoint to {repo_id} after {result.attempts} attempts. Training will continue. Retry metadata saved to {marker_path}")
+    return False
+
+
+def _save_checkpoint_if_needed(config: VisualThoughtTrainConfig, runtime: XVLARuntime, decoder: torch.nn.Module | dict[ExpertType, torch.nn.Module], optimizer: torch.optim.Optimizer | JointTrainingState, step: int, final: bool = False) -> None:
     if not final and (config.save_every <= 0 or step % config.save_every != 0): return
     checkpoint_name = "checkpoint_final" if final else f"checkpoint_{step:07d}"
     checkpoint_dir = Path(config.output_dir) / checkpoint_name
     stack_cfg_path = {"cedirnet": config.cedirnet_decoder_stack_config_path, "dino": config.dino_decoder_stack_config_path} if is_combined_expert_run(config) else config.decoder_stack_config_path
     task_cfg_path = {"cedirnet": config.cedirnet_decoder_task_config_path, "dino": config.dino_decoder_task_config_path} if is_combined_expert_run(config) else config.decoder_task_config_path
-    save_visual_thought_checkpoint(checkpoint_dir=checkpoint_dir, policy=runtime.policy, decoder=decoder, trainer_state={"step": int(step), "optimizer": optimizer.state_dict()}, metadata=_checkpoint_metadata(config, step), config_snapshot=config.to_json_dict(), preprocessor=runtime.preprocessor, postprocessor=runtime.postprocessor, decoder_stack_config_path=stack_cfg_path, decoder_task_config_path=task_cfg_path)
+    save_visual_thought_checkpoint(checkpoint_dir=checkpoint_dir, policy=runtime.policy, decoder=decoder, trainer_state={"step": int(step), **trainer_state_dict(optimizer)}, metadata=_checkpoint_metadata(config, step), config_snapshot=config.to_json_dict(), preprocessor=runtime.preprocessor, postprocessor=runtime.postprocessor, decoder_stack_config_path=stack_cfg_path, decoder_task_config_path=task_cfg_path)
     should_push = bool(config.push_to_hub) and bool(config.push_repo_id) and (final or (int(config.push_every) > 0 and step % int(config.push_every) == 0))
-    if should_push: _push_checkpoint_to_hub(checkpoint_dir, str(config.push_repo_id), f"Upload visual-thought checkpoint {checkpoint_name}")
+    if should_push: _push_checkpoint_to_hub(checkpoint_dir, str(config.push_repo_id), step, f"Upload visual-thought checkpoint {checkpoint_name}")
 
 
 def _maybe_init_wandb(config: VisualThoughtTrainConfig):
@@ -778,14 +850,16 @@ def train_visual_thought(config: VisualThoughtTrainConfig) -> None:
 
     if is_joint:
         train_module = VisualThoughtModule(runtime.policy, decoder, config, task_cfg)
-        train_module, optimizer, loader = accelerator.prepare(train_module, optimizer, loader)
+        if not isinstance(optimizer, JointTrainingState): raise RuntimeError("joint_multitask requires split policy/decoder optimizers.")
+        train_module, optimizer.policy_optimizer, optimizer.decoder_optimizer, loader = accelerator.prepare(train_module, optimizer.policy_optimizer, optimizer.decoder_optimizer, loader)
+        optimizer.policy_scheduler = build_policy_scheduler(config, accelerator.unwrap_model(train_module).policy, optimizer.policy_optimizer)
         unwrapped_decoder = lambda: dict(accelerator.unwrap_model(train_module).decoder.items()) if is_combined_expert_run(config) else accelerator.unwrap_model(train_module).decoder
     else:
         if isinstance(decoder, dict): raise SystemExit("Combined expert_types mode is supported for joint_multitask only.")
         decoder, optimizer, loader = accelerator.prepare(decoder, optimizer, loader); train_module = decoder; unwrapped_decoder = lambda: accelerator.unwrap_model(decoder)
 
     step = 0
-    optimizer.zero_grad(set_to_none=True)
+    zero_optimizer_grad(optimizer)
     progress = tqdm(total=config.steps, desc=config.name, disable=not is_main)
     while step < config.steps:
         for raw_batch in loader:
@@ -803,11 +877,11 @@ def train_visual_thought(config: VisualThoughtTrainConfig) -> None:
                 accelerator.backward(total_loss)
                 if accelerator.sync_gradients:
                     accelerator.clip_grad_norm_(train_module.parameters(), XVLA_GRAD_CLIP_NORM)
-                    optimizer.step()
-                    optimizer.zero_grad(set_to_none=True)
+                    step_optimizer(optimizer)
+                    zero_optimizer_grad(optimizer)
 
             if is_main and step % max(int(config.log_every), 1) == 0:
-                metrics = {"event": "train_step", "step": int(step), "loss": float(total_loss.detach().item()), **expert_stats, **action_stats}
+                metrics = {"event": "train_step", "step": int(step), "loss": float(total_loss.detach().item()), **expert_stats, **action_stats, **optimizer_metrics(optimizer)}
                 print(json.dumps(metrics))
                 if wandb_run is not None: wandb_run.log({key: value for key, value in metrics.items() if key != "event"}, step=int(step))
             if is_main and val_loader is not None and step % max(int(config.validation_freq), 1) == 0:
