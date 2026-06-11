@@ -24,7 +24,7 @@ from thesis_vla.training.visual_thought_launcher import VisualThoughtExperimentS
 WORKSPACE_DIR = PROJECT_ROOT
 RUN_TS = dt.datetime.now().strftime("%Y%m%d_%H%M%S")
 
-RUNTIME_CONFIG = VisualThoughtRuntimeConfig(launch_mode="single", cuda_devices=(3,), num_workers=2, dry_run=False)
+RUNTIME_CONFIG = VisualThoughtRuntimeConfig(launch_mode="single", cuda_devices=(5,), num_workers=2, dry_run=False)
 
 DEFAULTS = VisualThoughtLaunchConfig(
     hf_user="edgarcancinoe",
@@ -37,8 +37,8 @@ DEFAULTS = VisualThoughtLaunchConfig(
     decoder_stack_config_path=str(CONFIG_ROOT / "visual_thought" / "cedirnet_stack.yaml"),
     decoder_task_config_path=str(CONFIG_ROOT / "visual_thought" / "cedirnet_head.yaml"),
     batch_size=8,
-    gradient_accumulation_steps=2,
-    decoder_optimizer_lr=1e-3,
+    gradient_accumulation_steps=4,
+    decoder_optimizer_lr=1e-4,
     xvla_optimizer_lr=1e-5,
     wandb_enable=True,
     wandb_project="visual-thought",
@@ -46,14 +46,17 @@ DEFAULTS = VisualThoughtLaunchConfig(
     validation_split_ratio=0.1,
     validation_freq=250,
     validation_max_batches=10,
+    vis_every=500,
+    vis_num_samples=3,
+    vis_final=False,
     push_to_hub=True,
     push_repo_id=None,
-    push_every=1000,
+    push_every=2000,
     action_loss_weight=1.0,
     expert_loss_weight=1.0,
-    steps=2500,
+    steps=8000,
     log_every=20,
-    save_every=1000,
+    save_every=2000,
     name_prefix=f"visual-thought-{RUN_TS}",
 )
 
@@ -72,8 +75,10 @@ CEDIRNET_DECODER_INIT_STACK_CONFIG  = "/home/jose/EMAI-Thesis/vla_workspace/conf
 CEDIRNET_DECODER_INIT_TASK_CONFIG   = "/home/jose/EMAI-Thesis/vla_workspace/config/visual_thought/cedirnet_head.yaml"
 
 # DINO DECODER --------------------------------------------------------------------------
-DINO_CUBES_DECODER_INIT = None
-DINO_CLOTH_DECODER_INIT = None
+DINO_CUBES_DECODER_INIT         = OUT + "dino_tokenseq_distill_cubes_20260611_005813/checkpoint_final"
+DINO_CLOTH_DECODER_INIT         = OUT + "dino_tokenseq_distill_cloth_fold_20260611_000622/checkpoint_final"
+DINO_CLOTH_DROP_DECODER_INIT    = OUT + "dino_tokenseq_distill_cloth_box_20260611_005813/checkpoint_final"
+
 DINO_STACK_CONFIG     = str(CONFIG_ROOT / "visual_thought" / "dino_stack.yaml")
 DINO_TOKENSEQ_CONFIG  = str(CONFIG_ROOT / "visual_thought" / "dino_decoder.yaml")  # target_kind: token_sequence
 # =====================================================================================
@@ -81,21 +86,23 @@ DINO_TOKENSEQ_CONFIG  = str(CONFIG_ROOT / "visual_thought" / "dino_decoder.yaml"
 
 # EXP NAMING
 # =====================================================================================
-FOLD_CEDIRNET_NAME      = f"cedirnet_joint_stage_{RUN_TS}"
+FOLD_CEDIRNET_NAME      = f"cedirnet_joint_stage_{RUN_TS}_cloth_fold"
 DROP_CEDIRNET_NAME      = f"cedirnet_joint_stage_{RUN_TS}_cloth_box"
+
 DINO_CUBES_NAME         = f"dino_tokenseq_joint_cubes_{RUN_TS}"
 DINO_CLOTH_FOLD_NAME    = f"dino_tokenseq_joint_clothfold_{RUN_TS}"
+DINO_CLOTH_DROP_NAME    = f"dino_tokenseq_joint_clothbox_{RUN_TS}"
 # =====================================================================================
 
 # DATASETS
 # =====================================================================================
-CLOTH_FOLD_DS = ("cloth-corner-fold_7p5hz", "main")
-CLOTH_DROP_DS = ("cloth-corner-box_7p5hz", "main")
-CUBES_DS      = ("pickplace-multicolor_7p5hz", "main")
+CLOTH_FOLD_DS = ("cloth-corner-fold_7p5hz",     "main")
+CLOTH_DROP_DS = ("cloth-corner-box_7p5hz",      "main")
+CUBES_DS      = ("pickplace-multicolor_7p5hz",  "main")
 # =====================================================================================
 
 
-EXPERIMENTS_FOLD_CEDIRNET = [
+FOLD_CEDIRNET = [
     VisualThoughtExperimentSpec(
         expert_type                 ="cedirnet",
         training_stage              ="joint_multitask",
@@ -112,7 +119,7 @@ EXPERIMENTS_FOLD_CEDIRNET = [
     )
 ]
 
-EXPERIMENTS_CLOTH_DROP_CEDIRNET = [
+CLOTH_DROP_CEDIRNET = [
     VisualThoughtExperimentSpec(
         expert_type                 ="cedirnet",
         training_stage              ="joint_multitask",
@@ -129,37 +136,37 @@ EXPERIMENTS_CLOTH_DROP_CEDIRNET = [
     )
 ]
 
-# =====================================================================================
-# DINO (token_sequence) joint experiments
-# -------------------------------------------------------------------------------------
-# Teacher = stock dinov2 vitb14 from torch.hub (configs/dino: checkpoint=null)
-
-# decoder_init_path must point at a CONVERTED student decoder (a directory containing
-# decoder.safetensors), produced from the train_dino.py output via:
-#   python apps/train/convert_dino_checkpoint.py \
-#       --checkpoint <train_dino .../checkpoint_final.pt> \
-#       --config     <XVLA-VisualThought/configs/dino/train.yaml> \
-#       --output-dir <runtime/outputs/train/visual_thought_imports/dino_...>
-#
-# IMPORTANT: the converted decoder's num_decoder_tokens is fixed by the dinov2 patch grid
-# at distillation time, so use the cloth-fold decoder for the cloth-fold joint run and the
-# cubes decoder for the cubes joint run (same camera resolution / teacher config on both)
-# =====================================================================================
-
 DINO_CLOTH_FOLD = [
     VisualThoughtExperimentSpec(
         expert_type                 ="dino",
         training_stage              ="joint_multitask",
         name                        =DINO_CLOTH_FOLD_NAME,
+        wandb_run_name              =DINO_CLOTH_FOLD_NAME,
         dataset_name                =CLOTH_FOLD_DS[0],
         dataset_revision            =CLOTH_FOLD_DS[1],
         xvla_init_path              =XVLA_INIT_CLOTHFOLD,
         decoder_init_path           =DINO_CLOTH_DECODER_INIT,
         decoder_stack_config_path   =DINO_STACK_CONFIG,
         decoder_task_config_path    =DINO_TOKENSEQ_CONFIG,
-        wandb_run_name              =f"dino_tokenseq_joint_clothfold_{RUN_TS}",
         action_loss_weight=1.0,
-        expert_loss_weight=0.25,
+        expert_loss_weight=1.0,
+    ),
+]
+
+DINO_CLOTH_DROP = [
+    VisualThoughtExperimentSpec(
+        expert_type                 ="dino",
+        training_stage              ="joint_multitask",
+        name                        =DINO_CLOTH_DROP_NAME,
+        wandb_run_name              =DINO_CLOTH_DROP_NAME,
+        dataset_name                =CLOTH_DROP_DS[0],
+        dataset_revision            =CLOTH_DROP_DS[1],
+        xvla_init_path              =XVLA_INIT_CLOTHFOLD,
+        decoder_init_path           =DINO_CLOTH_DROP_DECODER_INIT,
+        decoder_stack_config_path   =DINO_STACK_CONFIG,
+        decoder_task_config_path    =DINO_TOKENSEQ_CONFIG,
+        action_loss_weight=1.0,
+        expert_loss_weight=1.0,
     ),
 ]
 
@@ -168,19 +175,21 @@ DINO_CUBES = [
         expert_type                 ="dino",
         training_stage              ="joint_multitask",
         name                        =DINO_CUBES_NAME,
+        wandb_run_name              =DINO_CUBES_NAME,
         dataset_name                =CUBES_DS[0],
         dataset_revision            =CUBES_DS[1],
         xvla_init_path              =XVLA_INIT_CUBES,
         decoder_init_path           =DINO_CUBES_DECODER_INIT,
         decoder_stack_config_path   =DINO_STACK_CONFIG,
         decoder_task_config_path    =DINO_TOKENSEQ_CONFIG,
-        wandb_run_name              =f"dino_tokenseq_joint_cubes_{RUN_TS}",
         action_loss_weight=1.0,
-        expert_loss_weight=0.25,
+        expert_loss_weight=1.0,
     ),
 ]
 
-EXPERIMENTS = DINO_CLOTH_FOLD + DINO_CUBES
+# Pendiente correr estos. Ajustar a bs 32. Dino antes habia corrido con un mal pre-trained decoder. Los otros hay q volver a correrlos solo extended
+EXPERIMENTS = DINO_CLOTH_FOLD + DINO_CLOTH_DROP + DINO_CUBES
+
 def main() -> None:
     run_experiments(workspace_dir=WORKSPACE_DIR, defaults=DEFAULTS, experiments=EXPERIMENTS)
 

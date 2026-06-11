@@ -24,12 +24,18 @@ from thesis_vla.training.visual_thought_launcher import VisualThoughtExperimentS
 WORKSPACE_DIR = PROJECT_ROOT
 RUN_TS = dt.datetime.now().strftime("%Y%m%d_%H%M%S")
 
-RUNTIME_CONFIG = VisualThoughtRuntimeConfig(launch_mode="single", cuda_devices=(1,), num_workers=0, dry_run=False)
+RUNTIME_CONFIG = VisualThoughtRuntimeConfig(launch_mode="accelerate", cuda_devices=(1,2,3,4,5,6,7,8), num_workers=2, dry_run=False)
 
+DATASET_CLOTH_BOX   = ("cloth-corner-box_7p5hz",        "main", f"dino_tokenseq_distill_cloth_box_{RUN_TS}") 
+DATASET_CUBES       = ("pickplace-multicolor_7p5hz",    "main", f"dino_tokenseq_distill_cubes_{RUN_TS}")
+CLOTH_FOLD_DS       = ("cloth-corner-fold_7p5hz",       "main", f"dino_tokenseq_distill_cloth_fold_{RUN_TS}")
+
+# Pending run increased or decreased ffn_mlp_ratio 
+DATA = CLOTH_FOLD_DS
 DEFAULTS = VisualThoughtLaunchConfig(
     hf_user     ="edgarcancinoe",
-    dataset_name="soarm101_pickplace_multicolor_v1_7p5hz",
-    dataset_revision="v3.0",
+    dataset_name=DATA[0],
+    dataset_revision=DATA[1],
     runtime=RUNTIME_CONFIG,
     training_stage="distill_only",
     expert_type="dino",
@@ -38,27 +44,48 @@ DEFAULTS = VisualThoughtLaunchConfig(
     decoder_task_config_path=str(CONFIG_ROOT / "visual_thought" / "dino_decoder.yaml"),  # target_kind: token_sequence
     batch_size=8,
     gradient_accumulation_steps=1,
-    decoder_optimizer_lr=1e-4,
+    decoder_optimizer_lr=1e-3,
     xvla_optimizer_lr=1e-5,
     wandb_enable=True,
     wandb_project="visual-thought",
-    steps=2500,
+    steps=5000,
     log_every=20,
     save_every=500,
     name_prefix=f"visual-thought-{RUN_TS}",
-    vis_every=10,
+    vis_every=500,
+    vis_num_samples=3,
+    vis_final=False,
+    validation_enable=True,
+    validation_split_ratio=0.1,
+    validation_freq=250,
+    validation_max_batches=10,
 )
 
 # DINO distill_only: no target cache needed (teacher = stock dinov2 vitb14 from torch.hub).
-# decoder_init_path is NOT required for distill_only — the student decoder is trained from scratch.
-# The empty spec inherits expert_type/dataset/configs from DEFAULTS above.
 EXPERIMENTS = [
+    # VisualThoughtExperimentSpec(
+    #     name=DATASET_CUBES[2],
+    #     wandb_run_name=DATASET_CUBES[2],
+    #     dataset_name=DATASET_CUBES[0],
+    #     dataset_revision=DATASET_CUBES[1],
+    # ),
+    # VisualThoughtExperimentSpec(
+    #     name=DATASET_CLOTH_BOX[2],
+    #     wandb_run_name=DATASET_CLOTH_BOX[2],
+    #     dataset_name=DATASET_CLOTH_BOX[0],
+    #     dataset_revision=DATASET_CLOTH_BOX[1],
+    # ),
     VisualThoughtExperimentSpec(
-        name=f"dino_tokenseq_distill_cubes_{RUN_TS}",
-        wandb_run_name=f"dino_tokenseq_distill_cubes_{RUN_TS}",
-    ),
+        name=DATASET_CLOTH_BOX[2],
+        wandb_run_name=DATASET_CLOTH_BOX[2],
+        dataset_name=DATASET_CLOTH_BOX[0],
+        dataset_revision=DATASET_CLOTH_BOX[1],
+        decoder_stack_config_path="/home/jose/EMAI-Thesis/vla_workspace/config/visual_thought/dino_stackfn4.yaml"
+    )
 ]
 
+from dataclasses import replace
+EXPERIMENTS = [replace(exp, name=f"{exp.name}{i}", wandb_run_name=f"{exp.wandb_run_name}{i}" if exp.wandb_run_name else None) for i, exp in enumerate(EXPERIMENTS)]
 
 def main() -> None:
     run_experiments(workspace_dir=WORKSPACE_DIR, defaults=DEFAULTS, experiments=EXPERIMENTS)

@@ -1,11 +1,11 @@
 stack:
   decoder_dim: 768
-  num_decoder_tokens: 4
+  num_decoder_tokens: 1
   num_heads: 32
   num_layers: 4
   ffn_enabled: true
-  ffn_mlp_ratio: 4.0
-  ffn_dropout: 0.1
+  ffn_mlp_ratio: 8.0
+  ffn_dropout: 0.2
   self_attn_queries: true
   self_attn_student: false
   gating_enabled: true
@@ -13,5 +13,5 @@ stack:
   cross_attn_residual: true
   student_projection_mode: res_mlp
   student_projection_mlp_ratio: 4.0
-  student_projection_dropout: 0.01
+  student_projection_dropout: 0.05
   positional_encodings: false
