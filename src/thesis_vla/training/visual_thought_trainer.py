@@ -24,7 +24,7 @@ from thesis_vla.common.paths import RUNTIME_CACHE_DIR
 from thesis_vla.inference.xvla_runtime import make_xvla_runtime_processors, resolve_xvla_rename_map, sync_xvla_policy_config
 from thesis_vla.visual_thought import CeDirNetDistillationModel, DinoFeatureAlignmentModel, DinoTokenSequenceModel, compute_feature_alignment_loss, load_cedirnet_decoder_config, load_dino_decoder_config
 from thesis_vla.visual_thought.cedirnet_cache import CeDiRNetTargetCache
-from thesis_vla.visual_thought.checkpoints import DECODER_STATE_FILENAME, POLICY_DIRNAME, load_decoder_state, load_visual_thought_checkpoint_metadata, save_visual_thought_checkpoint
+from thesis_vla.visual_thought.checkpoints import DECODER_STATE_FILENAME, POLICY_DIRNAME, TRAINER_STATE_FILENAME, load_decoder_state, load_visual_thought_checkpoint_metadata, save_visual_thought_checkpoint
 from thesis_vla.visual_thought.targets import TeacherTarget, compute_teacher_loss
 from thesis_vla.visual_thought.teachers import DinoV2Teacher
 
@@ -728,7 +728,7 @@ def _hub_step_dir(step: int) -> str:
 
 def _push_checkpoint_to_hub(checkpoint_dir: Path, repo_id: str, step: int, commit_message: str) -> bool:
     path_in_repo = _hub_step_dir(step)
-    result = push_folder_to_hub(folder_path=checkpoint_dir, repo_id=repo_id, repo_type="model", path_in_repo=path_in_repo, commit_message=commit_message, upload_config=TRAINING_HUB_UPLOAD_CONFIG)
+    result = push_folder_to_hub(folder_path=checkpoint_dir, repo_id=repo_id, repo_type="model", path_in_repo=path_in_repo, commit_message=commit_message, ignore_patterns=[TRAINER_STATE_FILENAME], upload_config=TRAINING_HUB_UPLOAD_CONFIG)
     if result.ok:
         clear_hub_upload_failure_marker(checkpoint_dir)
         return True

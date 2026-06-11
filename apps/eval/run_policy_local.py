@@ -151,8 +151,9 @@ def validate_configuration():
 
 
 def resolve_pretrained_policy_path(path: str) -> str:
-    download_allow_patterns = ["policy", "policy/*", "policy/**"]
+    download_allow_patterns = ["policy", "policy/*", "policy/**", "config.json"]
     revision = None
+    subdir = None
 
     def _resolved_dir(candidate: Path) -> str:
         migrated = candidate.parent / f"{candidate.name}_migrated"
@@ -165,8 +166,13 @@ def resolve_pretrained_policy_path(path: str) -> str:
             return str(candidate)
         return str(candidate)
 
+    if "::" in path:
+        path, subdir = path.split("::", 1)
+        subdir = subdir.strip("/") or None
     candidate = Path(path).expanduser()
     if candidate.exists():
+        if subdir is not None:
+            candidate = candidate / subdir
         return _resolved_dir(candidate)
     if candidate.is_absolute() or path.startswith(".") or path.startswith("~"):
         raise FileNotFoundError(f"Local policy path does not exist: {candidate}")
@@ -174,7 +180,14 @@ def resolve_pretrained_policy_path(path: str) -> str:
         path, revision = path.rsplit("@", 1)
     if "/" not in path:
         return path
+    if subdir is not None: download_allow_patterns = [f"{subdir}/policy", f"{subdir}/policy/*", f"{subdir}/policy/**", f"{subdir}/config.json"]
     local_root = Path(snapshot_download(repo_id=path, repo_type="model", allow_patterns=download_allow_patterns, revision=revision))
+    if subdir is not None:
+        target_root = local_root / subdir
+        resolved = _resolved_dir(target_root)
+        if Path(resolved).exists() and (Path(resolved) / "config.json").exists():
+            return resolved
+        raise FileNotFoundError(f"Downloaded repo {path!r} does not contain a policy under subdir {subdir!r}.")
     migrated = local_root.parent / f"{local_root.name}_migrated"
     if migrated.exists() and (migrated / "config.json").exists():
         return str(migrated)
@@ -183,6 +196,12 @@ def resolve_pretrained_policy_path(path: str) -> str:
         return str(nested_policy)
     if (local_root / "config.json").exists():
         return str(local_root)
+    staged_candidates = sorted([child for child in local_root.iterdir() if child.is_dir() and child.name.startswith("step_") and ((child / "policy" / "config.json").exists() or (child / "config.json").exists())])
+    if len(staged_candidates) == 1:
+        return _resolved_dir(staged_candidates[0])
+    if staged_candidates:
+        example = ", ".join(child.name for child in staged_candidates[:5])
+        raise FileNotFoundError(f"Downloaded repo {path!r} stores checkpoints under subdirectories ({example}). Use policy_path like '{path}::{staged_candidates[-1].name}'.")
     raise FileNotFoundError(f"Downloaded repo {path!r} does not contain config.json at root or policy/config.json.")
 
 # CONFIGURATION
@@ -225,7 +244,7 @@ FOLD_128_50K        = None
 
 
 # WITH IMPLICIT CEDIRNET
-IMPLICIT_CEDIRNET = FOLD_64_15K
+IMPLICIT_CEDIRNET = "edgarcancinoe/cedirnet_joint_stage_20260611_195850_cloth_fold::step_0000500"
 # -----------------------------------------------------------------------------------------------
 
 # PICKPLACE -------------------------------------------------------------------------------------
