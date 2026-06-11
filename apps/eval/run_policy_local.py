@@ -244,7 +244,7 @@ FOLD_128_50K        = None
 
 
 # WITH IMPLICIT CEDIRNET
-IMPLICIT_CEDIRNET = "edgarcancinoe/cedirnet_joint_stage_20260611_195850_cloth_fold::step_0000500"
+IMPLICIT_CEDIRNET = "edgarcancinoe/cedirnet_joint_stage_20260611_203608_cloth_fold::step_0000500"
 # -----------------------------------------------------------------------------------------------
 
 # PICKPLACE -------------------------------------------------------------------------------------
