@@ -78,8 +78,16 @@ class VisualThoughtLaunchConfig:
     batch_size: int = 8
     gradient_accumulation_steps: int = 1
     weight_decay: float = 0.01
+    xvla_adaptation_mode: str | None = None
+    xvla_freeze_steps: int | None = None
+    xvla_warmup_steps: int | None = None
+    xvla_learning_coef: float | None = None
+    xvla_optimizer_soft_prompt_lr_scale: float | None = None
+    xvla_optimizer_soft_prompt_warmup_lr_scale: float | None = None
+    xvla_scheduler_warmup_steps: int | None = None
+    xvla_scheduler_decay_steps: int | None = None
+    xvla_scheduler_decay_lr: float | None = None
     decoder_optimizer_lr: float = 1e-4
-    xvla_optimizer_lr: float = 1e-5
     action_loss_weight: float = 1.0
     expert_loss_weight: float = 1.0
     cedirnet_expert_loss_weight: float = 1.0
@@ -141,8 +149,16 @@ class VisualThoughtExperimentSpec:
     push_every: int | None = None
     batch_size: int | None = None
     gradient_accumulation_steps: int | None = None
+    xvla_adaptation_mode: str | None = None
+    xvla_freeze_steps: int | None = None
+    xvla_warmup_steps: int | None = None
+    xvla_learning_coef: float | None = None
+    xvla_optimizer_soft_prompt_lr_scale: float | None = None
+    xvla_optimizer_soft_prompt_warmup_lr_scale: float | None = None
+    xvla_scheduler_warmup_steps: int | None = None
+    xvla_scheduler_decay_steps: int | None = None
+    xvla_scheduler_decay_lr: float | None = None
     decoder_optimizer_lr: float | None = None
-    xvla_optimizer_lr: float | None = None
     action_loss_weight: float | None = None
     expert_loss_weight: float | None = None
     cedirnet_expert_loss_weight: float | None = None
@@ -207,8 +223,16 @@ class ResolvedVisualThoughtExperiment:
     batch_size: int
     gradient_accumulation_steps: int
     weight_decay: float
+    xvla_adaptation_mode: str | None
+    xvla_freeze_steps: int | None
+    xvla_warmup_steps: int | None
+    xvla_learning_coef: float | None
+    xvla_optimizer_soft_prompt_lr_scale: float | None
+    xvla_optimizer_soft_prompt_warmup_lr_scale: float | None
+    xvla_scheduler_warmup_steps: int | None
+    xvla_scheduler_decay_steps: int | None
+    xvla_scheduler_decay_lr: float | None
     decoder_optimizer_lr: float
-    xvla_optimizer_lr: float
     action_loss_weight: float
     expert_loss_weight: float
     cedirnet_expert_loss_weight: float
@@ -335,8 +359,16 @@ def resolve_experiment(workspace_dir: Path, defaults: VisualThoughtLaunchConfig,
         batch_size=experiment.batch_size if experiment.batch_size is not None else defaults.batch_size,
         gradient_accumulation_steps=experiment.gradient_accumulation_steps if experiment.gradient_accumulation_steps is not None else defaults.gradient_accumulation_steps,
         weight_decay=defaults.weight_decay,
+        xvla_adaptation_mode=experiment.xvla_adaptation_mode if experiment.xvla_adaptation_mode is not None else defaults.xvla_adaptation_mode,
+        xvla_freeze_steps=experiment.xvla_freeze_steps if experiment.xvla_freeze_steps is not None else defaults.xvla_freeze_steps,
+        xvla_warmup_steps=experiment.xvla_warmup_steps if experiment.xvla_warmup_steps is not None else defaults.xvla_warmup_steps,
+        xvla_learning_coef=experiment.xvla_learning_coef if experiment.xvla_learning_coef is not None else defaults.xvla_learning_coef,
+        xvla_optimizer_soft_prompt_lr_scale=experiment.xvla_optimizer_soft_prompt_lr_scale if experiment.xvla_optimizer_soft_prompt_lr_scale is not None else defaults.xvla_optimizer_soft_prompt_lr_scale,
+        xvla_optimizer_soft_prompt_warmup_lr_scale=experiment.xvla_optimizer_soft_prompt_warmup_lr_scale if experiment.xvla_optimizer_soft_prompt_warmup_lr_scale is not None else defaults.xvla_optimizer_soft_prompt_warmup_lr_scale,
+        xvla_scheduler_warmup_steps=experiment.xvla_scheduler_warmup_steps if experiment.xvla_scheduler_warmup_steps is not None else defaults.xvla_scheduler_warmup_steps,
+        xvla_scheduler_decay_steps=experiment.xvla_scheduler_decay_steps if experiment.xvla_scheduler_decay_steps is not None else defaults.xvla_scheduler_decay_steps,
+        xvla_scheduler_decay_lr=experiment.xvla_scheduler_decay_lr if experiment.xvla_scheduler_decay_lr is not None else defaults.xvla_scheduler_decay_lr,
         decoder_optimizer_lr=experiment.decoder_optimizer_lr if experiment.decoder_optimizer_lr is not None else defaults.decoder_optimizer_lr,
-        xvla_optimizer_lr=experiment.xvla_optimizer_lr if experiment.xvla_optimizer_lr is not None else defaults.xvla_optimizer_lr,
         action_loss_weight=experiment.action_loss_weight if experiment.action_loss_weight is not None else defaults.action_loss_weight,
         expert_loss_weight=experiment.expert_loss_weight if experiment.expert_loss_weight is not None else defaults.expert_loss_weight,
         cedirnet_expert_loss_weight=experiment.cedirnet_expert_loss_weight if experiment.cedirnet_expert_loss_weight is not None else defaults.cedirnet_expert_loss_weight,
@@ -462,8 +494,11 @@ def print_run_summary(index: int, total: int, resolved: ResolvedVisualThoughtExp
     print(f"  Steps:              {resolved.steps}")
     print(f"  Batch Size:         {resolved.batch_size}")
     print(f"  Grad Accum:         {resolved.gradient_accumulation_steps}")
+    print(f"  XVLA Adaptation:    {resolved.xvla_adaptation_mode}")
+    print(f"  XVLA Freeze Steps:  {resolved.xvla_freeze_steps}")
+    print(f"  XVLA Warmup Steps:  {resolved.xvla_warmup_steps}")
+    print(f"  XVLA Learn Coef:    {resolved.xvla_learning_coef}")
     print(f"  Decoder LR:         {resolved.decoder_optimizer_lr}")
-    print(f"  XVLA LR:            {resolved.xvla_optimizer_lr}")
     print(f"  Dry Run:            {resolved.runtime.dry_run}")
     print(f"  Command:            {' '.join(cmd)}")
     print("=" * 88)

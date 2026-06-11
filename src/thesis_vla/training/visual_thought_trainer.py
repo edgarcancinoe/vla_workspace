@@ -67,8 +67,16 @@ class VisualThoughtTrainConfig:
     log_every: int = 20
     save_every: int = 500
     weight_decay: float = 0.01
+    xvla_adaptation_mode: str | None = None
+    xvla_freeze_steps: int | None = None
+    xvla_warmup_steps: int | None = None
+    xvla_learning_coef: float | None = None
+    xvla_optimizer_soft_prompt_lr_scale: float | None = None
+    xvla_optimizer_soft_prompt_warmup_lr_scale: float | None = None
+    xvla_scheduler_warmup_steps: int | None = None
+    xvla_scheduler_decay_steps: int | None = None
+    xvla_scheduler_decay_lr: float | None = None
     decoder_optimizer_lr: float = 1e-4
-    xvla_optimizer_lr: float = 1e-5
     action_loss_weight: float = 1.0
     expert_loss_weight: float = 1.0
     cedirnet_expert_loss_weight: float = 1.0
@@ -107,6 +115,7 @@ class VisualThoughtTrainConfig:
     @classmethod
     def from_json(cls, path: str | Path) -> "VisualThoughtTrainConfig":
         payload = json.loads(Path(path).read_text())
+        payload.pop("xvla_optimizer_lr", None)
         if "cuda_visible_devices" in payload: payload["cuda_visible_devices"] = tuple(int(device) for device in payload["cuda_visible_devices"])
         if "expert_types" in payload and payload["expert_types"] is not None: payload["expert_types"] = tuple(str(expert) for expert in payload["expert_types"])
         return cls(**payload)
@@ -360,6 +369,22 @@ def _resolve_policy_device(config: VisualThoughtTrainConfig) -> str:
     return "cpu" if config.training_stage == "distill_only" else _as_device(config)
 
 
+def _apply_xvla_training_overrides(policy_cfg, config: VisualThoughtTrainConfig) -> None:
+    overrides = {
+        "adaptation_mode": config.xvla_adaptation_mode,
+        "freeze_steps": config.xvla_freeze_steps,
+        "warmup_steps": config.xvla_warmup_steps,
+        "learning_coef": config.xvla_learning_coef,
+        "optimizer_soft_prompt_lr_scale": config.xvla_optimizer_soft_prompt_lr_scale,
+        "optimizer_soft_prompt_warmup_lr_scale": config.xvla_optimizer_soft_prompt_warmup_lr_scale,
+        "scheduler_warmup_steps": config.xvla_scheduler_warmup_steps,
+        "scheduler_decay_steps": config.xvla_scheduler_decay_steps,
+        "scheduler_decay_lr": config.xvla_scheduler_decay_lr,
+    }
+    for key, value in overrides.items():
+        if value is not None: setattr(policy_cfg, key, value)
+
+
 def _move_inputs_for_vlm(inputs: dict[str, torch.Tensor], device: str) -> dict[str, torch.Tensor]:
     return {key: value.to(device) if torch.is_tensor(value) else value for key, value in inputs.items()}
 
@@ -406,6 +431,7 @@ def build_xvla_runtime(config: VisualThoughtTrainConfig) -> XVLARuntime:
     rename_map = resolve_xvla_rename_map(getattr(dataset.meta, "camera_keys", []))
     policy_cfg = PreTrainedConfig.from_pretrained(config.xvla_init_path)
     sync_xvla_policy_config(policy_cfg, dataset.meta, rename_map)
+    _apply_xvla_training_overrides(policy_cfg, config)
     policy_device = _resolve_policy_device(config)
     if hasattr(policy_cfg, "device"): policy_cfg.device = policy_device
     policy = XVLAPolicy.from_pretrained(config.xvla_init_path, config=policy_cfg, device=policy_device)
@@ -864,22 +890,22 @@ def train_visual_thought(config: VisualThoughtTrainConfig) -> None:
     while step < config.steps:
         for raw_batch in loader:
             if step >= config.steps: break
-            step += 1
-
+            current_step = step + 1
             processed_batch = preprocess_batch(runtime, raw_batch)
             target = {expert_type: load_teacher_target(config, teacher[expert_type], raw_batch, runtime.teacher_image_key, expert_type=expert_type) for expert_type in resolve_expert_types(config)} if isinstance(decoder, dict) else load_teacher_target(config, teacher, raw_batch, runtime.teacher_image_key)
             with accelerator.accumulate(train_module):
                 if is_joint:
-                    total_loss, expert_stats, action_stats = train_module(processed_batch, target, step)
+                    total_loss, expert_stats, action_stats = train_module(processed_batch, target, current_step)
                 else:
                     _, enc = build_xvla_inputs(runtime, processed_batch, config, apply_cutout=True)
-                    expert_loss, expert_stats = compute_expert_loss(config, decoder, task_cfg, target, enc["vlm_features"], step); total_loss, action_stats = float(config.expert_loss_weight) * expert_loss, {}
+                    expert_loss, expert_stats = compute_expert_loss(config, decoder, task_cfg, target, enc["vlm_features"], current_step); total_loss, action_stats = float(config.expert_loss_weight) * expert_loss, {}
                 accelerator.backward(total_loss)
-                if accelerator.sync_gradients:
-                    accelerator.clip_grad_norm_(train_module.parameters(), XVLA_GRAD_CLIP_NORM)
-                    step_optimizer(optimizer)
-                    zero_optimizer_grad(optimizer)
+                if not accelerator.sync_gradients: continue
+                accelerator.clip_grad_norm_(train_module.parameters(), XVLA_GRAD_CLIP_NORM)
+                step_optimizer(optimizer)
+                zero_optimizer_grad(optimizer)
 
+            step = current_step
             if is_main and step % max(int(config.log_every), 1) == 0:
                 metrics = {"event": "train_step", "step": int(step), "loss": float(total_loss.detach().item()), **expert_stats, **action_stats, **optimizer_metrics(optimizer)}
                 print(json.dumps(metrics))
