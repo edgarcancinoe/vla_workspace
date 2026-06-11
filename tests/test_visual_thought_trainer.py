@@ -5,7 +5,7 @@ import tempfile
 import torch
 sys.path.append(str(Path(__file__).resolve().parents[1] / "src"))
 
-from thesis_vla.training.visual_thought_trainer import VisualThoughtTrainConfig, compute_expert_loss, compute_xvla_action_loss_from_encoder, load_decoder_init_if_present, set_policy_trainability
+from thesis_vla.training.visual_thought_trainer import VisualThoughtTrainConfig, compute_expert_loss, compute_expert_losses, compute_xvla_action_loss_from_encoder, load_decoder_init_if_present, set_policy_trainability
 from thesis_vla.visual_thought import CeDirNetDistillationModel, DinoFeatureAlignmentModel, DinoTokenSequenceModel, TeacherTarget, load_cedirnet_decoder_config, load_dino_decoder_config
 from thesis_vla.visual_thought.checkpoints import DECODER_STATE_FILENAME, save_decoder_state, save_visual_thought_checkpoint
 
@@ -99,6 +99,21 @@ def test_dino_token_sequence_default_step_smoke():
     assert stats["expert_stage"] == 0.0
 
 
+def test_combined_cedirnet_dino_expert_losses_smoke():
+    cedirnet_cfg = load_cedirnet_decoder_config()
+    dino_cfg = load_dino_decoder_config()
+    trainer_cfg = VisualThoughtTrainConfig(name="demo", training_stage="joint_multitask", expert_type="cedirnet", expert_types=("cedirnet", "dino"), xvla_init_path="x", decoder_init_path=None, decoder_stack_config_path="a", decoder_task_config_path="b", cedirnet_decoder_init_path="c", cedirnet_decoder_stack_config_path="cs", cedirnet_decoder_task_config_path="ct", dino_decoder_init_path="d", dino_decoder_stack_config_path="ds", dino_decoder_task_config_path="dt", dataset_repo_id="repo", dataset_revision="main", dataset_root=None, output_dir="/tmp/out", device="cpu", cedirnet_expert_loss_weight=0.5, dino_expert_loss_weight=0.25)
+    cedirnet_decoder = CeDirNetDistillationModel.from_config(student_vlm_dim=64, cfg=cedirnet_cfg)
+    cedirnet_target = TeacherTarget(name="cedirnet", tensor=torch.randn(2, cedirnet_cfg.teacher.out_channels, 64, 64), kind="dense_map", loss_type="mse", weight=1.0)
+    dino_target = TeacherTarget(name="dinov2", tensor=torch.randn(2, 64, 768), kind="token_sequence", loss_type="mse", weight=1.0)
+    dino_decoder = DinoTokenSequenceModel.from_config(student_vlm_dim=64, target=dino_target, cfg=dino_cfg)
+    loss, stats = compute_expert_losses(trainer_cfg, {"cedirnet": cedirnet_decoder, "dino": dino_decoder}, {"cedirnet": cedirnet_cfg, "dino": dino_cfg}, {"cedirnet": cedirnet_target, "dino": dino_target}, torch.randn(2, 256, 64), step=1)
+    assert loss.ndim == 0
+    assert "cedirnet_expert_total" in stats
+    assert "dino_expert_total" in stats
+    assert "expert_total_combined" in stats
+
+
 def test_joint_step_reports_action_and_expert_losses():
     policy = _FakePolicy()
     processed_batch = {"action": torch.randn(2, 4, 6)}
@@ -152,3 +167,16 @@ def test_visual_thought_checkpoint_saves_processors():
         save_visual_thought_checkpoint(checkpoint_dir=root, policy=_FakeSavePolicy(), decoder=model, trainer_state={"step": 1}, metadata={"name": "demo"}, config_snapshot={"device": "cpu"}, preprocessor=_FakeProcessor("policy_preprocessor.json"), postprocessor=_FakeProcessor("policy_postprocessor.json"))
         assert (root / "policy" / "policy_preprocessor.json").is_file()
         assert (root / "policy" / "policy_postprocessor.json").is_file()
+
+
+def test_visual_thought_checkpoint_saves_multi_decoder_states():
+    cedirnet_cfg = load_cedirnet_decoder_config()
+    dino_cfg = load_dino_decoder_config()
+    cedirnet_model = CeDirNetDistillationModel.from_config(student_vlm_dim=64, cfg=cedirnet_cfg)
+    dino_target = TeacherTarget(name="dinov2", tensor=torch.randn(2, 64, 768), kind="token_sequence", loss_type="mse", weight=1.0)
+    dino_model = DinoTokenSequenceModel.from_config(student_vlm_dim=64, target=dino_target, cfg=dino_cfg)
+    with tempfile.TemporaryDirectory() as tmpdir:
+        root = Path(tmpdir) / "ckpt"
+        save_visual_thought_checkpoint(checkpoint_dir=root, policy=_FakeSavePolicy(), decoder={"cedirnet": cedirnet_model, "dino": dino_model}, trainer_state={"step": 1}, metadata={"name": "demo", "expert_types": ["cedirnet", "dino"]}, config_snapshot={"device": "cpu"})
+        assert (root / "decoder_cedirnet.safetensors").is_file()
+        assert (root / "decoder_dino.safetensors").is_file()

@@ -38,11 +38,19 @@ class VisualThoughtLaunchConfig:
     runtime: VisualThoughtRuntimeConfig = VisualThoughtRuntimeConfig()
     training_stage: TrainingStage = "distill_only"
     expert_type: ExpertType = "cedirnet"
+    expert_types: tuple[ExpertType, ...] | None = None
     xvla_init_path: str = "lerobot/xvla-base"
     decoder_init_path: str | None = None
     decoder_stack_config_path: str = ""
     decoder_task_config_path: str = ""
+    cedirnet_decoder_init_path: str | None = None
+    cedirnet_decoder_stack_config_path: str | None = None
+    cedirnet_decoder_task_config_path: str | None = None
+    dino_decoder_init_path: str | None = None
+    dino_decoder_stack_config_path: str | None = None
+    dino_decoder_task_config_path: str | None = None
     teacher_image_feature_key: str = "observation.images.image"
+    teacher_target_cache_root: str | None = None
     dataset_video_backend: str = "pyav"
     dataset_tolerance_s: float = 1e-4
     wandb_enable: bool = False
@@ -56,6 +64,14 @@ class VisualThoughtLaunchConfig:
     vis_every: int = 0
     vis_num_samples: int = 4
     vis_final: bool = True
+    cutout_enable: bool = False
+    cutout_prob: float = 0.3
+    cutout_num_patches: int = 1
+    cutout_area_min: float = 0.05
+    cutout_area_max: float = 0.15
+    cutout_aspect_min: float = 0.75
+    cutout_aspect_max: float = 1.5
+    cutout_fill: float = 0.0
     push_to_hub: bool = False
     push_repo_id: str | None = None
     push_every: int = 0
@@ -66,6 +82,8 @@ class VisualThoughtLaunchConfig:
     xvla_optimizer_lr: float = 1e-5
     action_loss_weight: float = 1.0
     expert_loss_weight: float = 1.0
+    cedirnet_expert_loss_weight: float = 1.0
+    dino_expert_loss_weight: float = 1.0
     align_feature_until_step: int = 0
     steps: int = 2_500
     log_every: int = 20
@@ -84,11 +102,19 @@ class VisualThoughtExperimentSpec:
     dataset_root: str | None = None
     training_stage: TrainingStage | None = None
     expert_type: ExpertType | None = None
+    expert_types: tuple[ExpertType, ...] | None = None
     xvla_init_path: str | None = None
     decoder_init_path: str | None = None
     decoder_stack_config_path: str | None = None
     decoder_task_config_path: str | None = None
+    cedirnet_decoder_init_path: str | None = None
+    cedirnet_decoder_stack_config_path: str | None = None
+    cedirnet_decoder_task_config_path: str | None = None
+    dino_decoder_init_path: str | None = None
+    dino_decoder_stack_config_path: str | None = None
+    dino_decoder_task_config_path: str | None = None
     teacher_image_feature_key: str | None = None
+    teacher_target_cache_root: str | None = None
     dataset_video_backend: str | None = None
     dataset_tolerance_s: float | None = None
     wandb_enable: bool | None = None
@@ -102,6 +128,14 @@ class VisualThoughtExperimentSpec:
     vis_every: int | None = None
     vis_num_samples: int | None = None
     vis_final: bool | None = None
+    cutout_enable: bool | None = None
+    cutout_prob: float | None = None
+    cutout_num_patches: int | None = None
+    cutout_area_min: float | None = None
+    cutout_area_max: float | None = None
+    cutout_aspect_min: float | None = None
+    cutout_aspect_max: float | None = None
+    cutout_fill: float | None = None
     push_to_hub: bool | None = None
     push_repo_id: str | None = None
     push_every: int | None = None
@@ -111,6 +145,8 @@ class VisualThoughtExperimentSpec:
     xvla_optimizer_lr: float | None = None
     action_loss_weight: float | None = None
     expert_loss_weight: float | None = None
+    cedirnet_expert_loss_weight: float | None = None
+    dino_expert_loss_weight: float | None = None
     align_feature_until_step: int | None = None
     steps: int | None = None
     log_every: int | None = None
@@ -131,11 +167,19 @@ class ResolvedVisualThoughtExperiment:
     runtime: VisualThoughtRuntimeConfig
     training_stage: TrainingStage
     expert_type: ExpertType
+    expert_types: tuple[ExpertType, ...]
     xvla_init_path: str
     decoder_init_path: str | None
     decoder_stack_config_path: str
     decoder_task_config_path: str
+    cedirnet_decoder_init_path: str | None
+    cedirnet_decoder_stack_config_path: str | None
+    cedirnet_decoder_task_config_path: str | None
+    dino_decoder_init_path: str | None
+    dino_decoder_stack_config_path: str | None
+    dino_decoder_task_config_path: str | None
     teacher_image_feature_key: str
+    teacher_target_cache_root: str | None
     dataset_video_backend: str
     dataset_tolerance_s: float
     wandb_enable: bool
@@ -149,6 +193,14 @@ class ResolvedVisualThoughtExperiment:
     vis_every: int
     vis_num_samples: int
     vis_final: bool
+    cutout_enable: bool
+    cutout_prob: float
+    cutout_num_patches: int
+    cutout_area_min: float
+    cutout_area_max: float
+    cutout_aspect_min: float
+    cutout_aspect_max: float
+    cutout_fill: float
     push_to_hub: bool
     push_repo_id: str | None
     push_every: int
@@ -159,6 +211,8 @@ class ResolvedVisualThoughtExperiment:
     xvla_optimizer_lr: float
     action_loss_weight: float
     expert_loss_weight: float
+    cedirnet_expert_loss_weight: float
+    dino_expert_loss_weight: float
     align_feature_until_step: int
     steps: int
     log_every: int
@@ -177,6 +231,17 @@ def _slug(value: str) -> str:
     return value.split("/")[-1].replace("_", "-")
 
 
+def _normalize_expert_types(expert_type: ExpertType | None, expert_types: tuple[ExpertType, ...] | list[ExpertType] | None) -> tuple[ExpertType, ...]:
+    if expert_types is not None:
+        normalized = tuple(str(item) for item in expert_types)
+        if not normalized: raise ValueError("expert_types must be non-empty when provided.")
+        invalid = [item for item in normalized if item not in {"cedirnet", "dino"}]
+        if invalid: raise ValueError(f"Unsupported expert_types={invalid}.")
+        return normalized  # type: ignore[return-value]
+    if expert_type is None: raise ValueError("expert_type is required when expert_types is not provided.")
+    return (expert_type,)
+
+
 def _with_overrides(base, **overrides):
     valid = {field.name for field in fields(base)}
     payload = {key: value for key, value in overrides.items() if key in valid and value is not None}
@@ -187,16 +252,37 @@ def resolve_experiment(workspace_dir: Path, defaults: VisualThoughtLaunchConfig,
     runtime = _with_overrides(defaults.runtime, launch_mode=experiment.launch_mode, cuda_devices=experiment.cuda_devices, num_workers=experiment.num_workers)
     dataset_repo_id = _resolve_hf_repo_id(experiment.dataset_name or defaults.dataset_name, defaults.hf_user)
     training_stage = experiment.training_stage or defaults.training_stage
-    expert_type = experiment.expert_type or defaults.expert_type
+    expert_types = _normalize_expert_types(experiment.expert_type or defaults.expert_type, experiment.expert_types if experiment.expert_types is not None else defaults.expert_types)
+    expert_type = expert_types[0]
     xvla_init_path = experiment.xvla_init_path or defaults.xvla_init_path
     decoder_init_path = experiment.decoder_init_path if experiment.decoder_init_path is not None else defaults.decoder_init_path
     decoder_stack_config_path = experiment.decoder_stack_config_path or defaults.decoder_stack_config_path
     decoder_task_config_path = experiment.decoder_task_config_path or defaults.decoder_task_config_path
+    cedirnet_decoder_init_path = experiment.cedirnet_decoder_init_path if experiment.cedirnet_decoder_init_path is not None else defaults.cedirnet_decoder_init_path
+    cedirnet_decoder_stack_config_path = experiment.cedirnet_decoder_stack_config_path or defaults.cedirnet_decoder_stack_config_path
+    cedirnet_decoder_task_config_path = experiment.cedirnet_decoder_task_config_path or defaults.cedirnet_decoder_task_config_path
+    dino_decoder_init_path = experiment.dino_decoder_init_path if experiment.dino_decoder_init_path is not None else defaults.dino_decoder_init_path
+    dino_decoder_stack_config_path = experiment.dino_decoder_stack_config_path or defaults.dino_decoder_stack_config_path
+    dino_decoder_task_config_path = experiment.dino_decoder_task_config_path or defaults.dino_decoder_task_config_path
     if not xvla_init_path: raise ValueError("xvla_init_path is required.")
-    if not decoder_stack_config_path or not decoder_task_config_path: raise ValueError("decoder_stack_config_path and decoder_task_config_path are required.")
-    if training_stage == "joint_multitask" and not decoder_init_path: raise ValueError("decoder_init_path is required for joint_multitask runs.")
+    if len(expert_types) == 1:
+        if not decoder_stack_config_path or not decoder_task_config_path: raise ValueError("decoder_stack_config_path and decoder_task_config_path are required.")
+        if training_stage == "joint_multitask" and not decoder_init_path: raise ValueError("decoder_init_path is required for joint_multitask runs.")
+    else:
+        if training_stage != "joint_multitask": raise ValueError("Combined expert_types mode is supported for joint_multitask only.")
+        if tuple(expert_types) != ("cedirnet", "dino"): raise ValueError(f"Combined expert_types must be ('cedirnet', 'dino'), got {expert_types!r}.")
+        required = {
+            "cedirnet_decoder_init_path": cedirnet_decoder_init_path,
+            "cedirnet_decoder_stack_config_path": cedirnet_decoder_stack_config_path,
+            "cedirnet_decoder_task_config_path": cedirnet_decoder_task_config_path,
+            "dino_decoder_init_path": dino_decoder_init_path,
+            "dino_decoder_stack_config_path": dino_decoder_stack_config_path,
+            "dino_decoder_task_config_path": dino_decoder_task_config_path,
+        }
+        missing = [key for key, value in required.items() if not value]
+        if missing: raise ValueError(f"Combined expert_types mode requires {', '.join(missing)}.")
     run_timestamp = timestamp or dt.datetime.now().strftime("%Y%m%d_%H%M%S")
-    name = experiment.name or f"{defaults.name_prefix}_{training_stage}_{expert_type}_{_slug(dataset_repo_id)}_{run_timestamp}"
+    name = experiment.name or f"{defaults.name_prefix}_{training_stage}_{'-'.join(expert_types)}_{_slug(dataset_repo_id)}_{run_timestamp}"
     output_dir = experiment.output_dir or str(TRAIN_OUTPUT_DIR / name)
     push_to_hub = experiment.push_to_hub if experiment.push_to_hub is not None else defaults.push_to_hub
     push_repo_id = experiment.push_repo_id or defaults.push_repo_id or (_resolve_hf_repo_id(name, defaults.hf_user) if push_to_hub else None)
@@ -209,11 +295,19 @@ def resolve_experiment(workspace_dir: Path, defaults: VisualThoughtLaunchConfig,
         runtime=runtime,
         training_stage=training_stage,
         expert_type=expert_type,
+        expert_types=expert_types,
         xvla_init_path=xvla_init_path,
         decoder_init_path=decoder_init_path,
         decoder_stack_config_path=decoder_stack_config_path,
         decoder_task_config_path=decoder_task_config_path,
+        cedirnet_decoder_init_path=cedirnet_decoder_init_path,
+        cedirnet_decoder_stack_config_path=cedirnet_decoder_stack_config_path,
+        cedirnet_decoder_task_config_path=cedirnet_decoder_task_config_path,
+        dino_decoder_init_path=dino_decoder_init_path,
+        dino_decoder_stack_config_path=dino_decoder_stack_config_path,
+        dino_decoder_task_config_path=dino_decoder_task_config_path,
         teacher_image_feature_key=experiment.teacher_image_feature_key or defaults.teacher_image_feature_key,
+        teacher_target_cache_root=experiment.teacher_target_cache_root if experiment.teacher_target_cache_root is not None else defaults.teacher_target_cache_root,
         dataset_video_backend=experiment.dataset_video_backend or defaults.dataset_video_backend,
         dataset_tolerance_s=experiment.dataset_tolerance_s if experiment.dataset_tolerance_s is not None else defaults.dataset_tolerance_s,
         wandb_enable=experiment.wandb_enable if experiment.wandb_enable is not None else defaults.wandb_enable,
@@ -227,6 +321,14 @@ def resolve_experiment(workspace_dir: Path, defaults: VisualThoughtLaunchConfig,
         vis_every=experiment.vis_every if experiment.vis_every is not None else defaults.vis_every,
         vis_num_samples=experiment.vis_num_samples if experiment.vis_num_samples is not None else defaults.vis_num_samples,
         vis_final=experiment.vis_final if experiment.vis_final is not None else defaults.vis_final,
+        cutout_enable=experiment.cutout_enable if experiment.cutout_enable is not None else defaults.cutout_enable,
+        cutout_prob=experiment.cutout_prob if experiment.cutout_prob is not None else defaults.cutout_prob,
+        cutout_num_patches=experiment.cutout_num_patches if experiment.cutout_num_patches is not None else defaults.cutout_num_patches,
+        cutout_area_min=experiment.cutout_area_min if experiment.cutout_area_min is not None else defaults.cutout_area_min,
+        cutout_area_max=experiment.cutout_area_max if experiment.cutout_area_max is not None else defaults.cutout_area_max,
+        cutout_aspect_min=experiment.cutout_aspect_min if experiment.cutout_aspect_min is not None else defaults.cutout_aspect_min,
+        cutout_aspect_max=experiment.cutout_aspect_max if experiment.cutout_aspect_max is not None else defaults.cutout_aspect_max,
+        cutout_fill=experiment.cutout_fill if experiment.cutout_fill is not None else defaults.cutout_fill,
         push_to_hub=push_to_hub,
         push_repo_id=push_repo_id,
         push_every=experiment.push_every if experiment.push_every is not None else defaults.push_every,
@@ -237,6 +339,8 @@ def resolve_experiment(workspace_dir: Path, defaults: VisualThoughtLaunchConfig,
         xvla_optimizer_lr=experiment.xvla_optimizer_lr if experiment.xvla_optimizer_lr is not None else defaults.xvla_optimizer_lr,
         action_loss_weight=experiment.action_loss_weight if experiment.action_loss_weight is not None else defaults.action_loss_weight,
         expert_loss_weight=experiment.expert_loss_weight if experiment.expert_loss_weight is not None else defaults.expert_loss_weight,
+        cedirnet_expert_loss_weight=experiment.cedirnet_expert_loss_weight if experiment.cedirnet_expert_loss_weight is not None else defaults.cedirnet_expert_loss_weight,
+        dino_expert_loss_weight=experiment.dino_expert_loss_weight if experiment.dino_expert_loss_weight is not None else defaults.dino_expert_loss_weight,
         align_feature_until_step=experiment.align_feature_until_step if experiment.align_feature_until_step is not None else defaults.align_feature_until_step,
         steps=experiment.steps if experiment.steps is not None else defaults.steps,
         log_every=experiment.log_every if experiment.log_every is not None else defaults.log_every,
@@ -319,6 +423,7 @@ def print_run_summary(index: int, total: int, resolved: ResolvedVisualThoughtExp
     print(f"  Name:               {resolved.name}")
     print(f"  Stage:              {resolved.training_stage}")
     print(f"  Expert:             {resolved.expert_type}")
+    print(f"  Expert Types:       {resolved.expert_types}")
     print(f"  XVLA Init:          {resolved.xvla_init_path}")
     print(f"  Decoder Init:       {resolved.decoder_init_path}")
     print(f"  Dataset:            {resolved.dataset_repo_id}")
@@ -336,6 +441,13 @@ def print_run_summary(index: int, total: int, resolved: ResolvedVisualThoughtExp
     if resolved.vis_every > 0:
         print(f"  Vis Num Samples:    {resolved.vis_num_samples}")
     print(f"  Vis Final:          {resolved.vis_final}")
+    print(f"  Cutout Enabled:     {resolved.cutout_enable}")
+    if resolved.cutout_enable:
+        print(f"  Cutout Prob:        {resolved.cutout_prob}")
+        print(f"  Cutout Patches:     {resolved.cutout_num_patches}")
+        print(f"  Cutout Area:        [{resolved.cutout_area_min}, {resolved.cutout_area_max}]")
+        print(f"  Cutout Aspect:      [{resolved.cutout_aspect_min}, {resolved.cutout_aspect_max}]")
+        print(f"  Cutout Fill:        {resolved.cutout_fill}")
     print(f"  Push To Hub:        {resolved.push_to_hub}")
     if resolved.push_to_hub:
         print(f"  Push Repo:          {resolved.push_repo_id}")

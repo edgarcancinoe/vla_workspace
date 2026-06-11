@@ -49,6 +49,13 @@ class VisualThoughtTrainConfig:
     dataset_root: str | None
     output_dir: str
     device: str
+    expert_types: tuple[ExpertType, ...] | None = None
+    cedirnet_decoder_init_path: str | None = None
+    cedirnet_decoder_stack_config_path: str | None = None
+    cedirnet_decoder_task_config_path: str | None = None
+    dino_decoder_init_path: str | None = None
+    dino_decoder_stack_config_path: str | None = None
+    dino_decoder_task_config_path: str | None = None
     cuda_visible_devices: tuple[int, ...] = (0,)
     batch_size: int = 8
     gradient_accumulation_steps: int = 1
@@ -61,6 +68,8 @@ class VisualThoughtTrainConfig:
     xvla_optimizer_lr: float = 1e-5
     action_loss_weight: float = 1.0
     expert_loss_weight: float = 1.0
+    cedirnet_expert_loss_weight: float = 1.0
+    dino_expert_loss_weight: float = 1.0
     teacher_image_feature_key: str = "observation.images.image"
     teacher_target_cache_root: str | None = None
     dataset_video_backend: str = "pyav"
@@ -76,6 +85,14 @@ class VisualThoughtTrainConfig:
     vis_every: int = 0
     vis_num_samples: int = 4
     vis_final: bool = True
+    cutout_enable: bool = False
+    cutout_prob: float = 0.3
+    cutout_num_patches: int = 1
+    cutout_area_min: float = 0.05
+    cutout_area_max: float = 0.15
+    cutout_aspect_min: float = 0.75
+    cutout_aspect_max: float = 1.5
+    cutout_fill: float = 0.0
     push_to_hub: bool = False
     push_repo_id: str | None = None
     push_every: int = 0
@@ -88,6 +105,7 @@ class VisualThoughtTrainConfig:
     def from_json(cls, path: str | Path) -> "VisualThoughtTrainConfig":
         payload = json.loads(Path(path).read_text())
         if "cuda_visible_devices" in payload: payload["cuda_visible_devices"] = tuple(int(device) for device in payload["cuda_visible_devices"])
+        if "expert_types" in payload and payload["expert_types"] is not None: payload["expert_types"] = tuple(str(expert) for expert in payload["expert_types"])
         return cls(**payload)
 
     def to_json_dict(self) -> dict[str, Any]:
@@ -105,6 +123,52 @@ class XVLARuntime:
     policy_device: str
     vlm_device: str
     vlm_only_distill: bool
+
+
+def resolve_expert_types(config: VisualThoughtTrainConfig) -> tuple[ExpertType, ...]:
+    if config.expert_types is not None:
+        expert_types = tuple(str(expert) for expert in config.expert_types)
+        if not expert_types: raise ValueError("expert_types must be non-empty when provided.")
+        invalid = [expert for expert in expert_types if expert not in {"cedirnet", "dino"}]
+        if invalid: raise ValueError(f"Unsupported expert_types={invalid}.")
+        return expert_types  # type: ignore[return-value]
+    return (config.expert_type,)
+
+
+def is_combined_expert_run(config: VisualThoughtTrainConfig) -> bool:
+    return len(resolve_expert_types(config)) > 1
+
+
+def expert_loss_weight_for(config: VisualThoughtTrainConfig, expert_type: ExpertType) -> float:
+    return float(config.cedirnet_expert_loss_weight if expert_type == "cedirnet" else config.dino_expert_loss_weight)
+
+
+def decoder_init_path_for(config: VisualThoughtTrainConfig, expert_type: ExpertType) -> str | None:
+    if not is_combined_expert_run(config): return config.decoder_init_path
+    return config.cedirnet_decoder_init_path if expert_type == "cedirnet" else config.dino_decoder_init_path
+
+
+def decoder_config_paths_for(config: VisualThoughtTrainConfig, expert_type: ExpertType) -> tuple[str, str]:
+    if not is_combined_expert_run(config): return config.decoder_stack_config_path, config.decoder_task_config_path
+    if expert_type == "cedirnet": return str(config.cedirnet_decoder_stack_config_path), str(config.cedirnet_decoder_task_config_path)
+    return str(config.dino_decoder_stack_config_path), str(config.dino_decoder_task_config_path)
+
+
+def _validate_config(config: VisualThoughtTrainConfig) -> None:
+    expert_types = resolve_expert_types(config)
+    if len(expert_types) == 1: return
+    if config.training_stage != "joint_multitask": raise ValueError("Combined expert_types mode is supported for joint_multitask only.")
+    if tuple(expert_types) != ("cedirnet", "dino"): raise ValueError(f"Combined expert_types must be ('cedirnet', 'dino'), got {expert_types!r}.")
+    required = {
+        "cedirnet_decoder_init_path": config.cedirnet_decoder_init_path,
+        "cedirnet_decoder_stack_config_path": config.cedirnet_decoder_stack_config_path,
+        "cedirnet_decoder_task_config_path": config.cedirnet_decoder_task_config_path,
+        "dino_decoder_init_path": config.dino_decoder_init_path,
+        "dino_decoder_stack_config_path": config.dino_decoder_stack_config_path,
+        "dino_decoder_task_config_path": config.dino_decoder_task_config_path,
+    }
+    missing = [key for key, value in required.items() if not value]
+    if missing: raise ValueError(f"Combined expert_types mode requires {', '.join(missing)}.")
 
 
 def _resolve_grid_hw(target: TeacherTarget) -> tuple[int, int]:
@@ -164,26 +228,57 @@ def _overlay_map(image_chw: torch.Tensor, map_hw: torch.Tensor, alpha: float = 0
     return np.clip((1.0 - alpha) * image + alpha * heat, 0.0, 255.0).astype(np.uint8)
 
 
+def _channel_stem(index: int) -> str:
+    return f"ch{int(index):02d}"
+
+
 @torch.no_grad()
 def run_visualization(config: VisualThoughtTrainConfig, runtime: XVLARuntime, teacher, decoder: torch.nn.Module, loader: DataLoader, step: int) -> dict[str, Any]:
     if int(config.vis_num_samples) <= 0: return {"vis_skipped": "vis_num_samples"}
+    if is_combined_expert_run(config): return {"vis_skipped": "combined_expert_run"}
     decoder_was_training, policy_was_training = decoder.training, runtime.policy.training
     decoder.eval(); runtime.policy.eval()
     try:
         raw_batch = next(iter(loader))
         processed_batch = preprocess_batch(runtime, raw_batch)
-        _, enc = build_xvla_inputs(runtime, processed_batch)
+        _, enc = build_xvla_inputs(runtime, processed_batch, config)
         target = load_teacher_target(config, teacher, raw_batch, runtime.teacher_image_key)
+        vis_root = Path(config.output_dir) / "visualizations" / f"step_{int(step):07d}"; vis_root.mkdir(parents=True, exist_ok=True)
+        teacher_images = get_teacher_images(raw_batch, runtime.teacher_image_key); gallery = []
+        sample_ids = raw_batch.get("index")
+        if config.expert_type == "cedirnet" and target.kind == "dense_map":
+            prediction = decoder(enc["vlm_features"], target_map=target.tensor)
+            sample_count = min(int(config.vis_num_samples), int(prediction.shape[0]))
+            target_maps = target.tensor.detach().cpu(); pred_maps = prediction.detach().cpu(); image_paths = []
+            for sample_idx in range(sample_count):
+                sample_id = int(sample_ids[sample_idx].item()) if torch.is_tensor(sample_ids) else int(sample_idx)
+                stem = vis_root / f"sample{sample_idx:02d}_{sample_id}"
+                image_path = stem.with_name(stem.name + "_image.png")
+                Image.fromarray(_to_uint8_image(teacher_images[sample_idx])).save(image_path, compress_level=1)
+                image_paths.append(str(image_path))
+                channels = []
+                for channel_idx in range(int(pred_maps.shape[1])):
+                    target_ch = target_maps[sample_idx, channel_idx]; pred_ch = pred_maps[sample_idx, channel_idx]; error_ch = (pred_ch - target_ch).abs()
+                    vmax = max(float(target_ch.max().item()), float(pred_ch.max().item())); vmin = min(float(target_ch.min().item()), float(pred_ch.min().item()))
+                    error_vmax = float(error_ch.max().item()) if float(error_ch.max().item()) > 0.0 else 1.0
+                    ch_name = _channel_stem(channel_idx)
+                    teacher_overlay_path = stem.with_name(stem.name + f"_{ch_name}_teacher.png")
+                    pred_overlay_path = stem.with_name(stem.name + f"_{ch_name}_pred.png")
+                    error_overlay_path = stem.with_name(stem.name + f"_{ch_name}_error.png")
+                    Image.fromarray(_overlay_map(teacher_images[sample_idx], target_ch, vmin=vmin, vmax=vmax)).save(teacher_overlay_path, compress_level=1)
+                    Image.fromarray(_overlay_map(teacher_images[sample_idx], pred_ch, vmin=vmin, vmax=vmax)).save(pred_overlay_path, compress_level=1)
+                    Image.fromarray(_overlay_map(teacher_images[sample_idx], error_ch, vmin=0.0, vmax=error_vmax)).save(error_overlay_path, compress_level=1)
+                    channels.append({"channel": channel_idx, "teacher_overlay": str(teacher_overlay_path), "pred_overlay": str(pred_overlay_path), "error_overlay": str(error_overlay_path), "channel_mse": float(torch.mean((pred_ch - target_ch) ** 2).item()), "channel_l1": float(torch.mean(error_ch).item())})
+                gallery.append({"sample_id": sample_id, "image": str(image_path), "num_channels": int(pred_maps.shape[1]), "map_mse": float(torch.mean((pred_maps[sample_idx] - target_maps[sample_idx]) ** 2).item()), "map_l1": float(torch.mean(torch.abs(pred_maps[sample_idx] - target_maps[sample_idx])).item()), "channels": channels})
+            gallery_path = vis_root / "gallery.json"; gallery_path.write_text(json.dumps(gallery, indent=2))
+            return {"vis_path": str(vis_root), "vis_gallery": str(gallery_path), "vis_samples": len(gallery)}
         if config.expert_type != "dino" or target.kind != "token_sequence": return {"vis_skipped": f"{config.expert_type}:{target.kind}"}
         prediction = decoder(enc["vlm_features"])
         gh, gw = _resolve_grid_hw(target); sample_count = min(int(config.vis_num_samples), int(prediction.shape[0]))
-        vis_root = Path(config.output_dir) / "visualizations" / f"step_{int(step):07d}"; vis_root.mkdir(parents=True, exist_ok=True)
         teacher_pca_root = Path(config.output_dir) / "teacher_pca"; teacher_pca_root.mkdir(parents=True, exist_ok=True)
-        teacher_images = get_teacher_images(raw_batch, runtime.teacher_image_key); gallery = []
         pred_tokens = prediction.detach().cpu(); target_tokens = target.tensor.detach().cpu()
         cosine_maps = F.cosine_similarity(pred_tokens, target_tokens, dim=-1).view(pred_tokens.shape[0], gh, gw)
         error_maps = ((pred_tokens - target_tokens) ** 2).mean(dim=-1).view(pred_tokens.shape[0], gh, gw)
-        sample_ids = raw_batch.get("index")
         for sample_idx in range(sample_count):
             sample_id = int(sample_ids[sample_idx].item()) if torch.is_tensor(sample_ids) else int(sample_idx)
             stem = vis_root / f"sample{sample_idx:02d}_{sample_id}"
@@ -259,8 +354,32 @@ def _move_inputs_for_vlm(inputs: dict[str, torch.Tensor], device: str) -> dict[s
     return {key: value.to(device) if torch.is_tensor(value) else value for key, value in inputs.items()}
 
 
-def _extract_vlm_features(runtime: XVLARuntime, processed_batch: dict[str, Any]) -> tuple[dict[str, torch.Tensor], dict[str, torch.Tensor]]:
+def _apply_student_cutout(image_input: torch.Tensor, config: VisualThoughtTrainConfig) -> torch.Tensor:
+    if not bool(config.cutout_enable) or float(config.cutout_prob) <= 0.0 or int(config.cutout_num_patches) <= 0: return image_input
+    out = image_input.clone(); _, _, _, height, width = out.shape
+    area_min, area_max = float(config.cutout_area_min), float(config.cutout_area_max)
+    aspect_min, aspect_max = float(config.cutout_aspect_min), float(config.cutout_aspect_max)
+    fill = float(config.cutout_fill)
+    if area_min <= 0.0 and area_max <= 0.0: return out
+    area_min, area_max = sorted((max(area_min, 0.0), max(area_max, 0.0)))
+    aspect_min, aspect_max = sorted((max(aspect_min, 1e-6), max(aspect_max, 1e-6)))
+    for batch_idx in range(int(out.shape[0])):
+        for view_idx in range(int(out.shape[1])):
+            if torch.rand((), device=out.device).item() > float(config.cutout_prob): continue
+            for _ in range(max(int(config.cutout_num_patches), 0)):
+                patch_area = torch.empty((), device=out.device).uniform_(area_min, area_max).item() * float(height * width)
+                patch_aspect = torch.empty((), device=out.device).uniform_(aspect_min, aspect_max).item()
+                patch_h = max(1, min(int(round((patch_area / max(patch_aspect, 1e-8)) ** 0.5)), height))
+                patch_w = max(1, min(int(round((patch_area * patch_aspect) ** 0.5)), width))
+                y0 = 0 if patch_h >= height else int(torch.randint(0, height - patch_h + 1, (), device=out.device).item())
+                x0 = 0 if patch_w >= width else int(torch.randint(0, width - patch_w + 1, (), device=out.device).item())
+                out[batch_idx, view_idx, :, y0:y0 + patch_h, x0:x0 + patch_w] = fill
+    return out
+
+
+def _extract_vlm_features(runtime: XVLARuntime, processed_batch: dict[str, Any], config: VisualThoughtTrainConfig, apply_cutout: bool = False) -> tuple[dict[str, torch.Tensor], dict[str, torch.Tensor]]:
     inputs = runtime.policy._build_model_inputs(processed_batch)
+    if apply_cutout and runtime.vlm_only_distill and config.training_stage == "distill_only": inputs = {**inputs, "image_input": _apply_student_cutout(inputs["image_input"], config)}
     if not runtime.vlm_only_distill: return inputs, runtime.policy.model.forward_vlm(input_ids=inputs["input_ids"], pixel_values=inputs["image_input"], image_mask=inputs["image_mask"])
     vlm_inputs = _move_inputs_for_vlm({key: inputs[key] for key in ("input_ids", "image_input", "image_mask")}, runtime.vlm_device)
     with torch.no_grad():
@@ -341,27 +460,34 @@ def set_policy_trainability(policy, training_stage: TrainingStage) -> None:
     else: policy.eval()
 
 
-def build_teacher(config: VisualThoughtTrainConfig, runtime: XVLARuntime | None = None):
-    if config.expert_type == "cedirnet":
-        task_cfg = load_cedirnet_decoder_config(config.decoder_stack_config_path, config.decoder_task_config_path)
+def build_teacher(config: VisualThoughtTrainConfig, runtime: XVLARuntime | None = None, expert_type: ExpertType | None = None):
+    expert_type = expert_type or config.expert_type
+    stack_path, task_path = decoder_config_paths_for(config, expert_type)
+    if expert_type == "cedirnet":
+        task_cfg = load_cedirnet_decoder_config(stack_path, task_path)
         dataset_length = len(runtime.dataset) if runtime is not None else None
         if dataset_length is None: raise ValueError("CeDiRNet cached teacher resolution requires an initialized runtime dataset.")
         cache = CeDiRNetTargetCache.resolve(dataset_repo_id=config.dataset_repo_id, dataset_revision=config.dataset_revision, dataset_root=_resolve_dataset_root(config), dataset_length=dataset_length, teacher_cfg=task_cfg.teacher, cache_root=config.teacher_target_cache_root)
         return task_cfg, cache
-    task_cfg = load_dino_decoder_config(config.decoder_stack_config_path, config.decoder_task_config_path)
+    task_cfg = load_dino_decoder_config(stack_path, task_path)
+    if is_combined_expert_run(config) and getattr(task_cfg.teacher, "target_kind", None) != "token_sequence": raise ValueError("Combined CeDirNet+DINO runs require DINO teacher.target_kind='token_sequence'.")
     return task_cfg, DinoV2Teacher(task_cfg.teacher)
 
 
-def load_teacher_target(config: VisualThoughtTrainConfig, teacher_source, raw_batch: dict[str, Any], teacher_image_key: str) -> TeacherTarget:
-    if config.expert_type == "cedirnet": return teacher_source.target_for_batch(raw_batch, device=_as_device(config))
+def build_teacher_bundle(config: VisualThoughtTrainConfig, runtime: XVLARuntime) -> dict[ExpertType, tuple[Any, Any]]:
+    return {expert_type: build_teacher(config, runtime, expert_type=expert_type) for expert_type in resolve_expert_types(config)}
+
+
+def load_teacher_target(config: VisualThoughtTrainConfig, teacher_source, raw_batch: dict[str, Any], teacher_image_key: str, expert_type: ExpertType | None = None) -> TeacherTarget:
+    expert_type = expert_type or config.expert_type
+    if expert_type == "cedirnet": return teacher_source.target_for_batch(raw_batch, device=_as_device(config))
     return teacher_source.predict(get_teacher_images(raw_batch, teacher_image_key).to(_as_device(config)))
 
 
-def build_decoder(config: VisualThoughtTrainConfig, task_cfg, target: TeacherTarget, student_vlm_dim: int):
-    if config.expert_type == "cedirnet": 
-        return CeDirNetDistillationModel.from_config(student_vlm_dim=student_vlm_dim, cfg=task_cfg)
-    if target.kind == "token_sequence": 
-        return DinoTokenSequenceModel.from_config(student_vlm_dim=student_vlm_dim, target=target, cfg=task_cfg)
+def build_decoder(config: VisualThoughtTrainConfig, task_cfg, target: TeacherTarget, student_vlm_dim: int, expert_type: ExpertType | None = None):
+    expert_type = expert_type or config.expert_type
+    if expert_type == "cedirnet": return CeDirNetDistillationModel.from_config(student_vlm_dim=student_vlm_dim, cfg=task_cfg)
+    if target.kind == "token_sequence": return DinoTokenSequenceModel.from_config(student_vlm_dim=student_vlm_dim, target=target, cfg=task_cfg)
     return DinoFeatureAlignmentModel.from_config(student_vlm_dim=student_vlm_dim, target=target, cfg=task_cfg)
 
 
@@ -371,16 +497,30 @@ def load_decoder_init_if_present(decoder: torch.nn.Module, decoder_init_path: st
     state = load_decoder_state(root / DECODER_STATE_FILENAME if root.is_dir() else root)
     decoder.load_state_dict(state, strict=True)
 
+def build_decoder_bundle(config: VisualThoughtTrainConfig, runtime: XVLARuntime, teacher_bundle: dict[ExpertType, tuple[Any, Any]]) -> tuple[DataLoader, DataLoader | None, DataLoader | None, list[int], dict[ExpertType, torch.nn.Module], dict[ExpertType, TeacherTarget]]:
+    loader, val_loader, vis_loader, vis_indices = build_train_val_dataloaders(runtime, config)
+    first_raw_batch = next(iter(loader))
+    processed = preprocess_batch(runtime, first_raw_batch)
+    _, enc = build_xvla_inputs(runtime, processed, config)
+    decoders, targets = {}, {}
+    for expert_type, (task_cfg, teacher_source) in teacher_bundle.items():
+        target = load_teacher_target(config, teacher_source, first_raw_batch, runtime.teacher_image_key, expert_type=expert_type)
+        decoder = build_decoder(config, task_cfg, target, student_vlm_dim=int(enc["vlm_features"].shape[-1]), expert_type=expert_type).to(_as_device(config))
+        load_decoder_init_if_present(decoder, decoder_init_path_for(config, expert_type))
+        decoders[expert_type], targets[expert_type] = decoder, target
+    return loader, val_loader, vis_loader, vis_indices, decoders, targets
 
-def build_optimizer(config: VisualThoughtTrainConfig, policy, decoder: torch.nn.Module) -> torch.optim.Optimizer:
-    if config.training_stage == "distill_only": return torch.optim.AdamW(decoder.parameters(), lr=config.decoder_optimizer_lr, weight_decay=config.weight_decay)
-    decoder_params = [parameter for parameter in decoder.parameters() if parameter.requires_grad]
+
+def build_optimizer(config: VisualThoughtTrainConfig, policy, decoder: torch.nn.Module | dict[ExpertType, torch.nn.Module]) -> torch.optim.Optimizer:
+    if isinstance(decoder, dict): decoder_params = [parameter for module in decoder.values() for parameter in module.parameters() if parameter.requires_grad]
+    else: decoder_params = [parameter for parameter in decoder.parameters() if parameter.requires_grad]
+    if config.training_stage == "distill_only": return torch.optim.AdamW(decoder_params, lr=config.decoder_optimizer_lr, weight_decay=config.weight_decay)
     xvla_params = [parameter for parameter in policy.parameters() if parameter.requires_grad]
     return torch.optim.AdamW([{"params": decoder_params, "lr": config.decoder_optimizer_lr}, {"params": xvla_params, "lr": config.xvla_optimizer_lr}], weight_decay=config.weight_decay)
 
 
-def build_xvla_inputs(runtime: XVLARuntime, processed_batch: dict[str, Any]) -> tuple[dict[str, torch.Tensor], dict[str, torch.Tensor]]:
-    return _extract_vlm_features(runtime, processed_batch)
+def build_xvla_inputs(runtime: XVLARuntime, processed_batch: dict[str, Any], config: VisualThoughtTrainConfig, apply_cutout: bool = False) -> tuple[dict[str, torch.Tensor], dict[str, torch.Tensor]]:
+    return _extract_vlm_features(runtime, processed_batch, config, apply_cutout=apply_cutout)
 
 
 def compute_xvla_action_loss_from_encoder(policy, processed_batch: dict[str, Any], inputs: dict[str, torch.Tensor], enc: dict[str, torch.Tensor]) -> tuple[torch.Tensor, dict[str, float]]:
@@ -435,19 +575,30 @@ def compute_expert_loss(config: VisualThoughtTrainConfig, decoder: torch.nn.Modu
     return loss, {"expert_total": float(loss.detach().item()), "expert_stage": 2.0}
 
 
+def compute_expert_losses(config: VisualThoughtTrainConfig, decoders: dict[ExpertType, torch.nn.Module], task_cfgs: dict[ExpertType, Any], targets: dict[ExpertType, TeacherTarget], vlm_features: torch.Tensor, step: int) -> tuple[torch.Tensor, dict[str, float]]:
+    total_loss = vlm_features.new_zeros(())
+    stats: dict[str, float] = {}
+    combined_total = 0.0
+    for expert_type in resolve_expert_types(config):
+        expert_loss, expert_stats = compute_expert_loss(VisualThoughtTrainConfig(**{**config.to_json_dict(), "expert_type": expert_type, "expert_types": None}), decoders[expert_type], task_cfgs[expert_type], targets[expert_type], vlm_features, step)
+        total_loss = total_loss + expert_loss_weight_for(config, expert_type) * expert_loss
+        combined_total += float(expert_loss.detach().item())
+        prefix = f"{expert_type}_"
+        for key, value in expert_stats.items(): stats[f"{prefix}{key}"] = float(value)
+    stats["expert_total_combined"] = combined_total
+    return total_loss, stats
+
+
 def prepare_models_and_target(config: VisualThoughtTrainConfig, runtime: XVLARuntime, task_cfg, teacher):
-    loader, val_loader, vis_loader, vis_indices = build_train_val_dataloaders(runtime, config)
-    first_raw_batch = next(iter(loader))
-    processed = preprocess_batch(runtime, first_raw_batch)
-    inputs, enc = build_xvla_inputs(runtime, processed)
-    target = load_teacher_target(config, teacher, first_raw_batch, runtime.teacher_image_key)
-    decoder = build_decoder(config, task_cfg, target, student_vlm_dim=int(enc["vlm_features"].shape[-1])).to(_as_device(config))
-    load_decoder_init_if_present(decoder, config.decoder_init_path)
-    return loader, val_loader, vis_loader, vis_indices, decoder, target
+    loader, val_loader, vis_loader, vis_indices, decoders, targets = build_decoder_bundle(config, runtime, {config.expert_type: (task_cfg, teacher)})
+    return loader, val_loader, vis_loader, vis_indices, decoders[config.expert_type], targets[config.expert_type]
 
 
 def _checkpoint_metadata(config: VisualThoughtTrainConfig, step: int) -> dict[str, Any]:
-    return {"name": config.name, "training_stage": config.training_stage, "expert_type": config.expert_type, "global_step": int(step), "xvla_init_path": config.xvla_init_path, "decoder_init_path": config.decoder_init_path}
+    payload = {"name": config.name, "training_stage": config.training_stage, "expert_type": config.expert_type, "expert_types": list(resolve_expert_types(config)), "global_step": int(step), "xvla_init_path": config.xvla_init_path, "decoder_init_path": config.decoder_init_path}
+    if is_combined_expert_run(config):
+        payload["decoder_init_paths"] = {"cedirnet": config.cedirnet_decoder_init_path, "dino": config.dino_decoder_init_path}
+    return payload
 
 
 def _push_checkpoint_to_hub(checkpoint_dir: Path, repo_id: str, commit_message: str) -> None:
@@ -458,11 +609,13 @@ def _push_checkpoint_to_hub(checkpoint_dir: Path, repo_id: str, commit_message: 
     api.upload_folder(folder_path=str(checkpoint_dir), repo_id=repo_id, repo_type="model", commit_message=commit_message)
 
 
-def _save_checkpoint_if_needed(config: VisualThoughtTrainConfig, runtime: XVLARuntime, decoder: torch.nn.Module, optimizer: torch.optim.Optimizer, step: int, final: bool = False) -> None:
+def _save_checkpoint_if_needed(config: VisualThoughtTrainConfig, runtime: XVLARuntime, decoder: torch.nn.Module | dict[ExpertType, torch.nn.Module], optimizer: torch.optim.Optimizer, step: int, final: bool = False) -> None:
     if not final and (config.save_every <= 0 or step % config.save_every != 0): return
     checkpoint_name = "checkpoint_final" if final else f"checkpoint_{step:07d}"
     checkpoint_dir = Path(config.output_dir) / checkpoint_name
-    save_visual_thought_checkpoint(checkpoint_dir=checkpoint_dir, policy=runtime.policy, decoder=decoder, trainer_state={"step": int(step), "optimizer": optimizer.state_dict()}, metadata=_checkpoint_metadata(config, step), config_snapshot=config.to_json_dict(), preprocessor=runtime.preprocessor, postprocessor=runtime.postprocessor, decoder_stack_config_path=config.decoder_stack_config_path, decoder_task_config_path=config.decoder_task_config_path)
+    stack_cfg_path = {"cedirnet": config.cedirnet_decoder_stack_config_path, "dino": config.dino_decoder_stack_config_path} if is_combined_expert_run(config) else config.decoder_stack_config_path
+    task_cfg_path = {"cedirnet": config.cedirnet_decoder_task_config_path, "dino": config.dino_decoder_task_config_path} if is_combined_expert_run(config) else config.decoder_task_config_path
+    save_visual_thought_checkpoint(checkpoint_dir=checkpoint_dir, policy=runtime.policy, decoder=decoder, trainer_state={"step": int(step), "optimizer": optimizer.state_dict()}, metadata=_checkpoint_metadata(config, step), config_snapshot=config.to_json_dict(), preprocessor=runtime.preprocessor, postprocessor=runtime.postprocessor, decoder_stack_config_path=stack_cfg_path, decoder_task_config_path=task_cfg_path)
     should_push = bool(config.push_to_hub) and bool(config.push_repo_id) and (final or (int(config.push_every) > 0 and step % int(config.push_every) == 0))
     if should_push: _push_checkpoint_to_hub(checkpoint_dir, str(config.push_repo_id), f"Upload visual-thought checkpoint {checkpoint_name}")
 
@@ -475,32 +628,43 @@ def _maybe_init_wandb(config: VisualThoughtTrainConfig):
 
 
 @torch.no_grad()
-def run_validation(config: VisualThoughtTrainConfig, runtime: XVLARuntime, task_cfg, teacher, decoder: torch.nn.Module, val_loader: DataLoader) -> dict[str, float]:
-    decoder_was_training = decoder.training
+def run_validation(config: VisualThoughtTrainConfig, runtime: XVLARuntime, task_cfg, teacher, decoder: torch.nn.Module | dict[ExpertType, torch.nn.Module], val_loader: DataLoader) -> dict[str, float]:
+    decoder_was_training = {expert_type: module.training for expert_type, module in decoder.items()} if isinstance(decoder, dict) else decoder.training
     policy_was_training = runtime.policy.training
-    decoder.eval()
+    if isinstance(decoder, dict):
+        for module in decoder.values(): module.eval()
+    else:
+        decoder.eval()
     runtime.policy.eval()
     total_loss, total_action, total_expert, batches = 0.0, 0.0, 0.0, 0
     component_totals: dict[str, float] = {}
     for raw_batch in val_loader:
         if batches >= max(int(config.validation_max_batches), 1): break
         processed_batch = preprocess_batch(runtime, raw_batch)
-        inputs, enc = build_xvla_inputs(runtime, processed_batch)
-        target = load_teacher_target(config, teacher, raw_batch, runtime.teacher_image_key)
-        expert_loss, expert_stats = compute_expert_loss(config, decoder, task_cfg, target, enc["vlm_features"], step=0)
-        total = float(config.expert_loss_weight) * expert_loss
+        inputs, enc = build_xvla_inputs(runtime, processed_batch, config)
+        if isinstance(decoder, dict):
+            targets = {expert_type: load_teacher_target(config, teacher[expert_type], raw_batch, runtime.teacher_image_key, expert_type=expert_type) for expert_type in resolve_expert_types(config)}
+            expert_loss, expert_stats = compute_expert_losses(config, decoder, task_cfg, targets, enc["vlm_features"], step=0)
+            total = expert_loss
+        else:
+            target = load_teacher_target(config, teacher, raw_batch, runtime.teacher_image_key)
+            expert_loss, expert_stats = compute_expert_loss(config, decoder, task_cfg, target, enc["vlm_features"], step=0)
+            total = float(config.expert_loss_weight) * expert_loss
         action_value = 0.0
         for key, value in expert_stats.items(): component_totals[f"val_{key}"] = component_totals.get(f"val_{key}", 0.0) + float(value)
         if config.training_stage == "joint_multitask":
             action_loss, action_stats = compute_xvla_action_loss_from_encoder(runtime.policy, processed_batch, inputs, enc)
-            action_value = float(action_loss.detach().item())
-            total = float(config.action_loss_weight) * action_loss + float(config.expert_loss_weight) * expert_loss
+            action_value = float(action_loss.detach().item()); total = float(config.action_loss_weight) * action_loss + total
             for key, value in action_stats.items(): component_totals[f"val_{key}"] = component_totals.get(f"val_{key}", 0.0) + float(value)
         total_loss += float(total.detach().item())
         total_action += action_value
         total_expert += float(expert_loss.detach().item())
         batches += 1
-    if decoder_was_training: decoder.train()
+    if isinstance(decoder, dict):
+        for expert_type, module in decoder.items():
+            if decoder_was_training[expert_type]: module.train()
+    elif decoder_was_training:
+        decoder.train()
     if policy_was_training: runtime.policy.train()
     denom = max(batches, 1)
     metrics = {"val_loss": total_loss / denom, "val_expert_total": total_expert / denom, "val_action_total": total_action / denom, "val_batches": float(batches)}
@@ -514,19 +678,22 @@ class VisualThoughtModule(torch.nn.Module):
     directly (forward_vlm / transformer), so without one wrapped forward the policy grads
     would never all-reduce across ranks."""
 
-    def __init__(self, policy, decoder: torch.nn.Module, config: VisualThoughtTrainConfig, task_cfg) -> None:
+    def __init__(self, policy, decoder: torch.nn.Module | dict[ExpertType, torch.nn.Module], config: VisualThoughtTrainConfig, task_cfg) -> None:
         super().__init__()
         self.policy = policy
-        self.decoder = decoder
+        self.decoder = torch.nn.ModuleDict(decoder) if isinstance(decoder, dict) else decoder
         self._config = config
         self._task_cfg = task_cfg
 
-    def forward(self, processed_batch: dict[str, Any], target: TeacherTarget, step: int):
+    def forward(self, processed_batch: dict[str, Any], target: TeacherTarget | dict[ExpertType, TeacherTarget], step: int):
         inputs = self.policy._build_model_inputs(processed_batch)
         enc = self.policy.model.forward_vlm(input_ids=inputs["input_ids"], pixel_values=inputs["image_input"], image_mask=inputs["image_mask"])
-        expert_loss, expert_stats = compute_expert_loss(self._config, self.decoder, self._task_cfg, target, enc["vlm_features"], step)
+        if isinstance(target, dict):
+            expert_loss, expert_stats = compute_expert_losses(self._config, dict(self.decoder.items()), self._task_cfg, target, enc["vlm_features"], step)
+        else:
+            expert_loss, expert_stats = compute_expert_loss(self._config, self.decoder, self._task_cfg, target, enc["vlm_features"], step)
         action_loss, action_stats = compute_xvla_action_loss_from_encoder(self.policy, processed_batch, inputs, enc)
-        total_loss = float(self._config.action_loss_weight) * action_loss + float(self._config.expert_loss_weight) * expert_loss
+        total_loss = float(self._config.action_loss_weight) * action_loss + expert_loss if isinstance(target, dict) else float(self._config.action_loss_weight) * action_loss + float(self._config.expert_loss_weight) * expert_loss
         return total_loss, expert_stats, action_stats
 
 
@@ -534,6 +701,7 @@ def train_visual_thought(config: VisualThoughtTrainConfig) -> None:
     from accelerate import Accelerator
     from accelerate.utils import DistributedDataParallelKwargs
 
+    _validate_config(config)
     accum_steps = max(int(config.gradient_accumulation_steps), 1)
     accelerator = Accelerator(step_scheduler_with_optimizer=False, kwargs_handlers=[DistributedDataParallelKwargs(find_unused_parameters=True)], gradient_accumulation_steps=accum_steps)
     # Pin this rank's CUDA device so the existing `_as_device()` -> "cuda" resolves to
@@ -551,14 +719,26 @@ def train_visual_thought(config: VisualThoughtTrainConfig) -> None:
     accelerator.wait_for_everyone()
 
     set_policy_trainability(runtime.policy, config.training_stage)
-    task_cfg, teacher = build_teacher(config, runtime)
-    loader, val_loader, vis_loader, vis_indices, decoder, _ = prepare_models_and_target(config, runtime, task_cfg, teacher)
+    if is_combined_expert_run(config):
+        teacher_bundle = build_teacher_bundle(config, runtime)
+        loader, val_loader, vis_loader, vis_indices, decoder, _ = build_decoder_bundle(config, runtime, teacher_bundle)
+        task_cfg, teacher = {expert_type: bundle[0] for expert_type, bundle in teacher_bundle.items()}, {expert_type: bundle[1] for expert_type, bundle in teacher_bundle.items()}
+    else:
+        task_cfg, teacher = build_teacher(config, runtime)
+        loader, val_loader, vis_loader, vis_indices, decoder, _ = prepare_models_and_target(config, runtime, task_cfg, teacher)
     if is_main and vis_loader is not None: print(json.dumps({"event": "visualization_config", "vis_fixed_indices": vis_indices, "vis_num_samples": int(config.vis_num_samples), "vis_every": int(config.vis_every)}))
     if is_joint:
-        for parameter in decoder.parameters(): parameter.requires_grad = True
+        if isinstance(decoder, dict):
+            for module in decoder.values():
+                for parameter in module.parameters(): parameter.requires_grad = True
+        else:
+            for parameter in decoder.parameters(): parameter.requires_grad = True
         runtime.policy.train()
     else:
-        decoder.train()
+        if isinstance(decoder, dict):
+            for module in decoder.values(): module.train()
+        else:
+            decoder.train()
 
     # Distill multi-GPU DDP-wraps the decoder, so it must be driven through `forward`.
     # cedirnet (dense_map) and dino token_sequence are forward-based; dino feature-alignment
@@ -573,11 +753,10 @@ def train_visual_thought(config: VisualThoughtTrainConfig) -> None:
     if is_joint:
         train_module = VisualThoughtModule(runtime.policy, decoder, config, task_cfg)
         train_module, optimizer, loader = accelerator.prepare(train_module, optimizer, loader)
-        unwrapped_decoder = lambda: accelerator.unwrap_model(train_module).decoder
+        unwrapped_decoder = lambda: dict(accelerator.unwrap_model(train_module).decoder.items()) if is_combined_expert_run(config) else accelerator.unwrap_model(train_module).decoder
     else:
-        decoder, optimizer, loader = accelerator.prepare(decoder, optimizer, loader)
-        train_module = decoder
-        unwrapped_decoder = lambda: accelerator.unwrap_model(decoder)
+        if isinstance(decoder, dict): raise SystemExit("Combined expert_types mode is supported for joint_multitask only.")
+        decoder, optimizer, loader = accelerator.prepare(decoder, optimizer, loader); train_module = decoder; unwrapped_decoder = lambda: accelerator.unwrap_model(decoder)
 
     step = 0
     optimizer.zero_grad(set_to_none=True)
@@ -588,14 +767,13 @@ def train_visual_thought(config: VisualThoughtTrainConfig) -> None:
             step += 1
 
             processed_batch = preprocess_batch(runtime, raw_batch)
-            target = load_teacher_target(config, teacher, raw_batch, runtime.teacher_image_key)
+            target = {expert_type: load_teacher_target(config, teacher[expert_type], raw_batch, runtime.teacher_image_key, expert_type=expert_type) for expert_type in resolve_expert_types(config)} if isinstance(decoder, dict) else load_teacher_target(config, teacher, raw_batch, runtime.teacher_image_key)
             with accelerator.accumulate(train_module):
                 if is_joint:
                     total_loss, expert_stats, action_stats = train_module(processed_batch, target, step)
                 else:
-                    _, enc = build_xvla_inputs(runtime, processed_batch)
-                    expert_loss, expert_stats = compute_expert_loss(config, decoder, task_cfg, target, enc["vlm_features"], step)
-                    total_loss, action_stats = float(config.expert_loss_weight) * expert_loss, {}
+                    _, enc = build_xvla_inputs(runtime, processed_batch, config, apply_cutout=True)
+                    expert_loss, expert_stats = compute_expert_loss(config, decoder, task_cfg, target, enc["vlm_features"], step); total_loss, action_stats = float(config.expert_loss_weight) * expert_loss, {}
                 accelerator.backward(total_loss)
                 if accelerator.sync_gradients:
                     accelerator.clip_grad_norm_(train_module.parameters(), XVLA_GRAD_CLIP_NORM)
