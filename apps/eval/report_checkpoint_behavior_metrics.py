@@ -309,6 +309,14 @@ def _slice_tensor(x: Any, slice_spec) -> torch.Tensor:
     return slice_spec.slice_tensor(tensor)
 
 
+def _ensure_batched_chunk_tensor(tensor: torch.Tensor, batch_size: int) -> torch.Tensor:
+    if tensor.ndim == 1: return tensor.unsqueeze(0).unsqueeze(0).expand(batch_size, -1, -1)
+    if tensor.ndim == 2:
+        if tensor.shape[0] == batch_size: return tensor.unsqueeze(1)
+        return tensor.unsqueeze(0).expand(batch_size, -1, -1)
+    return tensor
+
+
 def _valid_chunk_length(pad_mask: torch.Tensor | None, chunk_len: int) -> int:
     if pad_mask is None: return int(chunk_len)
     valid = int((~pad_mask.bool()).sum().item())
@@ -323,12 +331,17 @@ def _first_gripper_threshold(policy) -> tuple[int, float]:
 
 def _behavior_metrics_from_batch(policy, raw_batch: dict[str, Any], pred_chunk: torch.Tensor, slice_spec, dead_threshold_mm: float) -> dict[str, float]:
     gripper_idx, gripper_threshold = _first_gripper_threshold(policy)
+    if pred_chunk.ndim == 2: pred_chunk = pred_chunk.unsqueeze(1)
     target_chunk = _slice_tensor(raw_batch["action"], slice_spec).detach().to(dtype=torch.float32).cpu()
     state = _slice_tensor(raw_batch["observation.state"], slice_spec).detach().to(dtype=torch.float32).cpu()
     pad_mask = raw_batch.get("action_is_pad")
     if pad_mask is not None: pad_mask = torch.as_tensor(pad_mask).detach().cpu().bool()
-    chunk_disp_mm, first_disp_mm, first_err_mm, first_gripper_vals, closed_flags = [], [], [], [], []
     batch_size, chunk_size = int(pred_chunk.shape[0]), int(pred_chunk.shape[1])
+    target_chunk = _ensure_batched_chunk_tensor(target_chunk, batch_size)
+    if target_chunk.shape[1] < chunk_size: target_chunk = torch.cat([target_chunk, target_chunk[:, -1:, :].expand(-1, chunk_size - target_chunk.shape[1], -1)], dim=1)
+    elif target_chunk.shape[1] > chunk_size: target_chunk = target_chunk[:, :chunk_size]
+    if state.ndim == 1: state = state.unsqueeze(0).expand(batch_size, -1)
+    chunk_disp_mm, first_disp_mm, first_err_mm, first_gripper_vals, closed_flags = [], [], [], [], []
     for batch_index in range(batch_size):
         valid_len = _valid_chunk_length(None if pad_mask is None else pad_mask[batch_index], chunk_size)
         if valid_len < 1: continue
