@@ -24,7 +24,7 @@ from thesis_vla.training.visual_thought_launcher import VisualThoughtExperimentS
 WORKSPACE_DIR = PROJECT_ROOT
 RUN_TS = dt.datetime.now().strftime("%Y%m%d_%H%M%S")
 
-RUNTIME_CONFIG = VisualThoughtRuntimeConfig(launch_mode="single", cuda_devices=(0,1), num_workers=2, dry_run=False)
+RUNTIME_CONFIG = VisualThoughtRuntimeConfig(launch_mode="accelerate", cuda_devices=(0,1), num_workers=4, dry_run=False)
 
 DEFAULTS = VisualThoughtLaunchConfig(
     hf_user="edgarcancinoe",
@@ -37,9 +37,17 @@ DEFAULTS = VisualThoughtLaunchConfig(
     decoder_stack_config_path=str(CONFIG_ROOT / "visual_thought" / "cedirnet_stack.yaml"),
     decoder_task_config_path=str(CONFIG_ROOT / "visual_thought" / "cedirnet_head.yaml"),
     batch_size=8,
-    gradient_accumulation_steps=4,
+    gradient_accumulation_steps=2,
+    
     decoder_optimizer_lr=1e-4,
-    xvla_optimizer_lr=1e-5,
+    xvla_adaptation_mode="staged_prompt_warmup",
+    xvla_freeze_steps=10,
+    xvla_warmup_steps=10,
+    xvla_learning_coef=0.1,
+    profile_step_time_every=20,
+    xvla_scheduler_decay_steps=30000,
+    xvla_scheduler_decay_lr=1e-5,
+
     wandb_enable=True,
     wandb_project="visual-thought",
     validation_enable=True,
@@ -51,12 +59,12 @@ DEFAULTS = VisualThoughtLaunchConfig(
     vis_final=False,
     push_to_hub=True,
     push_repo_id=None,
-    push_every=2000,
+    push_every=100,
     action_loss_weight=1.0,
     expert_loss_weight=1.0,
-    steps=8000,
+    steps=4000,
     log_every=20,
-    save_every=2000,
+    save_every=100,
     name_prefix=f"visual-thought-{RUN_TS}",
 )
 
@@ -211,7 +219,7 @@ DINO_CUBES = [
 ]
 
 # Pendiente correr estos. Ajustar a bs 32. Dino antes habia corrido con un mal pre-trained decoder. Los otros hay q volver a correrlos solo extended
-EXPERIMENTS = DINO_CLOTH_FOLD# + DINO_CLOTH_DROP + DINO_CUBES
+EXPERIMENTS = FOLD_CEDIRNET
 
 def main() -> None:
     run_experiments(workspace_dir=WORKSPACE_DIR, defaults=DEFAULTS, experiments=EXPERIMENTS)

@@ -52,10 +52,10 @@ from lerobot.utils.utils import auto_select_torch_device, get_safe_torch_device
 CHECKPOINTS: list[str | dict[str, str]] = [
     # "/abs/path/to/run/checkpoints/010000/pretrained_model",
     # {"name": "run_010000", "checkpoint": "/abs/path/to/run/checkpoints/010000/pretrained_model"},
-    "edgarcancinoe/orange196_pickplace_multicolor_v1_7p5hz_so101_ee6d_am_sm_b32_ga2_eb64_tra-c05dc8ed",
-    "/home/jose/EMAI-Thesis/vla_workspace/runtime/outputs/train/orange196_pickplace-multicolor_7p5hz_so101_ee6d_am_sm_b16_ga2_eb64_full_adapt_stagedpw_v1_20260603_110808/checkpoints/005000",
-    "/home/jose/EMAI-Thesis/vla_workspace/runtime/outputs/train/orange196_pickplace-multicolor_7p5hz_so101_ee6d_am_sm_b16_ga2_eb64_full_adapt_stagedpw_v1_20260603_110808/checkpoints/030000",
-    "/home/jose/EMAI-Thesis/vla_workspace/runtime/outputs/train/orange196_pickplace-multicolor_7p5hz_so101_ee6d_am_sm_b16_ga2_eb64_full_adapt_stagedpw_v1_20260603_110808/checkpoints/050000"
+    "edgarcancinoe/orange196_cloth-corner-fold_7p5hz_so101_ee6d_am_sm_b16_ga2_eb64_full_adap-d345f6ab-step-15000",
+    "/home/jose/EMAI-Thesis/vla_workspace/runtime/outputs/train/cedirnet_joint_stage_20260611_203416_cloth_fold/checkpoint_0000001",
+    "/home/jose/EMAI-Thesis/vla_workspace/runtime/outputs/train/cedirnet_joint_stage_20260611_203815_cloth_fold/checkpoint_0000100",
+    "/home/jose/EMAI-Thesis/vla_workspace/runtime/outputs/train/cedirnet_joint_stage_20260611_203608_cloth_fold/checkpoint_0000500",
 ]
 
 DEVICE = "cuda"

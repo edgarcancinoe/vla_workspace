@@ -43,8 +43,12 @@ from thesis_vla.training.visual_thought_trainer import VisualThoughtTrainConfig
 
 
 CHECKPOINTS: list[str | dict[str, str]] = [
-    # "edgarcancinoe/orange196_cloth-corner-fold_7p5hz_so101_ee6d_am_sm_b16_ga2_eb64_full_adap-d345f6ab",
-    # "edgarcancinoe/cedirnet_joint_stage_20260611_195850_cloth_fold::step_0000500",
+    # "/abs/path/to/run/checkpoints/010000/pretrained_model",
+    # {"name": "run_010000", "checkpoint": "/abs/path/to/run/checkpoints/010000/pretrained_model"},
+    "edgarcancinoe/orange196_cloth-corner-fold_7p5hz_so101_ee6d_am_sm_b16_ga2_eb64_full_adap-d345f6ab-step-15000",
+    # "/home/jose/EMAI-Thesis/vla_workspace/runtime/outputs/train/cedirnet_joint_stage_20260611_203416_cloth_fold/checkpoint_0000001",
+    "/home/jose/EMAI-Thesis/vla_workspace/runtime/outputs/train/cedirnet_joint_stage_20260611_203815_cloth_fold/checkpoint_0000100",
+    "/home/jose/EMAI-Thesis/vla_workspace/runtime/outputs/train/cedirnet_joint_stage_20260611_203608_cloth_fold/checkpoint_0000500",
 ]
 
 DEVICE = "cuda"
