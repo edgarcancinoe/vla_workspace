@@ -56,6 +56,14 @@ def test_guided_launcher_allows_normalization_and_resume_override(tmp_path):
     assert resolved.resume_checkpoint_path == "/tmp/checkpoint_0000100"
 
 
+def test_guided_launcher_supports_default_name_for_folder_and_wandb(tmp_path):
+    defaults = GuidedLaunchConfig(name="guided-default-name", hf_user="tester", dataset_name="dataset", xvla_init_path="lerobot/xvla-base", decoder_init_path="/tmp/decoder")
+    resolved = resolve_experiment(tmp_path, defaults, GuidedExperimentSpec())
+    assert resolved.name == "guided-default-name"
+    assert resolved.output_dir.endswith("guided-default-name")
+    assert resolved.wandb_run_name == "guided-default-name"
+
+
 def test_guided_launcher_builds_accelerate_command(tmp_path):
     defaults = GuidedLaunchConfig(hf_user="tester", dataset_name="dataset", xvla_init_path="lerobot/xvla-base", decoder_init_path="/tmp/decoder", runtime=GuidedRuntimeConfig(launch_mode="accelerate", cuda_devices=(0, 1), mixed_precision="bf16"))
     resolved = resolve_experiment(tmp_path, defaults, GuidedExperimentSpec(name="guided-accel"))

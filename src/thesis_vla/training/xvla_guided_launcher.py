@@ -33,6 +33,7 @@ class GuidedRuntimeConfig:
 
 @dataclass(frozen=True)
 class GuidedLaunchConfig:
+    name: str | None = None
     hf_user: str = os.environ.get("HF_USER", "edgarcancinoe")
     dataset_name: str = "soarm101_pickplace_multicolor_v1_7p5hz"
     dataset_revision: str = os.environ.get("DATASET_REVISION", "v3.0")
@@ -217,7 +218,7 @@ def resolve_experiment(workspace_dir: Path, defaults: GuidedLaunchConfig, experi
     if not xvla_init_path: raise ValueError("xvla_init_path is required.")
     if not decoder_init_path: raise ValueError("decoder_init_path is required.")
     timestamp = timestamp or dt.datetime.now().strftime("%Y%m%d_%H%M%S")
-    name = experiment.name or f"{defaults.name_prefix}_{_slug(dataset_repo_id)}_{timestamp}"
+    name = experiment.name or defaults.name or f"{defaults.name_prefix}_{_slug(dataset_repo_id)}_{timestamp}"
     output_dir = experiment.output_dir or str(TRAIN_OUTPUT_DIR / name)
     return ResolvedGuidedExperiment(
         name=name,
@@ -255,7 +256,7 @@ def resolve_experiment(workspace_dir: Path, defaults: GuidedLaunchConfig, experi
         resume_checkpoint_path=experiment.resume_checkpoint_path if experiment.resume_checkpoint_path is not None else defaults.resume_checkpoint_path,
         wandb_enable=experiment.wandb_enable if experiment.wandb_enable is not None else defaults.wandb_enable,
         wandb_project=experiment.wandb_project or defaults.wandb_project,
-        wandb_run_name=experiment.wandb_run_name if experiment.wandb_run_name is not None else defaults.wandb_run_name,
+        wandb_run_name=experiment.wandb_run_name if experiment.wandb_run_name is not None else defaults.wandb_run_name or name,
         validation_enable=experiment.validation_enable if experiment.validation_enable is not None else defaults.validation_enable,
         validation_split_ratio=experiment.validation_split_ratio if experiment.validation_split_ratio is not None else defaults.validation_split_ratio,
         validation_freq=experiment.validation_freq if experiment.validation_freq is not None else defaults.validation_freq,
