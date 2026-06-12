@@ -66,8 +66,16 @@ FOLD_CEDIRNET_NAME      = f"explicit_cedirnet_{RUN_TS}_cloth_fold"
 DROP_CEDIRNET_NAME      = f"explicit_cedirnet_{RUN_TS}_cloth_box"
 # =====================================================================================
 
+# XVLA 
+# =====================================================================================
+OUT = "/home/jose/EMAI-Thesis/vla_workspace/runtime/outputs/train/"
+XVLA_INIT_CLOTHFOLD     = OUT + "orange196_cloth-corner-fold_7p5hz_so101_ee6d_am_sm_b16_ga2_eb64_full_adapt_stagedpw_v1_20260604_230620/checkpoints/015000/pretrained_model"  
+XVLA_INIT_CLOTHDROP     = OUT + "orange196_cloth-corner-box_7p5hz_so101_ee6d_am_sm_b8_ga4_eb64_full_adapt_stagedpw_v1_20260603_111556/checkpoints/030000/pretrained_model"
+# =====================================================================================
+
 FOLD_CEDIRNET_GUIDANCE = [
     GuidedLaunchConfig(
+        name=FOLD_CEDIRNET_NAME,
         dataset_name=CLOTH_FOLD_DS[0],
         dataset_revision=CLOTH_FOLD_DS[1],
         xvla_init_path=None,
