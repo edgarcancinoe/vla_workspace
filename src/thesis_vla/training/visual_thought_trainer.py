@@ -29,7 +29,7 @@ from thesis_vla.common.paths import RUNTIME_CACHE_DIR
 from thesis_vla.inference.xvla_runtime import make_xvla_runtime_processors, resolve_xvla_rename_map, sync_xvla_policy_config
 from thesis_vla.visual_thought import CeDirNetDistillationModel, DinoFeatureAlignmentModel, DinoTokenSequenceModel, compute_feature_alignment_loss, load_cedirnet_decoder_config, load_dino_decoder_config
 from thesis_vla.visual_thought.cedirnet_cache import CeDiRNetTargetCache
-from thesis_vla.visual_thought.checkpoints import DECODER_STATE_FILENAME, POLICY_DIRNAME, TRAINER_STATE_FILENAME, load_decoder_state, load_visual_thought_checkpoint_metadata, save_visual_thought_checkpoint
+from thesis_vla.visual_thought.checkpoints import CONFIG_FILENAME, DECODER_STATE_FILENAME, DECODER_STATE_TEMPLATE, POLICY_DIRNAME, TRAINER_STATE_FILENAME, load_decoder_state, load_visual_thought_checkpoint_metadata, load_visual_thought_config_snapshot, save_visual_thought_checkpoint
 from thesis_vla.visual_thought.targets import TeacherTarget, compute_teacher_loss
 from thesis_vla.visual_thought.teachers import DinoV2Teacher
 
@@ -42,6 +42,8 @@ ExpertType = Literal["cedirnet", "dino"]
 # optimizer default is grad_clip_norm=10.0 (configuration_xvla.optimizer_grad_clip_norm).
 XVLA_GRAD_CLIP_NORM = 10.0
 TRAINING_HUB_UPLOAD_CONFIG = HubUploadConfig(max_retries=5, retry_backoff_s=5.0)
+DEFAULT_NORMALIZATION_MAPPING = '{"ACTION": "MEAN_STD", "STATE": "MEAN_STD", "VISUAL": "IDENTITY"}'
+FORCED_VALIDATION_STEPS = frozenset({0, 1})
 
 
 @dataclass
@@ -92,9 +94,11 @@ class VisualThoughtTrainConfig:
     teacher_target_cache_root: str | None = None
     dataset_video_backend: str = "pyav"
     dataset_tolerance_s: float = 1e-4
+    normalization_mapping: str = DEFAULT_NORMALIZATION_MAPPING
     wandb_enable: bool = False
     wandb_project: str = "visual-thought"
     wandb_run_name: str | None = None
+    wandb_run_id: str | None = None
     validation_enable: bool = False
     validation_split_ratio: float = 0.1
     validation_freq: int = 500
@@ -117,6 +121,8 @@ class VisualThoughtTrainConfig:
     push_every: int = 0
     align_feature_until_step: int = 0
     save_final_checkpoint: bool = True
+    resume: bool = False
+    resume_checkpoint_path: str | None = None
     seed: int = 42
     dry_run: bool = False
 
@@ -377,6 +383,98 @@ def _resolve_policy_device(config: VisualThoughtTrainConfig) -> str:
     return "cpu" if config.training_stage == "distill_only" else _as_device(config)
 
 
+def _normalize_mode_name(value: str) -> str:
+    return str(value).replace("-", "_").strip().upper()
+
+
+def validate_mean_std_normalization(mapping_str: str) -> None:
+    try:
+        mapping = json.loads(mapping_str)
+    except json.JSONDecodeError as exc:
+        raise ValueError("policy.normalization_mapping must be valid JSON. " f"Received: {mapping_str!r}") from exc
+    action_mode = _normalize_mode_name(mapping.get("ACTION", ""))
+    state_mode = _normalize_mode_name(mapping.get("STATE", ""))
+    if action_mode != "MEAN_STD" or state_mode != "MEAN_STD":
+        raise ValueError("XVLA training requires mean/std normalization for ACTION and STATE. " f"Received ACTION={action_mode or '<missing>'}, STATE={state_mode or '<missing>'}.")
+
+
+def resolve_normalization_mapping(mapping_str: str | None) -> dict[str, str] | None:
+    if mapping_str is None: return None
+    validate_mean_std_normalization(mapping_str)
+    mapping = json.loads(mapping_str)
+    if not isinstance(mapping, dict): raise ValueError(f"policy.normalization_mapping must decode to a JSON object, got {type(mapping).__name__}.")
+    return {str(key): str(value) for key, value in mapping.items()}
+
+
+def apply_normalization_mapping_override(policy_cfg, mapping_str: str | None) -> None:
+    mapping = resolve_normalization_mapping(mapping_str)
+    if mapping is not None: policy_cfg.normalization_mapping = mapping
+
+
+def resolve_resume_checkpoint(output_dir: str | Path, resume: bool = False, resume_checkpoint_path: str | Path | None = None) -> Path | None:
+    if resume_checkpoint_path is not None:
+        checkpoint_dir = Path(resume_checkpoint_path)
+        if not checkpoint_dir.exists(): raise FileNotFoundError(f"Resume checkpoint does not exist: {checkpoint_dir}")
+        return checkpoint_dir
+    if not bool(resume): return None
+    root = Path(output_dir)
+    if not root.exists(): raise FileNotFoundError(f"Resume requested but output_dir does not exist: {root}")
+    candidates = [path for path in root.glob("checkpoint_*") if path.is_dir()]
+    if not candidates: raise FileNotFoundError(f"Resume requested but no checkpoint_* directories were found under {root}")
+
+    def _sort_key(path: Path) -> tuple[int, int]:
+        if path.name == "checkpoint_final": return (1, 0)
+        suffix = path.name.removeprefix("checkpoint_")
+        return (0, int(suffix)) if suffix.isdigit() else (-1, -1)
+
+    return max(candidates, key=_sort_key)
+
+
+def load_saved_trainer_state(checkpoint_dir: str | Path) -> dict[str, Any]:
+    trainer_state_path = Path(checkpoint_dir) / TRAINER_STATE_FILENAME
+    if not trainer_state_path.is_file(): raise FileNotFoundError(f"Missing trainer state file: {trainer_state_path}")
+    return torch.load(trainer_state_path, map_location="cpu")
+
+
+def restore_optimizer_state(optimizer: torch.optim.Optimizer | JointTrainingState, trainer_state: dict[str, Any]) -> None:
+    state_format = trainer_state.get("format")
+    if isinstance(optimizer, JointTrainingState):
+        if state_format == "joint_policy_decoder_v1":
+            optimizer.policy_optimizer.load_state_dict(trainer_state["optimizers"]["policy"])
+            optimizer.decoder_optimizer.load_state_dict(trainer_state["optimizers"]["decoder"])
+            if optimizer.policy_scheduler is not None and "schedulers" in trainer_state and "policy" in trainer_state["schedulers"]: optimizer.policy_scheduler.load_state_dict(trainer_state["schedulers"]["policy"])
+            return
+        raise ValueError(f"Unsupported joint trainer state format: {state_format!r}")
+    if state_format in {None, "single_optimizer_v1"} and "optimizer" in trainer_state:
+        optimizer.load_state_dict(trainer_state["optimizer"])
+        return
+    raise ValueError(f"Unsupported single-optimizer trainer state format: {state_format!r}")
+
+
+def should_run_validation_step(step: int, total_steps: int, validation_freq: int, emitted_steps: set[int]) -> bool:
+    if step in emitted_steps: return False
+    if step in FORCED_VALIDATION_STEPS: return True
+    return step == int(total_steps) or step % max(int(validation_freq), 1) == 0
+
+
+def _resume_check(field_name: str, current_value, saved_value) -> None:
+    if saved_value is None or current_value is None: return
+    if field_name == "normalization_mapping":
+        current_norm = resolve_normalization_mapping(str(current_value))
+        saved_norm = resolve_normalization_mapping(str(saved_value))
+    else:
+        current_norm = tuple(current_value) if isinstance(current_value, (list, tuple)) else current_value
+        saved_norm = tuple(saved_value) if isinstance(saved_value, (list, tuple)) else saved_value
+    if current_norm != saved_norm: raise ValueError(f"Resume checkpoint is incompatible for {field_name}: current={current_norm!r}, saved={saved_norm!r}.")
+
+
+def assert_visual_thought_resume_compatible(config: VisualThoughtTrainConfig, snapshot: dict[str, Any]) -> None:
+    _resume_check("training_stage", config.training_stage, snapshot.get("training_stage"))
+    _resume_check("expert_type", config.expert_type, snapshot.get("expert_type"))
+    _resume_check("expert_types", resolve_expert_types(config), snapshot.get("expert_types"))
+    _resume_check("normalization_mapping", config.normalization_mapping, snapshot.get("normalization_mapping"))
+
+
 def _apply_xvla_training_overrides(policy_cfg, config: VisualThoughtTrainConfig) -> None:
     overrides = {
         "adaptation_mode": config.xvla_adaptation_mode,
@@ -431,13 +529,15 @@ def _extract_vlm_features(runtime: XVLARuntime, processed_batch: dict[str, Any],
     return inputs, enc
 
 
-def build_xvla_runtime(config: VisualThoughtTrainConfig) -> XVLARuntime:
+def build_xvla_runtime(config: VisualThoughtTrainConfig, policy_source_path: str | Path | None = None) -> XVLARuntime:
     from lerobot.configs.policies import PreTrainedConfig
     from lerobot.datasets.lerobot_dataset import LeRobotDataset
     from lerobot.policies.xvla.modeling_xvla import XVLAPolicy
 
     dataset_root = _resolve_dataset_root(config)
-    policy_cfg = PreTrainedConfig.from_pretrained(config.xvla_init_path)
+    pretrained_path = str(policy_source_path or config.xvla_init_path)
+    policy_cfg = PreTrainedConfig.from_pretrained(pretrained_path)
+    apply_normalization_mapping_override(policy_cfg, config.normalization_mapping)
     ds_meta = LeRobotDatasetMetadata(config.dataset_repo_id, root=dataset_root, revision=config.dataset_revision)
     delta_timestamps = resolve_delta_timestamps(policy_cfg, ds_meta)
     dataset = LeRobotDataset(config.dataset_repo_id, root=dataset_root, revision=config.dataset_revision, delta_timestamps=delta_timestamps, video_backend=config.dataset_video_backend, tolerance_s=float(config.dataset_tolerance_s))
@@ -446,7 +546,7 @@ def build_xvla_runtime(config: VisualThoughtTrainConfig) -> XVLARuntime:
     _apply_xvla_training_overrides(policy_cfg, config)
     policy_device = _resolve_policy_device(config)
     if hasattr(policy_cfg, "device"): policy_cfg.device = policy_device
-    policy = XVLAPolicy.from_pretrained(config.xvla_init_path, config=policy_cfg, device=policy_device)
+    policy = XVLAPolicy.from_pretrained(pretrained_path, config=policy_cfg, device=policy_device)
     vlm_only_distill = config.training_stage == "distill_only"
     if vlm_only_distill:
         policy.eval()
@@ -459,7 +559,7 @@ def build_xvla_runtime(config: VisualThoughtTrainConfig) -> XVLARuntime:
         policy = policy.to(dtype=torch.float32)
         vlm_device = _as_device(config)
         processor_device = _as_device(config)
-    preprocessor, postprocessor = make_xvla_runtime_processors(policy=policy, pretrained_path=config.xvla_init_path, device=processor_device, rename_map=rename_map, dataset_stats=dataset.meta.stats, use_dataset_stats=True)
+    preprocessor, postprocessor = make_xvla_runtime_processors(policy=policy, pretrained_path=pretrained_path, device=processor_device, rename_map=rename_map, dataset_stats=dataset.meta.stats, use_dataset_stats=True)
     ensure_xvla_slice_step(preprocessor, get_so101_slice_spec(getattr(policy.config, "action_mode", None)))
     teacher_image_key = _resolve_teacher_image_key(list(getattr(dataset.meta, "camera_keys", [])), rename_map, config.teacher_image_feature_key)
     return XVLARuntime(policy=policy, dataset=dataset, preprocessor=preprocessor, postprocessor=postprocessor, rename_map=rename_map, teacher_image_key=teacher_image_key, policy_device=policy_device, vlm_device=vlm_device, vlm_only_distill=vlm_only_distill)
@@ -481,7 +581,7 @@ def _episode_split_indices(runtime: XVLARuntime, config: VisualThoughtTrainConfi
     episode_indices = [int(value.item()) if torch.is_tensor(value) else int(value) for value in episode_column]
     unique_episodes = sorted(set(episode_indices))
     if len(unique_episodes) < 2: return None
-    val_episode_len = min(max(int(round(len(unique_episodes) * float(config.validation_split_ratio))), 1), max(len(unique_episodes) - 1, 1))
+    val_episode_len = int(len(unique_episodes) * float(config.validation_split_ratio))
     if val_episode_len <= 0 or val_episode_len >= len(unique_episodes): return None
     generator = torch.Generator().manual_seed(int(config.validation_seed))
     permutation = torch.randperm(len(unique_episodes), generator=generator).tolist()
@@ -499,24 +599,19 @@ def build_train_val_dataloaders(runtime: XVLARuntime, config: VisualThoughtTrain
         vis_indices = _select_fixed_vis_indices(len(runtime.dataset), config.seed, config.vis_num_samples)
         vis_loader = DataLoader(Subset(runtime.dataset, vis_indices), batch_size=max(1, min(int(config.batch_size), len(vis_indices))), shuffle=False, num_workers=config.num_workers, collate_fn=default_collate, drop_last=False) if vis_indices else None
         return loader, None, None, vis_loader, vis_indices
-    dataset_len = len(runtime.dataset)
-    val_len = min(max(int(round(dataset_len * float(config.validation_split_ratio))), 1), max(dataset_len - 1, 1))
-    if dataset_len < 2 or val_len >= dataset_len:
+    episode_split = _episode_split_indices(runtime, config)
+    if episode_split is None:
         loader = build_dataloader(runtime, config)
         vis_indices = _select_fixed_vis_indices(len(runtime.dataset), config.seed, config.vis_num_samples)
         vis_loader = DataLoader(Subset(runtime.dataset, vis_indices), batch_size=max(1, min(int(config.batch_size), len(vis_indices))), shuffle=False, num_workers=config.num_workers, collate_fn=default_collate, drop_last=False) if vis_indices else None
         return loader, None, None, vis_loader, vis_indices
-    generator = torch.Generator().manual_seed(int(config.validation_seed))
-    permutation = torch.randperm(dataset_len, generator=generator).tolist()
-    val_indices, train_indices = permutation[:val_len], permutation[val_len:]
+    train_indices, val_indices = episode_split
     train_dataset, val_dataset = Subset(runtime.dataset, train_indices), Subset(runtime.dataset, val_indices)
     train_loader = _build_loader_for_subset(train_dataset, config, shuffle=True)
     val_loader = _build_loader_for_subset(val_dataset, config, shuffle=False)
-    episode_split = _episode_split_indices(runtime, config)
-    val_loader_episode = _build_loader_for_subset(Subset(runtime.dataset, episode_split[1]), config, shuffle=False) if episode_split is not None else None
     vis_subset_indices = _select_fixed_vis_indices(len(val_dataset), config.seed, config.vis_num_samples)
     vis_loader = DataLoader(Subset(val_dataset, vis_subset_indices), batch_size=max(1, min(int(config.batch_size), len(vis_subset_indices))), shuffle=False, num_workers=config.num_workers, collate_fn=default_collate, drop_last=False) if vis_subset_indices else None
-    return train_loader, val_loader, val_loader_episode, vis_loader, [val_indices[index] for index in vis_subset_indices]
+    return train_loader, val_loader, None, vis_loader, [val_indices[index] for index in vis_subset_indices]
 
 
 def preprocess_batch(runtime: XVLARuntime, raw_batch: dict[str, Any]) -> dict[str, Any]:
@@ -584,6 +679,25 @@ def load_decoder_init_if_present(decoder: torch.nn.Module, decoder_init_path: st
     root = Path(decoder_init_path)
     state = load_decoder_state(root / DECODER_STATE_FILENAME if root.is_dir() else root)
     decoder.load_state_dict(state, strict=True)
+
+
+def _visual_thought_policy_checkpoint_dir(checkpoint_dir: str | Path) -> Path:
+    policy_dir = Path(checkpoint_dir) / POLICY_DIRNAME
+    if not policy_dir.is_dir(): raise FileNotFoundError(f"Missing visual-thought policy directory: {policy_dir}")
+    return policy_dir
+
+
+def load_visual_thought_decoder_checkpoint(decoder: torch.nn.Module | dict[ExpertType, torch.nn.Module], checkpoint_dir: str | Path) -> None:
+    root = Path(checkpoint_dir)
+    if isinstance(decoder, dict):
+        for expert_type, module in decoder.items():
+            state_path = root / DECODER_STATE_TEMPLATE.format(expert=str(expert_type))
+            if not state_path.is_file(): raise FileNotFoundError(f"Missing decoder checkpoint for expert={expert_type}: {state_path}")
+            module.load_state_dict(load_decoder_state(state_path), strict=True)
+        return
+    state_path = root / DECODER_STATE_FILENAME
+    if not state_path.is_file(): raise FileNotFoundError(f"Missing decoder checkpoint: {state_path}")
+    decoder.load_state_dict(load_decoder_state(state_path), strict=True)
 
 def build_decoder_bundle(config: VisualThoughtTrainConfig, runtime: XVLARuntime, teacher_bundle: dict[ExpertType, tuple[Any, Any]]) -> tuple[DataLoader, DataLoader | None, DataLoader | None, DataLoader | None, list[int], dict[ExpertType, torch.nn.Module], dict[ExpertType, TeacherTarget]]:
     loader, val_loader, val_loader_episode, vis_loader, vis_indices = build_train_val_dataloaders(runtime, config)
@@ -738,7 +852,7 @@ def prepare_models_and_target(config: VisualThoughtTrainConfig, runtime: XVLARun
 
 
 def _checkpoint_metadata(config: VisualThoughtTrainConfig, step: int) -> dict[str, Any]:
-    payload = {"name": config.name, "training_stage": config.training_stage, "expert_type": config.expert_type, "expert_types": list(resolve_expert_types(config)), "global_step": int(step), "xvla_init_path": config.xvla_init_path, "decoder_init_path": config.decoder_init_path}
+    payload = {"name": config.name, "training_stage": config.training_stage, "expert_type": config.expert_type, "expert_types": list(resolve_expert_types(config)), "global_step": int(step), "xvla_init_path": config.xvla_init_path, "decoder_init_path": config.decoder_init_path, "normalization_mapping": config.normalization_mapping, "wandb_run_id": config.wandb_run_id}
     if is_combined_expert_run(config):
         payload["decoder_init_paths"] = {"cedirnet": config.cedirnet_decoder_init_path, "dino": config.dino_decoder_init_path}
     return payload
@@ -765,7 +879,7 @@ def _save_checkpoint_if_needed(config: VisualThoughtTrainConfig, runtime: XVLARu
     checkpoint_dir = Path(config.output_dir) / checkpoint_name
     stack_cfg_path = {"cedirnet": config.cedirnet_decoder_stack_config_path, "dino": config.dino_decoder_stack_config_path} if is_combined_expert_run(config) else config.decoder_stack_config_path
     task_cfg_path = {"cedirnet": config.cedirnet_decoder_task_config_path, "dino": config.dino_decoder_task_config_path} if is_combined_expert_run(config) else config.decoder_task_config_path
-    save_visual_thought_checkpoint(checkpoint_dir=checkpoint_dir, policy=runtime.policy, decoder=decoder, trainer_state={"step": int(step), **trainer_state_dict(optimizer)}, metadata=_checkpoint_metadata(config, step), config_snapshot=config.to_json_dict(), preprocessor=runtime.preprocessor, postprocessor=runtime.postprocessor, decoder_stack_config_path=stack_cfg_path, decoder_task_config_path=task_cfg_path)
+    save_visual_thought_checkpoint(checkpoint_dir=checkpoint_dir, policy=runtime.policy, decoder=decoder, trainer_state={"step": int(step), "wandb_run_id": config.wandb_run_id, **trainer_state_dict(optimizer)}, metadata=_checkpoint_metadata(config, step), config_snapshot=config.to_json_dict(), preprocessor=runtime.preprocessor, postprocessor=runtime.postprocessor, decoder_stack_config_path=stack_cfg_path, decoder_task_config_path=task_cfg_path)
     should_push = bool(config.push_to_hub) and bool(config.push_repo_id) and (final or (int(config.push_every) > 0 and step % int(config.push_every) == 0))
     if should_push: _push_checkpoint_to_hub(checkpoint_dir, str(config.push_repo_id), step, f"Upload visual-thought checkpoint {checkpoint_name}")
 
@@ -774,7 +888,11 @@ def _maybe_init_wandb(config: VisualThoughtTrainConfig):
     if not config.wandb_enable: return None
     import wandb
 
-    return wandb.init(project=config.wandb_project, name=config.wandb_run_name or config.name, config=config.to_json_dict(), dir=config.output_dir)
+    kwargs = {"project": config.wandb_project, "name": config.wandb_run_name or config.name, "config": config.to_json_dict(), "dir": config.output_dir}
+    if config.wandb_run_id is not None: kwargs.update({"id": config.wandb_run_id, "resume": "must"})
+    run = wandb.init(**kwargs)
+    config.wandb_run_id = getattr(run, "id", config.wandb_run_id)
+    return run
 
 
 @torch.no_grad()
@@ -822,6 +940,23 @@ def run_validation(config: VisualThoughtTrainConfig, runtime: XVLARuntime, task_
     return metrics
 
 
+def load_visual_thought_resume_payload(config: VisualThoughtTrainConfig) -> tuple[Path, dict[str, Any], dict[str, Any]] | None:
+    checkpoint_dir = resolve_resume_checkpoint(config.output_dir, resume=config.resume, resume_checkpoint_path=config.resume_checkpoint_path)
+    if checkpoint_dir is None: return None
+    snapshot = load_visual_thought_config_snapshot(checkpoint_dir) if (Path(checkpoint_dir) / CONFIG_FILENAME).is_file() else {}
+    assert_visual_thought_resume_compatible(config, snapshot)
+    trainer_state = load_saved_trainer_state(checkpoint_dir)
+    saved_run_id = trainer_state.get("wandb_run_id") or snapshot.get("wandb_run_id")
+    if saved_run_id is not None and config.wandb_run_id is None: config.wandb_run_id = str(saved_run_id)
+    return Path(checkpoint_dir), snapshot, trainer_state
+
+
+def restore_visual_thought_training_state(decoder: torch.nn.Module | dict[ExpertType, torch.nn.Module], optimizer: torch.optim.Optimizer | JointTrainingState, checkpoint_dir: str | Path, trainer_state: dict[str, Any]) -> int:
+    load_visual_thought_decoder_checkpoint(decoder, checkpoint_dir)
+    restore_optimizer_state(optimizer, trainer_state)
+    return int(trainer_state.get("step", 0))
+
+
 class VisualThoughtModule(torch.nn.Module):
     """Bundles policy + decoder so a single DDP-wrapped forward touches every trainable
     parameter. Required for joint_multitask multi-GPU: the trainer calls policy submodules
@@ -864,9 +999,12 @@ def train_visual_thought(config: VisualThoughtTrainConfig) -> None:
     _set_seed(config.seed)
     if is_main: Path(config.output_dir).mkdir(parents=True, exist_ok=True)
     accelerator.wait_for_everyone()
+    resume_payload = load_visual_thought_resume_payload(config)
     wandb_run = _maybe_init_wandb(config) if is_main else None
 
-    runtime = build_xvla_runtime(config)
+    resume_checkpoint_dir = resume_payload[0] if resume_payload is not None else None
+    policy_source_path = _visual_thought_policy_checkpoint_dir(resume_checkpoint_dir) if resume_checkpoint_dir is not None else None
+    runtime = build_xvla_runtime(config, policy_source_path=policy_source_path)
     accelerator.wait_for_everyone()
 
     set_policy_trainability(runtime.policy, config.training_stage)
@@ -899,7 +1037,9 @@ def train_visual_thought(config: VisualThoughtTrainConfig) -> None:
 
     optimizer = build_optimizer(config, runtime.policy, decoder)
 
-    if config.dry_run: return
+    if config.dry_run:
+        if wandb_run is not None: wandb_run.finish()
+        return
 
     if is_joint:
         train_module = VisualThoughtModule(runtime.policy, decoder, config, task_cfg)
@@ -911,10 +1051,17 @@ def train_visual_thought(config: VisualThoughtTrainConfig) -> None:
         if isinstance(decoder, dict): raise SystemExit("Combined expert_types mode is supported for joint_multitask only.")
         decoder, optimizer, loader = accelerator.prepare(decoder, optimizer, loader); train_module = decoder; unwrapped_decoder = lambda: accelerator.unwrap_model(decoder)
 
-    step = 0
+    step = restore_visual_thought_training_state(unwrapped_decoder(), optimizer, resume_checkpoint_dir, resume_payload[2]) if resume_payload is not None else 0
     zero_optimizer_grad(optimizer)
-    progress = tqdm(total=config.steps, desc=config.name, disable=not is_main)
+    progress = tqdm(total=max(int(config.steps) - int(step), 0), desc=config.name, disable=not is_main)
     if is_main: print(json.dumps({"event": "ddp_config", "find_unused_parameters": bool(find_unused_parameters), "gradient_accumulation_steps": int(accum_steps), "num_processes": int(accelerator.num_processes)}))
+    emitted_validation_steps: set[int] = set()
+    if is_main and step == 0 and val_loader is not None and should_run_validation_step(0, config.steps, config.validation_freq, emitted_validation_steps):
+        val_metrics = {"event": "validation_step", "step": 0, **run_validation(config, runtime, task_cfg, teacher, unwrapped_decoder(), val_loader, prefix="val")}
+        if val_loader_episode is not None: val_metrics.update(run_validation(config, runtime, task_cfg, teacher, unwrapped_decoder(), val_loader_episode, prefix="val_ep"))
+        print(json.dumps(val_metrics))
+        if wandb_run is not None: wandb_run.log({key: value for key, value in val_metrics.items() if key != "event"}, step=0)
+        emitted_validation_steps.add(0)
     while step < config.steps:
         for raw_batch in loader:
             if step >= config.steps: break
@@ -946,11 +1093,12 @@ def train_visual_thought(config: VisualThoughtTrainConfig) -> None:
                 if int(config.profile_step_time_every) > 0 and step % max(int(config.profile_step_time_every), 1) == 0: metrics.update({"time_preprocess_s": t1 - t0, "time_teacher_s": t2 - t1, "time_forward_backward_s": t3 - t2, "time_step_s": t4 - t3, "time_total_s": t4 - t0})
                 print(json.dumps(metrics))
                 if wandb_run is not None: wandb_run.log({key: value for key, value in metrics.items() if key != "event"}, step=int(step))
-            if is_main and val_loader is not None and step % max(int(config.validation_freq), 1) == 0:
+            if is_main and val_loader is not None and should_run_validation_step(step, config.steps, config.validation_freq, emitted_validation_steps):
                 val_metrics = {"event": "validation_step", "step": int(step), **run_validation(config, runtime, task_cfg, teacher, unwrapped_decoder(), val_loader, prefix="val")}
                 if val_loader_episode is not None: val_metrics.update(run_validation(config, runtime, task_cfg, teacher, unwrapped_decoder(), val_loader_episode, prefix="val_ep"))
                 print(json.dumps(val_metrics))
                 if wandb_run is not None: wandb_run.log({key: value for key, value in val_metrics.items() if key != "event"}, step=int(step))
+                emitted_validation_steps.add(int(step))
             if is_main and vis_loader is not None and int(config.vis_every) > 0 and step % max(int(config.vis_every), 1) == 0:
                 vis_metrics = {"event": "visualization_step", "step": int(step), **run_visualization(config, runtime, teacher, unwrapped_decoder(), vis_loader, step)}
                 print(json.dumps(vis_metrics))
