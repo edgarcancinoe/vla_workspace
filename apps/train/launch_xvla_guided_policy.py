@@ -24,7 +24,7 @@ from thesis_vla.training.xvla_guided_launcher import GuidedExperimentSpec, Guide
 WORKSPACE_DIR = PROJECT_ROOT
 RUN_TS = dt.datetime.now().strftime("%Y%m%d_%H%M%S")
 
-RUNTIME_CONFIG = GuidedRuntimeConfig(launch_mode="single", cuda_devices=(0,), num_workers=0, dry_run=False)
+RUNTIME_CONFIG = GuidedRuntimeConfig(launch_mode="single", cuda_devices=(1,), num_workers=0, dry_run=False)
 
 DEFAULTS = GuidedLaunchConfig(
     hf_user="edgarcancinoe",

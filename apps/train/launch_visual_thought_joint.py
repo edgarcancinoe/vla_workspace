@@ -24,7 +24,7 @@ from thesis_vla.training.visual_thought_launcher import VisualThoughtExperimentS
 WORKSPACE_DIR = PROJECT_ROOT
 RUN_TS = dt.datetime.now().strftime("%Y%m%d_%H%M%S")
 
-RUNTIME_CONFIG = VisualThoughtRuntimeConfig(launch_mode="single", cuda_devices=(0,), num_workers=3, dry_run=False)
+RUNTIME_CONFIG = VisualThoughtRuntimeConfig(launch_mode="single", cuda_devices=(1,), num_workers=3, dry_run=False)
 
 DEFAULTS = VisualThoughtLaunchConfig(
     hf_user="edgarcancinoe",
@@ -61,7 +61,7 @@ DEFAULTS = VisualThoughtLaunchConfig(
     push_repo_id=None,
     push_every=2000,
     action_loss_weight=1.0,
-    expert_loss_weight=0.5,
+    expert_loss_weight=0.0,
     steps=8000,
     log_every=20,
     save_every=2000,
@@ -170,7 +170,7 @@ DINO_CLOTH_DROP = [
         wandb_run_name              =DINO_CLOTH_DROP_NAME,
         dataset_name                =CLOTH_DROP_DS[0],
         dataset_revision            =CLOTH_DROP_DS[1],
-        xvla_init_path              =XVLA_INIT_CLOTHFOLD,
+        xvla_init_path              =XVLA_INIT_CLOTHDROP,
         decoder_init_path           =DINO_CLOTH_DROP_DECODER_INIT,
         decoder_stack_config_path   =DINO_STACK_CONFIG,
         decoder_task_config_path    =DINO_TOKENSEQ_CONFIG,
