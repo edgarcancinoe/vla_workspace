@@ -37,6 +37,7 @@ class GuidedLaunchConfig:
     dataset_root: str | None = None
     runtime: GuidedRuntimeConfig = GuidedRuntimeConfig()
     xvla_init_path: str = "lerobot/xvla-base"
+    action_mode: str | None = None
     decoder_init_path: str = ""
     decoder_stack_config_path: str = str(CONFIG_ROOT / "visual_thought" / "cedirnet_stack.yaml")
     decoder_task_config_path: str = str(CONFIG_ROOT / "visual_thought" / "cedirnet_head.yaml")
@@ -49,6 +50,7 @@ class GuidedLaunchConfig:
     weight_decay: float = 0.01
     decoder_optimizer_lr: float = 1e-4
     xvla_optimizer_lr: float = 1e-5
+    xvla_scheduler_decay_lr: float | None = 2.5e-6
     action_loss_weight: float = 1.0
     expert_loss_weight: float = 0.25
     fusion_mode: str = "concat"
@@ -60,6 +62,14 @@ class GuidedLaunchConfig:
     log_every: int = 20
     save_every: int = 500
     save_final_checkpoint: bool = True
+    wandb_enable: bool = True
+    wandb_project: str = "xvla-guided"
+    wandb_run_name: str | None = None
+    validation_enable: bool = True
+    validation_split_ratio: float = 0.1
+    validation_freq: int = 500
+    validation_max_batches: int = 10
+    validation_seed: int = 1337
     seed: int = 42
     name_prefix: str = "xvla-guided"
 
@@ -72,6 +82,7 @@ class GuidedExperimentSpec:
     dataset_revision: str | None = None
     dataset_root: str | None = None
     xvla_init_path: str | None = None
+    action_mode: str | None = None
     decoder_init_path: str | None = None
     decoder_stack_config_path: str | None = None
     decoder_task_config_path: str | None = None
@@ -82,6 +93,7 @@ class GuidedExperimentSpec:
     gradient_accumulation_steps: int | None = None
     decoder_optimizer_lr: float | None = None
     xvla_optimizer_lr: float | None = None
+    xvla_scheduler_decay_lr: float | None = None
     action_loss_weight: float | None = None
     expert_loss_weight: float | None = None
     fusion_mode: str | None = None
@@ -92,6 +104,14 @@ class GuidedExperimentSpec:
     steps: int | None = None
     log_every: int | None = None
     save_every: int | None = None
+    wandb_enable: bool | None = None
+    wandb_project: str | None = None
+    wandb_run_name: str | None = None
+    validation_enable: bool | None = None
+    validation_split_ratio: float | None = None
+    validation_freq: int | None = None
+    validation_max_batches: int | None = None
+    validation_seed: int | None = None
     seed: int | None = None
     num_workers: int | None = None
     launch_mode: LaunchMode | None = None
@@ -107,6 +127,7 @@ class ResolvedGuidedExperiment:
     dataset_root: str | None
     runtime: GuidedRuntimeConfig
     xvla_init_path: str
+    action_mode: str | None
     decoder_init_path: str
     decoder_stack_config_path: str
     decoder_task_config_path: str
@@ -118,6 +139,7 @@ class ResolvedGuidedExperiment:
     weight_decay: float
     decoder_optimizer_lr: float
     xvla_optimizer_lr: float
+    xvla_scheduler_decay_lr: float | None
     action_loss_weight: float
     expert_loss_weight: float
     fusion_mode: str
@@ -128,6 +150,14 @@ class ResolvedGuidedExperiment:
     log_every: int
     save_every: int
     save_final_checkpoint: bool
+    wandb_enable: bool
+    wandb_project: str
+    wandb_run_name: str | None
+    validation_enable: bool
+    validation_split_ratio: float
+    validation_freq: int
+    validation_max_batches: int
+    validation_seed: int
     seed: int
 
 
@@ -184,6 +214,7 @@ def resolve_experiment(workspace_dir: Path, defaults: GuidedLaunchConfig, experi
         dataset_root=experiment.dataset_root if experiment.dataset_root is not None else defaults.dataset_root,
         runtime=runtime,
         xvla_init_path=xvla_init_path,
+        action_mode=experiment.action_mode if experiment.action_mode is not None else defaults.action_mode,
         decoder_init_path=decoder_init_path,
         decoder_stack_config_path=experiment.decoder_stack_config_path or defaults.decoder_stack_config_path,
         decoder_task_config_path=experiment.decoder_task_config_path or defaults.decoder_task_config_path,
@@ -195,6 +226,7 @@ def resolve_experiment(workspace_dir: Path, defaults: GuidedLaunchConfig, experi
         weight_decay=defaults.weight_decay,
         decoder_optimizer_lr=experiment.decoder_optimizer_lr if experiment.decoder_optimizer_lr is not None else defaults.decoder_optimizer_lr,
         xvla_optimizer_lr=experiment.xvla_optimizer_lr if experiment.xvla_optimizer_lr is not None else defaults.xvla_optimizer_lr,
+        xvla_scheduler_decay_lr=experiment.xvla_scheduler_decay_lr if experiment.xvla_scheduler_decay_lr is not None else defaults.xvla_scheduler_decay_lr,
         action_loss_weight=experiment.action_loss_weight if experiment.action_loss_weight is not None else float(stage_defaults.get("action_loss_weight", defaults.action_loss_weight)),
         expert_loss_weight=experiment.expert_loss_weight if experiment.expert_loss_weight is not None else float(stage_defaults.get("expert_loss_weight", defaults.expert_loss_weight)),
         fusion_mode=fusion_mode,
@@ -205,6 +237,14 @@ def resolve_experiment(workspace_dir: Path, defaults: GuidedLaunchConfig, experi
         log_every=experiment.log_every if experiment.log_every is not None else defaults.log_every,
         save_every=experiment.save_every if experiment.save_every is not None else defaults.save_every,
         save_final_checkpoint=defaults.save_final_checkpoint,
+        wandb_enable=experiment.wandb_enable if experiment.wandb_enable is not None else defaults.wandb_enable,
+        wandb_project=experiment.wandb_project or defaults.wandb_project,
+        wandb_run_name=experiment.wandb_run_name if experiment.wandb_run_name is not None else defaults.wandb_run_name,
+        validation_enable=experiment.validation_enable if experiment.validation_enable is not None else defaults.validation_enable,
+        validation_split_ratio=experiment.validation_split_ratio if experiment.validation_split_ratio is not None else defaults.validation_split_ratio,
+        validation_freq=experiment.validation_freq if experiment.validation_freq is not None else defaults.validation_freq,
+        validation_max_batches=experiment.validation_max_batches if experiment.validation_max_batches is not None else defaults.validation_max_batches,
+        validation_seed=experiment.validation_seed if experiment.validation_seed is not None else defaults.validation_seed,
         seed=experiment.seed if experiment.seed is not None else defaults.seed,
     )
 
@@ -267,6 +307,7 @@ def print_run_summary(index: int, total: int, resolved: ResolvedGuidedExperiment
     print("=" * 88)
     print(f"  Name:               {resolved.name}")
     print(f"  XVLA Init:          {resolved.xvla_init_path}")
+    print(f"  Action Mode:        {resolved.action_mode}")
     print(f"  Decoder Init:       {resolved.decoder_init_path}")
     print(f"  Fusion:             {resolved.fusion_mode}")
     print(f"  Guidance Train:     {resolved.guidance_train_mode} @ step {resolved.guidance_unfreeze_step}")
@@ -279,8 +320,17 @@ def print_run_summary(index: int, total: int, resolved: ResolvedGuidedExperiment
     print(f"  Batch Size:         {resolved.batch_size}")
     print(f"  Decoder LR:         {resolved.decoder_optimizer_lr}")
     print(f"  XVLA LR:            {resolved.xvla_optimizer_lr}")
+    print(f"  XVLA Sched Decay:   {resolved.xvla_scheduler_decay_lr}")
     print(f"  Action W:           {resolved.action_loss_weight}")
     print(f"  Expert W:           {resolved.expert_loss_weight}")
+    print(f"  WandB:              {resolved.wandb_enable}")
+    if resolved.wandb_enable: print(f"  WandB Project:      {resolved.wandb_project}")
+    print(f"  Validation:         {resolved.validation_enable}")
+    if resolved.validation_enable:
+        print(f"  Val Split Ratio:    {resolved.validation_split_ratio}")
+        print(f"  Val Frequency:      {resolved.validation_freq}")
+        print(f"  Val Max Batches:    {resolved.validation_max_batches}")
+        print(f"  Val Seed:           {resolved.validation_seed}")
     print(f"  Dry Run:            {resolved.runtime.dry_run}")
     print(f"  Command:            {' '.join(cmd)}")
     print("=" * 88)

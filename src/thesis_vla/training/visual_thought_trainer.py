@@ -481,7 +481,7 @@ def _episode_split_indices(runtime: XVLARuntime, config: VisualThoughtTrainConfi
     episode_indices = [int(value.item()) if torch.is_tensor(value) else int(value) for value in episode_column]
     unique_episodes = sorted(set(episode_indices))
     if len(unique_episodes) < 2: return None
-    val_episode_len = min(max(int(round(len(unique_episodes) * float(config.validation_split_ratio))), 1), max(len(unique_episodes) - 1, 1))
+    val_episode_len = int(len(unique_episodes) * float(config.validation_split_ratio))
     if val_episode_len <= 0 or val_episode_len >= len(unique_episodes): return None
     generator = torch.Generator().manual_seed(int(config.validation_seed))
     permutation = torch.randperm(len(unique_episodes), generator=generator).tolist()
@@ -499,24 +499,19 @@ def build_train_val_dataloaders(runtime: XVLARuntime, config: VisualThoughtTrain
         vis_indices = _select_fixed_vis_indices(len(runtime.dataset), config.seed, config.vis_num_samples)
         vis_loader = DataLoader(Subset(runtime.dataset, vis_indices), batch_size=max(1, min(int(config.batch_size), len(vis_indices))), shuffle=False, num_workers=config.num_workers, collate_fn=default_collate, drop_last=False) if vis_indices else None
         return loader, None, None, vis_loader, vis_indices
-    dataset_len = len(runtime.dataset)
-    val_len = min(max(int(round(dataset_len * float(config.validation_split_ratio))), 1), max(dataset_len - 1, 1))
-    if dataset_len < 2 or val_len >= dataset_len:
+    episode_split = _episode_split_indices(runtime, config)
+    if episode_split is None:
         loader = build_dataloader(runtime, config)
         vis_indices = _select_fixed_vis_indices(len(runtime.dataset), config.seed, config.vis_num_samples)
         vis_loader = DataLoader(Subset(runtime.dataset, vis_indices), batch_size=max(1, min(int(config.batch_size), len(vis_indices))), shuffle=False, num_workers=config.num_workers, collate_fn=default_collate, drop_last=False) if vis_indices else None
         return loader, None, None, vis_loader, vis_indices
-    generator = torch.Generator().manual_seed(int(config.validation_seed))
-    permutation = torch.randperm(dataset_len, generator=generator).tolist()
-    val_indices, train_indices = permutation[:val_len], permutation[val_len:]
+    train_indices, val_indices = episode_split
     train_dataset, val_dataset = Subset(runtime.dataset, train_indices), Subset(runtime.dataset, val_indices)
     train_loader = _build_loader_for_subset(train_dataset, config, shuffle=True)
     val_loader = _build_loader_for_subset(val_dataset, config, shuffle=False)
-    episode_split = _episode_split_indices(runtime, config)
-    val_loader_episode = _build_loader_for_subset(Subset(runtime.dataset, episode_split[1]), config, shuffle=False) if episode_split is not None else None
     vis_subset_indices = _select_fixed_vis_indices(len(val_dataset), config.seed, config.vis_num_samples)
     vis_loader = DataLoader(Subset(val_dataset, vis_subset_indices), batch_size=max(1, min(int(config.batch_size), len(vis_subset_indices))), shuffle=False, num_workers=config.num_workers, collate_fn=default_collate, drop_last=False) if vis_subset_indices else None
-    return train_loader, val_loader, val_loader_episode, vis_loader, [val_indices[index] for index in vis_subset_indices]
+    return train_loader, val_loader, None, vis_loader, [val_indices[index] for index in vis_subset_indices]
 
 
 def preprocess_batch(runtime: XVLARuntime, raw_batch: dict[str, Any]) -> dict[str, Any]:
