@@ -3,7 +3,7 @@ import sys
 
 sys.path.append(str(Path(__file__).resolve().parents[1] / "src"))
 
-from thesis_vla.training.xvla_guided_launcher import GuidedExperimentSpec, GuidedLaunchConfig, resolve_experiment
+from thesis_vla.training.xvla_guided_launcher import GuidedExperimentSpec, GuidedLaunchConfig, GuidedRuntimeConfig, build_training_command, resolve_experiment
 
 
 def test_guided_launcher_resolves_stage_defaults(tmp_path):
@@ -20,6 +20,9 @@ def test_guided_launcher_resolves_stage_defaults(tmp_path):
     assert resolved.validation_enable is True
     assert resolved.validation_split_ratio == 0.1
     assert resolved.xvla_scheduler_decay_lr == 2.5e-6
+    assert resolved.normalization_mapping == '{"ACTION": "MEAN_STD", "STATE": "MEAN_STD", "VISUAL": "IDENTITY"}'
+    assert resolved.resume is False
+    assert resolved.resume_checkpoint_path is None
 
 
 def test_guided_launcher_maps_legacy_gated_fusion(tmp_path, tmp_path_factory):
@@ -43,3 +46,22 @@ def test_guided_launcher_allows_action_mode_and_scheduler_override(tmp_path):
     resolved = resolve_experiment(tmp_path, defaults, GuidedExperimentSpec(action_mode="so101_joint", xvla_scheduler_decay_lr=1e-6))
     assert resolved.action_mode == "so101_joint"
     assert resolved.xvla_scheduler_decay_lr == 1e-6
+
+
+def test_guided_launcher_allows_normalization_and_resume_override(tmp_path):
+    defaults = GuidedLaunchConfig(hf_user="tester", dataset_name="dataset", xvla_init_path="lerobot/xvla-base", decoder_init_path="/tmp/decoder")
+    resolved = resolve_experiment(tmp_path, defaults, GuidedExperimentSpec(normalization_mapping='{"ACTION":"MEAN_STD","STATE":"MEAN_STD","VISUAL":"IDENTITY"}', resume=True, resume_checkpoint_path="/tmp/checkpoint_0000100"))
+    assert resolved.normalization_mapping == '{"ACTION":"MEAN_STD","STATE":"MEAN_STD","VISUAL":"IDENTITY"}'
+    assert resolved.resume is True
+    assert resolved.resume_checkpoint_path == "/tmp/checkpoint_0000100"
+
+
+def test_guided_launcher_builds_accelerate_command(tmp_path):
+    defaults = GuidedLaunchConfig(hf_user="tester", dataset_name="dataset", xvla_init_path="lerobot/xvla-base", decoder_init_path="/tmp/decoder", runtime=GuidedRuntimeConfig(launch_mode="accelerate", cuda_devices=(0, 1), mixed_precision="bf16"))
+    resolved = resolve_experiment(tmp_path, defaults, GuidedExperimentSpec(name="guided-accel"))
+    cmd = build_training_command(resolved, tmp_path / "guided.json")
+    assert cmd[:3] == [sys.executable, "-m", "accelerate.commands.launch"]
+    assert "--num_processes=2" in cmd
+    assert "--mixed_precision=bf16" in cmd
+    assert "--module" in cmd
+    assert "thesis_vla.training.xvla_guided_trainer" in cmd

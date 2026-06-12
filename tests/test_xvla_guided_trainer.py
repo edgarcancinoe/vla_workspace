@@ -9,7 +9,7 @@ sys.path.append(str(Path(__file__).resolve().parents[1] / "src"))
 from lerobot.policies.xvla.action_contract import build_slice_map, get_so101_slice_spec
 from lerobot.policies.xvla.modeling_xvla import pad_tensor_along_dim, pad_vector
 from lerobot.processor.slice_processor import SliceProcessorStep
-from thesis_vla.training.xvla_guided_trainer import GuidedXVLATrainConfig, _configure_explicit_stage_trainability, _episode_split_indices, _maybe_init_wandb, build_xvla_runtime, compute_guidance_loss, compute_guided_action_loss_from_encoder
+from thesis_vla.training.xvla_guided_trainer import GuidedXVLATrainConfig, _configure_explicit_stage_trainability, _episode_split_indices, _maybe_init_wandb, assert_guided_resume_compatible, build_xvla_runtime, compute_guidance_loss, compute_guided_action_loss_from_encoder
 from thesis_vla.visual_thought.targets import TeacherTarget
 
 
@@ -104,6 +104,7 @@ class _FakePolicyCfg:
         self.chunk_size = chunk_size
         self.optimizer_lr = 1e-4
         self.scheduler_decay_lr = 2.5e-6
+        self.normalization_mapping = {"ACTION": "MEAN_STD", "STATE": "MEAN_STD", "VISUAL": "IDENTITY"}
         self.device = "cpu"
 
 
@@ -156,6 +157,7 @@ def test_build_xvla_runtime_uses_delta_timestamps_and_slice_step(monkeypatch):
     assert runtime.policy.config.action_mode == "so101_joint"
     assert runtime.policy.config.optimizer_lr == 3e-5
     assert runtime.policy.config.scheduler_decay_lr == 1e-6
+    assert runtime.policy.config.normalization_mapping == {"ACTION": "MEAN_STD", "STATE": "MEAN_STD", "VISUAL": "IDENTITY"}
     expected_slice_map = build_slice_map(get_so101_slice_spec("so101_joint"))
     assert any(isinstance(step, SliceProcessorStep) and step.slice_map == expected_slice_map for step in runtime.preprocessor.steps)
 
@@ -208,3 +210,34 @@ def test_maybe_init_wandb_uses_config_name(monkeypatch):
     assert run is not None
     assert captured["project"] == "proj"
     assert captured["name"] == "guided-run"
+
+
+def test_maybe_init_wandb_resumes_existing_run(monkeypatch):
+    captured = {}
+
+    class _FakeRun:
+        id = "run-123"
+
+    class _FakeWandb:
+        @staticmethod
+        def init(**kwargs):
+            captured.update(kwargs)
+            return _FakeRun()
+
+    monkeypatch.setitem(sys.modules, "wandb", _FakeWandb)
+    config = GuidedXVLATrainConfig(name="guided-run", xvla_init_path="base", decoder_init_path="decoder", decoder_stack_config_path="stack.yaml", decoder_task_config_path="task.yaml", dataset_repo_id="user/dataset", dataset_revision="main", dataset_root=None, output_dir="/tmp/out", device="cpu", wandb_enable=True, wandb_project="proj", wandb_run_id="run-123")
+    _maybe_init_wandb(config)
+
+    assert captured["id"] == "run-123"
+    assert captured["resume"] == "must"
+
+
+def test_guided_resume_compatibility_checks_normalization_and_fusion():
+    config = GuidedXVLATrainConfig(name="guided", xvla_init_path="base", decoder_init_path="decoder", decoder_stack_config_path="stack.yaml", decoder_task_config_path="task.yaml", dataset_repo_id="user/dataset", dataset_revision="main", dataset_root=None, output_dir="/tmp/out", device="cpu", fusion_mode="concat", normalization_mapping='{"ACTION":"MEAN_STD","STATE":"MEAN_STD","VISUAL":"IDENTITY"}')
+    assert_guided_resume_compatible(config, {"fusion_mode": "concat", "normalization_mapping": '{"ACTION":"MEAN_STD","STATE":"MEAN_STD","VISUAL":"IDENTITY"}'})
+    try:
+        assert_guided_resume_compatible(config, {"fusion_mode": "cross_attention"})
+    except ValueError as exc:
+        assert "fusion_mode" in str(exc)
+    else:
+        raise AssertionError("Expected guided resume compatibility check to reject mismatched fusion_mode.")

@@ -8,7 +8,7 @@ from torch.optim.lr_scheduler import LambdaLR
 sys.path.append(str(Path(__file__).resolve().parents[1] / "src"))
 
 from thesis_vla.common.hf_hub import FAILED_HUB_UPLOAD_FILENAME, HubUploadConfig, HubUploadResult, push_folder_to_hub
-from thesis_vla.training.visual_thought_trainer import JointTrainingState, VisualThoughtTrainConfig, _apply_xvla_training_overrides, _hub_step_dir, _push_checkpoint_to_hub, build_optimizer, build_policy_scheduler, compute_expert_loss, compute_expert_losses, compute_xvla_action_loss_from_encoder, load_decoder_init_if_present, optimizer_metrics, set_policy_trainability, trainer_state_dict
+from thesis_vla.training.visual_thought_trainer import JointTrainingState, VisualThoughtTrainConfig, _apply_xvla_training_overrides, _hub_step_dir, _push_checkpoint_to_hub, apply_normalization_mapping_override, assert_visual_thought_resume_compatible, build_optimizer, build_policy_scheduler, compute_expert_loss, compute_expert_losses, compute_xvla_action_loss_from_encoder, load_decoder_init_if_present, optimizer_metrics, resolve_resume_checkpoint, set_policy_trainability, should_run_validation_step, trainer_state_dict
 from thesis_vla.visual_thought import CeDirNetDistillationModel, DinoFeatureAlignmentModel, DinoTokenSequenceModel, TeacherTarget, load_cedirnet_decoder_config, load_dino_decoder_config
 from thesis_vla.visual_thought.checkpoints import DECODER_STATE_FILENAME, save_decoder_state, save_visual_thought_checkpoint
 
@@ -291,3 +291,39 @@ def test_push_checkpoint_to_hub_writes_and_clears_failure_marker(monkeypatch):
 def test_hub_step_dir_uses_zero_padded_step_number():
     assert _hub_step_dir(7) == "step_0000007"
     assert _hub_step_dir(1234) == "step_0001234"
+
+
+def test_apply_normalization_mapping_override_sets_policy_config():
+    policy_cfg = type("Cfg", (), {"normalization_mapping": {}})()
+    apply_normalization_mapping_override(policy_cfg, '{"ACTION":"MEAN_STD","STATE":"MEAN_STD","VISUAL":"IDENTITY"}')
+    assert policy_cfg.normalization_mapping == {"ACTION": "MEAN_STD", "STATE": "MEAN_STD", "VISUAL": "IDENTITY"}
+
+
+def test_resolve_resume_checkpoint_prefers_latest_numeric_checkpoint():
+    with tempfile.TemporaryDirectory() as tmpdir:
+        root = Path(tmpdir)
+        (root / "checkpoint_0000007").mkdir()
+        (root / "checkpoint_0000100").mkdir()
+        resolved = resolve_resume_checkpoint(root, resume=True)
+        assert resolved == root / "checkpoint_0000100"
+
+
+def test_should_run_validation_step_forces_zero_and_one_without_duplicates():
+    emitted = set()
+    assert should_run_validation_step(0, total_steps=10, validation_freq=5, emitted_steps=emitted) is True
+    emitted.add(0)
+    assert should_run_validation_step(0, total_steps=10, validation_freq=5, emitted_steps=emitted) is False
+    assert should_run_validation_step(1, total_steps=10, validation_freq=5, emitted_steps=emitted) is True
+    emitted.add(1)
+    assert should_run_validation_step(5, total_steps=10, validation_freq=5, emitted_steps=emitted) is True
+
+
+def test_visual_thought_resume_compatibility_checks_structure():
+    config = VisualThoughtTrainConfig(name="demo", training_stage="joint_multitask", expert_type="cedirnet", xvla_init_path="x", decoder_init_path="d", decoder_stack_config_path="a", decoder_task_config_path="b", dataset_repo_id="repo", dataset_revision="main", dataset_root=None, output_dir="/tmp/out", device="cpu", normalization_mapping='{"ACTION":"MEAN_STD","STATE":"MEAN_STD","VISUAL":"IDENTITY"}')
+    assert_visual_thought_resume_compatible(config, {"training_stage": "joint_multitask", "expert_type": "cedirnet", "expert_types": ["cedirnet"], "normalization_mapping": '{"ACTION":"MEAN_STD","STATE":"MEAN_STD","VISUAL":"IDENTITY"}'})
+    try:
+        assert_visual_thought_resume_compatible(config, {"training_stage": "distill_only"})
+    except ValueError as exc:
+        assert "training_stage" in str(exc)
+    else:
+        raise AssertionError("Expected visual-thought resume compatibility check to reject mismatched training_stage.")

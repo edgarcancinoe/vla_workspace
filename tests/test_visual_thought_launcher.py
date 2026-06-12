@@ -1,6 +1,7 @@
 from pathlib import Path
+import sys
 
-from thesis_vla.training.visual_thought_launcher import VisualThoughtExperimentSpec, VisualThoughtLaunchConfig, resolve_experiment
+from thesis_vla.training.visual_thought_launcher import VisualThoughtExperimentSpec, VisualThoughtLaunchConfig, VisualThoughtRuntimeConfig, build_training_command, resolve_experiment
 
 
 def test_resolve_visual_thought_distill_only_does_not_require_decoder_init():
@@ -37,3 +38,21 @@ def test_resolve_visual_thought_joint_combined_succeeds():
     assert resolved.expert_types == ("cedirnet", "dino")
     assert resolved.cedirnet_decoder_init_path == "c"
     assert resolved.dino_decoder_init_path == "d"
+
+
+def test_resolve_visual_thought_normalization_and_resume_fields():
+    defaults = VisualThoughtLaunchConfig(hf_user="tester", dataset_name="dataset", xvla_init_path="lerobot/xvla-base", decoder_stack_config_path="stack.yaml", decoder_task_config_path="task.yaml")
+    resolved = resolve_experiment(Path.cwd(), defaults, VisualThoughtExperimentSpec(name="demo", normalization_mapping='{"ACTION":"MEAN_STD","STATE":"MEAN_STD","VISUAL":"IDENTITY"}', resume=True, resume_checkpoint_path="/tmp/checkpoint_0000007"), timestamp="20260101_000000")
+    assert resolved.normalization_mapping == '{"ACTION":"MEAN_STD","STATE":"MEAN_STD","VISUAL":"IDENTITY"}'
+    assert resolved.resume is True
+    assert resolved.resume_checkpoint_path == "/tmp/checkpoint_0000007"
+
+
+def test_visual_thought_build_training_command_uses_accelerate():
+    defaults = VisualThoughtLaunchConfig(hf_user="tester", dataset_name="dataset", xvla_init_path="lerobot/xvla-base", decoder_stack_config_path="stack.yaml", decoder_task_config_path="task.yaml", runtime=VisualThoughtRuntimeConfig(launch_mode="accelerate", cuda_devices=(0, 1), mixed_precision="bf16"))
+    resolved = resolve_experiment(Path.cwd(), defaults, VisualThoughtExperimentSpec(name="demo-accel"), timestamp="20260101_000000")
+    cmd = build_training_command(resolved, Path("/tmp/demo.json"))
+    assert cmd[:3] == [sys.executable, "-m", "accelerate.commands.launch"]
+    assert "--num_processes=2" in cmd
+    assert "--mixed_precision=bf16" in cmd
+    assert "thesis_vla.training.visual_thought_trainer" in cmd

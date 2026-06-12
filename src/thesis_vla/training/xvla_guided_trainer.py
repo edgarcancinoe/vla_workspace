@@ -8,6 +8,7 @@ from pathlib import Path
 from typing import Any
 
 import torch
+from torch import nn
 from torch.utils.data import DataLoader, Subset
 from torch.utils.data.dataloader import default_collate
 from tqdm import tqdm
@@ -19,7 +20,7 @@ from lerobot.policies.xvla.action_contract import get_so101_slice_spec
 from lerobot.policies.xvla.modeling_xvla import XVLAPolicy
 from thesis_vla.policies.xvla_guided.configuration_xvla_guided import normalize_guidance_fusion_mode
 from thesis_vla.inference.xvla_runtime import make_xvla_runtime_processors, resolve_xvla_rename_map, sync_xvla_policy_config
-from thesis_vla.training.visual_thought_trainer import JointTrainingState, XVLARuntime, _as_device, _resolve_dataset_root, _resolve_teacher_image_key, _set_seed, ensure_xvla_slice_step, optimizer_metrics, preprocess_batch, step_optimizer, trainer_state_dict, zero_optimizer_grad
+from thesis_vla.training.visual_thought_trainer import JointTrainingState, XVLA_GRAD_CLIP_NORM, XVLARuntime, _as_device, _resolve_dataset_root, _resolve_teacher_image_key, _set_seed, apply_normalization_mapping_override, ensure_xvla_slice_step, load_saved_trainer_state, optimizer_metrics, preprocess_batch, resolve_resume_checkpoint, restore_optimizer_state, should_run_validation_step, step_optimizer, trainer_state_dict, zero_optimizer_grad
 from thesis_vla.visual_thought import load_cedirnet_decoder_config
 from thesis_vla.visual_thought.cedirnet_cache import CeDiRNetTargetCache
 from thesis_vla.visual_thought.checkpoints import DECODER_STATE_FILENAME, load_decoder_state
@@ -61,6 +62,7 @@ class GuidedXVLATrainConfig:
     teacher_target_cache_root: str | None = None
     dataset_video_backend: str = "pyav"
     dataset_tolerance_s: float = 1e-4
+    normalization_mapping: str = '{"ACTION": "MEAN_STD", "STATE": "MEAN_STD", "VISUAL": "IDENTITY"}'
     fusion_mode: str = "concat"
     gated_fusion: bool | None = None
     guidance_train_mode: str = "frozen"
@@ -70,11 +72,14 @@ class GuidedXVLATrainConfig:
     wandb_enable: bool = True
     wandb_project: str = "xvla-guided"
     wandb_run_name: str | None = None
+    wandb_run_id: str | None = None
     validation_enable: bool = True
     validation_split_ratio: float = 0.1
     validation_freq: int = 500
     validation_max_batches: int = 10
     validation_seed: int = 1337
+    resume: bool = False
+    resume_checkpoint_path: str | None = None
     seed: int = 42
     dry_run: bool = False
 
@@ -97,6 +102,7 @@ def build_xvla_runtime(config: GuidedXVLATrainConfig) -> XVLARuntime:
     # load the pretrained config first, then derive the delta-timestamp sampling
     dataset_root     = _resolve_dataset_root(config)
     policy_cfg       = PreTrainedConfig.from_pretrained(config.xvla_init_path)
+    apply_normalization_mapping_override(policy_cfg, config.normalization_mapping)
     if config.action_mode is not None:
         if get_so101_slice_spec(config.action_mode) is None: raise ValueError(f"Unsupported guided XVLA action_mode={config.action_mode!r}.")
         policy_cfg.action_mode = str(config.action_mode)
@@ -113,7 +119,7 @@ def build_xvla_runtime(config: GuidedXVLATrainConfig) -> XVLARuntime:
     # Reconcile the pretrained XVLA feature schema with the real dataset camera keys
     # and active action_mode before instantiating the runtime policy.
     sync_xvla_policy_config(policy_cfg, dataset.meta, rename_map)
-    print(f"[guided-xvla] derived chunk_size={getattr(policy_cfg, 'chunk_size', None)} action_mode={getattr(policy_cfg, 'action_mode', None)} scheduler_decay_lr={getattr(policy_cfg, 'scheduler_decay_lr', None)}")
+    print(f"[guided-xvla] derived chunk_size={getattr(policy_cfg, 'chunk_size', None)} action_mode={getattr(policy_cfg, 'action_mode', None)} scheduler_decay_lr={getattr(policy_cfg, 'scheduler_decay_lr', None)} normalization_mapping={getattr(policy_cfg, 'normalization_mapping', None)}")
     policy_device = _as_device(config)
     if hasattr(policy_cfg, "device"): 
         policy_cfg.device = policy_device
@@ -170,7 +176,43 @@ def _maybe_init_wandb(config: GuidedXVLATrainConfig):
     if not config.wandb_enable: return None
     import wandb
 
-    return wandb.init(project=config.wandb_project, name=config.wandb_run_name or config.name, config=config.to_json_dict(), dir=config.output_dir)
+    kwargs = {"project": config.wandb_project, "name": config.wandb_run_name or config.name, "config": config.to_json_dict(), "dir": config.output_dir}
+    if config.wandb_run_id is not None: kwargs.update({"id": config.wandb_run_id, "resume": "must"})
+    run = wandb.init(**kwargs)
+    config.wandb_run_id = getattr(run, "id", config.wandb_run_id)
+    return run
+
+
+def _resume_check(field_name: str, current_value, saved_value) -> None:
+    if saved_value is None or current_value is None: return
+    if field_name == "normalization_mapping":
+        current_norm = json.loads(str(current_value))
+        saved_norm = json.loads(str(saved_value))
+    else:
+        current_norm = tuple(current_value) if isinstance(current_value, (list, tuple)) else current_value
+        saved_norm = tuple(saved_value) if isinstance(saved_value, (list, tuple)) else saved_value
+    if current_norm != saved_norm: raise ValueError(f"Resume checkpoint is incompatible for {field_name}: current={current_norm!r}, saved={saved_norm!r}.")
+
+
+def assert_guided_resume_compatible(config: GuidedXVLATrainConfig, snapshot: dict[str, Any]) -> None:
+    _resume_check("fusion_mode", config.fusion_mode, snapshot.get("fusion_mode"))
+    _resume_check("guidance_train_mode", config.guidance_train_mode, snapshot.get("guidance_train_mode"))
+    _resume_check("guidance_unfreeze_step", int(config.guidance_unfreeze_step), snapshot.get("guidance_unfreeze_step"))
+    _resume_check("freeze_xvla_vlm", bool(config.freeze_xvla_vlm), snapshot.get("freeze_xvla_vlm"))
+    _resume_check("action_mode", config.action_mode, snapshot.get("action_mode"))
+    _resume_check("normalization_mapping", config.normalization_mapping, snapshot.get("normalization_mapping"))
+
+
+def load_guided_resume_payload(config: GuidedXVLATrainConfig) -> tuple[Path, dict[str, Any], dict[str, Any]] | None:
+    checkpoint_dir = resolve_resume_checkpoint(config.output_dir, resume=config.resume, resume_checkpoint_path=config.resume_checkpoint_path)
+    if checkpoint_dir is None: return None
+    snapshot_path = Path(checkpoint_dir) / CONFIG_FILENAME
+    snapshot = json.loads(snapshot_path.read_text()) if snapshot_path.is_file() else {}
+    assert_guided_resume_compatible(config, snapshot)
+    trainer_state = load_saved_trainer_state(checkpoint_dir)
+    saved_run_id = trainer_state.get("wandb_run_id") or snapshot.get("wandb_run_id")
+    if saved_run_id is not None and config.wandb_run_id is None: config.wandb_run_id = str(saved_run_id)
+    return Path(checkpoint_dir), snapshot, trainer_state
 
 
 def _configure_explicit_stage_trainability(policy, config: GuidedXVLATrainConfig) -> None:
@@ -270,6 +312,34 @@ def run_validation(config: GuidedXVLATrainConfig, runtime: XVLARuntime, policy, 
     return metrics
 
 
+def restore_guided_policy_checkpoint(config: GuidedXVLATrainConfig, runtime: XVLARuntime, policy, checkpoint_dir: str | Path) -> None:
+    from thesis_vla.policies.xvla_guided import XVLAGuidedPolicy
+
+    restored_policy = XVLAGuidedPolicy.from_pretrained(str(checkpoint_dir), config=policy.config)
+    policy.load_state_dict(restored_policy.state_dict(), strict=True)
+    policy.to(_as_device(config))
+    runtime.preprocessor, runtime.postprocessor = make_xvla_runtime_processors(policy=policy, pretrained_path=str(checkpoint_dir), device=runtime.policy_device, rename_map=runtime.rename_map, dataset_stats=runtime.dataset.meta.stats, use_dataset_stats=True)
+    ensure_xvla_slice_step(runtime.preprocessor, get_so101_slice_spec(getattr(policy.config, "action_mode", None)))
+
+
+class GuidedTrainingModule(nn.Module):
+    def __init__(self, policy, config: GuidedXVLATrainConfig) -> None:
+        super().__init__()
+        self.policy = policy
+        self._config = config
+
+    def forward(self, processed_batch: dict[str, Any], target):
+        inputs = self.policy._build_model_inputs(processed_batch)
+        enc = self.policy.model.forward_vlm(input_ids=inputs["input_ids"], pixel_values=inputs["image_input"], image_mask=inputs["image_mask"])
+        action_loss, action_stats, guidance_tokens = compute_guided_action_loss_from_encoder(self.policy, processed_batch, inputs, enc)
+        if float(self._config.expert_loss_weight) > 0.0:
+            expert_loss, expert_stats = compute_guidance_loss(self.policy, target, guidance_tokens)
+        else:
+            expert_loss, expert_stats = action_loss.new_zeros(()), {"expert_total": 0.0}
+        total_loss = float(self._config.action_loss_weight) * action_loss + float(self._config.expert_loss_weight) * expert_loss
+        return total_loss, action_stats, expert_stats
+
+
 def _save_checkpoint(config: GuidedXVLATrainConfig, runtime: XVLARuntime, optimizer: torch.optim.Optimizer | JointTrainingState, step: int, final: bool = False) -> None:
     if not final and (config.save_every <= 0 or step % config.save_every != 0): return
     checkpoint_dir = Path(config.output_dir) / ("checkpoint_final" if final else f"checkpoint_{step:07d}")
@@ -277,20 +347,30 @@ def _save_checkpoint(config: GuidedXVLATrainConfig, runtime: XVLARuntime, optimi
     runtime.policy.save_pretrained(checkpoint_dir)
     if runtime.preprocessor is not None: runtime.preprocessor.save_pretrained(checkpoint_dir)
     if runtime.postprocessor is not None: runtime.postprocessor.save_pretrained(checkpoint_dir)
-    torch.save({"step": int(step), **trainer_state_dict(optimizer)}, checkpoint_dir / TRAINER_STATE_FILENAME)
-    (checkpoint_dir / METADATA_FILENAME).write_text(json.dumps({"name": config.name, "global_step": int(step), "xvla_init_path": config.xvla_init_path, "decoder_init_path": config.decoder_init_path, "fusion_mode": config.fusion_mode, "freeze_xvla_vlm": bool(config.freeze_xvla_vlm), "action_mode": config.action_mode or getattr(runtime.policy.config, "action_mode", None), "xvla_scheduler_decay_lr": config.xvla_scheduler_decay_lr if config.xvla_scheduler_decay_lr is not None else getattr(runtime.policy.config, "scheduler_decay_lr", None)}, indent=2, sort_keys=True))
+    torch.save({"step": int(step), "wandb_run_id": config.wandb_run_id, **trainer_state_dict(optimizer)}, checkpoint_dir / TRAINER_STATE_FILENAME)
+    (checkpoint_dir / METADATA_FILENAME).write_text(json.dumps({"name": config.name, "global_step": int(step), "xvla_init_path": config.xvla_init_path, "decoder_init_path": config.decoder_init_path, "fusion_mode": config.fusion_mode, "freeze_xvla_vlm": bool(config.freeze_xvla_vlm), "action_mode": config.action_mode or getattr(runtime.policy.config, "action_mode", None), "normalization_mapping": config.normalization_mapping, "xvla_scheduler_decay_lr": config.xvla_scheduler_decay_lr if config.xvla_scheduler_decay_lr is not None else getattr(runtime.policy.config, "scheduler_decay_lr", None), "wandb_run_id": config.wandb_run_id}, indent=2, sort_keys=True))
     (checkpoint_dir / CONFIG_FILENAME).write_text(json.dumps(config.to_json_dict(), indent=2, sort_keys=True))
 
 
 def train_guided_xvla(config: GuidedXVLATrainConfig) -> None:
+    from accelerate import Accelerator
+    from accelerate.utils import DistributedDataParallelKwargs
+
+    accum_steps = max(int(config.gradient_accumulation_steps), 1)
+    accelerator = Accelerator(step_scheduler_with_optimizer=False, kwargs_handlers=[DistributedDataParallelKwargs(find_unused_parameters=False)], gradient_accumulation_steps=accum_steps)
+    if torch.cuda.is_available(): torch.cuda.set_device(accelerator.local_process_index)
+    is_main = accelerator.is_main_process
     _set_seed(config.seed)
-    Path(config.output_dir).mkdir(parents=True, exist_ok=True)
-    wandb_run = _maybe_init_wandb(config)
+    if is_main: Path(config.output_dir).mkdir(parents=True, exist_ok=True)
+    accelerator.wait_for_everyone()
+    resume_payload = load_guided_resume_payload(config)
+    wandb_run = _maybe_init_wandb(config) if is_main else None
     runtime = build_xvla_runtime(config)
     task_cfg = load_cedirnet_decoder_config(config.decoder_stack_config_path, config.decoder_task_config_path)
     cache = CeDiRNetTargetCache.resolve(dataset_repo_id=config.dataset_repo_id, dataset_revision=config.dataset_revision, dataset_root=_resolve_dataset_root(config), dataset_length=len(runtime.dataset), teacher_cfg=task_cfg.teacher, cache_root=config.teacher_target_cache_root)
     policy = _init_guided_policy_from_base(runtime, config, task_cfg)
     runtime.policy = policy
+    if resume_payload is not None: restore_guided_policy_checkpoint(config, runtime, policy, resume_payload[0])
     optimizer = build_optimizer(config, policy)
     loader, val_loader = build_train_val_dataloaders(runtime, config)
     if config.dry_run:
@@ -298,31 +378,36 @@ def train_guided_xvla(config: GuidedXVLATrainConfig) -> None:
         return
     policy.train()
     if config.freeze_xvla_vlm: policy.model.vlm.eval()
-    step = 0
-    accum_steps = max(int(config.gradient_accumulation_steps), 1)
+    train_module = GuidedTrainingModule(policy, config)
+    train_module, optimizer.policy_optimizer, optimizer.decoder_optimizer, loader = accelerator.prepare(train_module, optimizer.policy_optimizer, optimizer.decoder_optimizer, loader)
+    optimizer.policy_scheduler = accelerator.unwrap_model(train_module).policy.config.get_scheduler_preset().build(optimizer.policy_optimizer, config.steps)
+    if resume_payload is not None: restore_optimizer_state(optimizer, resume_payload[2])
+    step = int(resume_payload[2].get("step", 0)) if resume_payload is not None else 0
     zero_optimizer_grad(optimizer)
-    progress = tqdm(total=config.steps, desc=config.name)
+    progress = tqdm(total=max(int(config.steps) - int(step), 0), desc=config.name, disable=not is_main)
+    emitted_validation_steps: set[int] = set()
+    if is_main: print(json.dumps({"event": "ddp_config", "gradient_accumulation_steps": int(accum_steps), "num_processes": int(accelerator.num_processes)}))
+    if is_main and step == 0 and val_loader is not None and should_run_validation_step(0, config.steps, config.validation_freq, emitted_validation_steps):
+        val_metrics = {"event": "validation_step", "step": 0, **run_validation(config, runtime, runtime.policy, cache, val_loader, prefix="val")}
+        print(json.dumps(val_metrics))
+        if wandb_run is not None: wandb_run.log({key: value for key, value in val_metrics.items() if key != "event"}, step=0)
+        emitted_validation_steps.add(0)
     while step < config.steps:
         for raw_batch in loader:
             if step >= config.steps: break
-            step += 1
-            policy.model.set_guidance_trainability(step)
+            current_step = step + 1
+            accelerator.unwrap_model(train_module).policy.model.set_guidance_trainability(current_step)
             processed_batch = preprocess_batch(runtime, raw_batch)
-            inputs = policy._build_model_inputs(processed_batch)
-            enc = policy.model.forward_vlm(input_ids=inputs["input_ids"], pixel_values=inputs["image_input"], image_mask=inputs["image_mask"])
             target = load_guidance_target(cache, raw_batch, config)
-            action_loss, action_stats, guidance_tokens = compute_guided_action_loss_from_encoder(policy, processed_batch, inputs, enc)
-            if float(config.expert_loss_weight) > 0.0:
-                expert_loss, expert_stats = compute_guidance_loss(policy, target, guidance_tokens)
-            else:
-                expert_loss = action_loss.new_zeros(())
-                expert_stats = {"expert_total": 0.0}
-            total_loss = float(config.action_loss_weight) * action_loss + float(config.expert_loss_weight) * expert_loss
-            (total_loss / accum_steps).backward()
-            if step % accum_steps == 0 or step == config.steps:
+            with accelerator.accumulate(train_module):
+                total_loss, action_stats, expert_stats = train_module(processed_batch, target)
+                accelerator.backward(total_loss)
+                if not accelerator.sync_gradients: continue
+                accelerator.clip_grad_norm_(train_module.parameters(), XVLA_GRAD_CLIP_NORM)
                 step_optimizer(optimizer)
                 zero_optimizer_grad(optimizer)
-            if step % max(int(config.log_every), 1) == 0:
+            step = current_step
+            if is_main and step % max(int(config.log_every), 1) == 0:
                 metrics = {
                     "event": "train_step",
                     "step": int(step),
@@ -334,15 +419,18 @@ def train_guided_xvla(config: GuidedXVLATrainConfig) -> None:
                 print(json.dumps(metrics))
                 if wandb_run is not None: wandb_run.log({key: value for key, value in metrics.items() if key != "event"}, step=int(step))
                 progress.set_postfix({"loss": f"{float(total_loss.detach().item()):.4f}", "action": f"{action_stats['action_total']:.4f}", "expert": f"{expert_stats['expert_total']:.4f}"})
-            if val_loader is not None and (step % max(int(config.validation_freq), 1) == 0 or step == config.steps):
+            if is_main and val_loader is not None and should_run_validation_step(step, config.steps, config.validation_freq, emitted_validation_steps):
                 val_metrics = {"event": "validation_step", "step": int(step), **run_validation(config, runtime, policy, cache, val_loader, prefix="val")}
                 print(json.dumps(val_metrics))
                 if wandb_run is not None: wandb_run.log({key: value for key, value in val_metrics.items() if key != "event"}, step=int(step))
+                emitted_validation_steps.add(int(step))
+            if is_main: _save_checkpoint(config, runtime, optimizer, step, final=False)
             progress.update(1)
-            _save_checkpoint(config, runtime, optimizer, step, final=False)
             if step >= config.steps: break
     progress.close()
-    if config.save_final_checkpoint: _save_checkpoint(config, runtime, optimizer, step, final=True)
+    accelerator.wait_for_everyone()
+    if is_main and config.save_final_checkpoint: _save_checkpoint(config, runtime, optimizer, step, final=True)
+    accelerator.wait_for_everyone()
     if wandb_run is not None: wandb_run.finish()
 
 

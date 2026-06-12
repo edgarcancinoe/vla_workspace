@@ -11,6 +11,7 @@ from pathlib import Path
 from typing import Literal
 
 from thesis_vla.common.paths import RUNTIME_CACHE_DIR, RUNTIME_TMP_DIR, TRAIN_OUTPUT_DIR
+from thesis_vla.training.xvla_finetune_launcher import validate_mean_std_normalization
 
 
 LaunchMode = Literal["single", "accelerate"]
@@ -53,6 +54,7 @@ class VisualThoughtLaunchConfig:
     teacher_target_cache_root: str | None = None
     dataset_video_backend: str = "pyav"
     dataset_tolerance_s: float = 1e-4
+    normalization_mapping: str = '{"ACTION": "MEAN_STD", "STATE": "MEAN_STD", "VISUAL": "IDENTITY"}'
     wandb_enable: bool = False
     wandb_project: str = "visual-thought"
     wandb_run_name: str | None = None
@@ -99,6 +101,8 @@ class VisualThoughtLaunchConfig:
     profile_step_time_every: int = 0
     save_every: int = 500
     save_final_checkpoint: bool = True
+    resume: bool = False
+    resume_checkpoint_path: str | None = None
     seed: int = 42
     name_prefix: str = "visual-thought"
 
@@ -127,6 +131,7 @@ class VisualThoughtExperimentSpec:
     teacher_target_cache_root: str | None = None
     dataset_video_backend: str | None = None
     dataset_tolerance_s: float | None = None
+    normalization_mapping: str | None = None
     wandb_enable: bool | None = None
     wandb_project: str | None = None
     wandb_run_name: str | None = None
@@ -171,6 +176,8 @@ class VisualThoughtExperimentSpec:
     log_every: int | None = None
     profile_step_time_every: int | None = None
     save_every: int | None = None
+    resume: bool | None = None
+    resume_checkpoint_path: str | None = None
     seed: int | None = None
     num_workers: int | None = None
     launch_mode: LaunchMode | None = None
@@ -202,6 +209,7 @@ class ResolvedVisualThoughtExperiment:
     teacher_target_cache_root: str | None
     dataset_video_backend: str
     dataset_tolerance_s: float
+    normalization_mapping: str
     wandb_enable: bool
     wandb_project: str
     wandb_run_name: str | None
@@ -248,6 +256,8 @@ class ResolvedVisualThoughtExperiment:
     profile_step_time_every: int
     save_every: int
     save_final_checkpoint: bool
+    resume: bool
+    resume_checkpoint_path: str | None
     seed: int
 
 
@@ -294,6 +304,8 @@ def resolve_experiment(workspace_dir: Path, defaults: VisualThoughtLaunchConfig,
     dino_decoder_init_path = experiment.dino_decoder_init_path if experiment.dino_decoder_init_path is not None else defaults.dino_decoder_init_path
     dino_decoder_stack_config_path = experiment.dino_decoder_stack_config_path or defaults.dino_decoder_stack_config_path
     dino_decoder_task_config_path = experiment.dino_decoder_task_config_path or defaults.dino_decoder_task_config_path
+    normalization_mapping = experiment.normalization_mapping or defaults.normalization_mapping
+    validate_mean_std_normalization(normalization_mapping)
     if not xvla_init_path: raise ValueError("xvla_init_path is required.")
     if len(expert_types) == 1:
         if not decoder_stack_config_path or not decoder_task_config_path: raise ValueError("decoder_stack_config_path and decoder_task_config_path are required.")
@@ -340,6 +352,7 @@ def resolve_experiment(workspace_dir: Path, defaults: VisualThoughtLaunchConfig,
         teacher_target_cache_root=experiment.teacher_target_cache_root if experiment.teacher_target_cache_root is not None else defaults.teacher_target_cache_root,
         dataset_video_backend=experiment.dataset_video_backend or defaults.dataset_video_backend,
         dataset_tolerance_s=experiment.dataset_tolerance_s if experiment.dataset_tolerance_s is not None else defaults.dataset_tolerance_s,
+        normalization_mapping=normalization_mapping,
         wandb_enable=experiment.wandb_enable if experiment.wandb_enable is not None else defaults.wandb_enable,
         wandb_project=experiment.wandb_project or defaults.wandb_project,
         wandb_run_name=experiment.wandb_run_name or defaults.wandb_run_name or name,
@@ -386,6 +399,8 @@ def resolve_experiment(workspace_dir: Path, defaults: VisualThoughtLaunchConfig,
         profile_step_time_every=experiment.profile_step_time_every if experiment.profile_step_time_every is not None else defaults.profile_step_time_every,
         save_every=experiment.save_every if experiment.save_every is not None else defaults.save_every,
         save_final_checkpoint=defaults.save_final_checkpoint,
+        resume=experiment.resume if experiment.resume is not None else defaults.resume,
+        resume_checkpoint_path=experiment.resume_checkpoint_path if experiment.resume_checkpoint_path is not None else defaults.resume_checkpoint_path,
         seed=experiment.seed if experiment.seed is not None else defaults.seed,
     )
 
@@ -415,6 +430,7 @@ def prepare_environment(workspace_dir: Path) -> dict[str, str]:
 
 def run_preflight_checks(experiments: list[ResolvedVisualThoughtExperiment], env: dict[str, str]) -> None:
     importlib.import_module("lerobot")
+    if any(experiment.runtime.launch_mode != "single" for experiment in experiments): importlib.import_module("accelerate")
     probe = subprocess.run([sys.executable, "-c", "import thesis_vla"], env=env, capture_output=True, text=True, check=False)
     if probe.returncode != 0: raise SystemExit(f"ERROR: thesis_vla is not importable in subprocess environment.\n{(probe.stderr or probe.stdout).strip()}")
 
@@ -469,6 +485,7 @@ def print_run_summary(index: int, total: int, resolved: ResolvedVisualThoughtExp
     print(f"  Dataset:            {resolved.dataset_repo_id}")
     print(f"  Video Backend:      {resolved.dataset_video_backend}")
     print(f"  Timestamp Tol:      {resolved.dataset_tolerance_s}")
+    print(f"  Normalization:      {resolved.normalization_mapping}")
     print(f"  W&B Enabled:        {resolved.wandb_enable}")
     print(f"  W&B Project:        {resolved.wandb_project}")
     print(f"  W&B Run:            {resolved.wandb_run_name}")
@@ -509,6 +526,8 @@ def print_run_summary(index: int, total: int, resolved: ResolvedVisualThoughtExp
     print(f"  XVLA Learn Coef:    {resolved.xvla_learning_coef}")
     print(f"  XVLA Base LR:       {resolved.xvla_optimizer_lr}")
     print(f"  Decoder LR:         {resolved.decoder_optimizer_lr}")
+    print(f"  Resume:             {resolved.resume}")
+    if resolved.resume_checkpoint_path is not None: print(f"  Resume Checkpoint:  {resolved.resume_checkpoint_path}")
     print(f"  Dry Run:            {resolved.runtime.dry_run}")
     print(f"  Command:            {' '.join(cmd)}")
     print("=" * 88)
