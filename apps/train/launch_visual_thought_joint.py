@@ -24,7 +24,7 @@ from thesis_vla.training.visual_thought_launcher import VisualThoughtExperimentS
 WORKSPACE_DIR = PROJECT_ROOT
 RUN_TS = dt.datetime.now().strftime("%Y%m%d_%H%M%S")
 
-RUNTIME_CONFIG = VisualThoughtRuntimeConfig(launch_mode="single", cuda_devices=(1,), num_workers=3, dry_run=False)
+RUNTIME_CONFIG = VisualThoughtRuntimeConfig(launch_mode="accelerate", cuda_devices=(0,1), num_workers=2, dry_run=False)
 
 DEFAULTS = VisualThoughtLaunchConfig(
     hf_user="edgarcancinoe",
@@ -37,7 +37,7 @@ DEFAULTS = VisualThoughtLaunchConfig(
     decoder_stack_config_path=str(CONFIG_ROOT / "visual_thought" / "cedirnet_stack.yaml"),
     decoder_task_config_path=str(CONFIG_ROOT / "visual_thought" / "cedirnet_head.yaml"),
     batch_size=8,
-    gradient_accumulation_steps=2,
+    gradient_accumulation_steps=1,
     
     decoder_optimizer_lr=1e-4,
     xvla_adaptation_mode="staged_prompt_warmup",
@@ -59,12 +59,12 @@ DEFAULTS = VisualThoughtLaunchConfig(
     vis_final=False,
     push_to_hub=True,
     push_repo_id=None,
-    push_every=2000,
+    push_every=4000,
     action_loss_weight=1.0,
     expert_loss_weight=0.0,
     steps=8000,
     log_every=20,
-    save_every=2000,
+    save_every=4000,
     name_prefix=f"visual-thought-{RUN_TS}",
 )
 
@@ -196,8 +196,8 @@ BOTH_CLOTH_FOLD = [
         dino_decoder_task_config_path   =DINO_TOKENSEQ_CONFIG,
         wandb_run_name                  =BOTH_CLOTH_FOLD_NAME,
         action_loss_weight=1.0,
-        cedirnet_expert_loss_weight=1.0,
-        dino_expert_loss_weight=0.25,
+        cedirnet_expert_loss_weight=0.50,
+        dino_expert_loss_weight=0.5,
     ),
 ]
 
@@ -219,9 +219,8 @@ DINO_CUBES = [
 ]
 
 # Pendiente correr estos. Ajustar a bs 32. Dino antes habia corrido con un mal pre-trained decoder. Los otros hay q volver a correrlos solo extended
-# EXPERIMENTS = FOLD_CEDIRNET + CLOTH_DROP_CEDIRNET
-EXPERIMENTS = DINO_CLOTH_DROP
-
+EXPERIMENTS = DINO_CLOTH_FOLD + DINO_CLOTH_DROP
+EXPERIMENTS = DINO_CUBES + FOLD_CEDIRNET + CLOTH_DROP_CEDIRNET 
 def main() -> None:
     run_experiments(workspace_dir=WORKSPACE_DIR, defaults=DEFAULTS, experiments=EXPERIMENTS)
 

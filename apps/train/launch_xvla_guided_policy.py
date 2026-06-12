@@ -54,6 +54,28 @@ DEFAULTS = GuidedLaunchConfig(
     name_prefix=f"xvla-guided-{RUN_TS}",
 )
 
+# DATASETS
+# =====================================================================================
+CLOTH_FOLD_DS = ("cloth-corner-fold_7p5hz",     "main")
+CLOTH_DROP_DS = ("cloth-corner-box_7p5hz",      "main")
+# =====================================================================================
+
+# EXP NAMING
+# =====================================================================================
+FOLD_CEDIRNET_NAME      = f"explicit_cedirnet_{RUN_TS}_cloth_fold"
+DROP_CEDIRNET_NAME      = f"explicit_cedirnet_{RUN_TS}_cloth_box"
+# =====================================================================================
+
+FOLD_CEDIRNET_GUIDANCE = [
+    GuidedLaunchConfig(
+        dataset_name=CLOTH_FOLD_DS[0],
+        dataset_revision=CLOTH_FOLD_DS[1],
+        xvla_init_path=None,
+        decoder_stack_config_path=None,
+        decoder_task_config_path=None,
+        guided_stage_config_path=None
+    )
+]
 EXPERIMENTS = []
 
 
