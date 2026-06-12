@@ -19,6 +19,11 @@ from torch.utils.data import DataLoader, Subset
 from torch.utils.data._utils.collate import default_collate
 from tqdm import tqdm
 
+from lerobot.datasets.factory import resolve_delta_timestamps
+from lerobot.datasets.lerobot_dataset import LeRobotDatasetMetadata
+from lerobot.policies.xvla.action_contract import build_slice_map, get_so101_slice_spec
+from lerobot.processor.normalize_processor import NormalizerProcessorStep
+from lerobot.processor.slice_processor import SliceProcessorStep
 from thesis_vla.common.hf_hub import HubUploadConfig, clear_hub_upload_failure_marker, push_folder_to_hub, write_hub_upload_failure_marker
 from thesis_vla.common.paths import RUNTIME_CACHE_DIR
 from thesis_vla.inference.xvla_runtime import make_xvla_runtime_processors, resolve_xvla_rename_map, sync_xvla_policy_config
@@ -431,9 +436,12 @@ def build_xvla_runtime(config: VisualThoughtTrainConfig) -> XVLARuntime:
     from lerobot.datasets.lerobot_dataset import LeRobotDataset
     from lerobot.policies.xvla.modeling_xvla import XVLAPolicy
 
-    dataset = LeRobotDataset(config.dataset_repo_id, root=_resolve_dataset_root(config), revision=config.dataset_revision, video_backend=config.dataset_video_backend, tolerance_s=float(config.dataset_tolerance_s))
-    rename_map = resolve_xvla_rename_map(getattr(dataset.meta, "camera_keys", []))
+    dataset_root = _resolve_dataset_root(config)
     policy_cfg = PreTrainedConfig.from_pretrained(config.xvla_init_path)
+    ds_meta = LeRobotDatasetMetadata(config.dataset_repo_id, root=dataset_root, revision=config.dataset_revision)
+    delta_timestamps = resolve_delta_timestamps(policy_cfg, ds_meta)
+    dataset = LeRobotDataset(config.dataset_repo_id, root=dataset_root, revision=config.dataset_revision, delta_timestamps=delta_timestamps, video_backend=config.dataset_video_backend, tolerance_s=float(config.dataset_tolerance_s))
+    rename_map = resolve_xvla_rename_map(getattr(dataset.meta, "camera_keys", []))
     sync_xvla_policy_config(policy_cfg, dataset.meta, rename_map)
     _apply_xvla_training_overrides(policy_cfg, config)
     policy_device = _resolve_policy_device(config)
@@ -452,6 +460,7 @@ def build_xvla_runtime(config: VisualThoughtTrainConfig) -> XVLARuntime:
         vlm_device = _as_device(config)
         processor_device = _as_device(config)
     preprocessor, postprocessor = make_xvla_runtime_processors(policy=policy, pretrained_path=config.xvla_init_path, device=processor_device, rename_map=rename_map, dataset_stats=dataset.meta.stats, use_dataset_stats=True)
+    ensure_xvla_slice_step(preprocessor, get_so101_slice_spec(getattr(policy.config, "action_mode", None)))
     teacher_image_key = _resolve_teacher_image_key(list(getattr(dataset.meta, "camera_keys", [])), rename_map, config.teacher_image_feature_key)
     return XVLARuntime(policy=policy, dataset=dataset, preprocessor=preprocessor, postprocessor=postprocessor, rename_map=rename_map, teacher_image_key=teacher_image_key, policy_device=policy_device, vlm_device=vlm_device, vlm_only_distill=vlm_only_distill)
 
@@ -512,6 +521,19 @@ def build_train_val_dataloaders(runtime: XVLARuntime, config: VisualThoughtTrain
 
 def preprocess_batch(runtime: XVLARuntime, raw_batch: dict[str, Any]) -> dict[str, Any]:
     return runtime.preprocessor(raw_batch)
+
+
+def ensure_xvla_slice_step(preprocessor, slice_spec) -> None:
+    if slice_spec is None: return
+    slice_map = build_slice_map(slice_spec)
+    has_slice_step = any(isinstance(step, SliceProcessorStep) and getattr(step, "slice_map", None) == slice_map for step in preprocessor.steps)
+    if has_slice_step: return
+    insert_idx = len(preprocessor.steps)
+    for idx, step in enumerate(preprocessor.steps):
+        if isinstance(step, NormalizerProcessorStep):
+            insert_idx = idx
+            break
+    preprocessor.steps.insert(insert_idx, SliceProcessorStep(slice_map=slice_map))
 
 
 def get_teacher_images(raw_batch: dict[str, Any], teacher_image_key: str) -> torch.Tensor:
