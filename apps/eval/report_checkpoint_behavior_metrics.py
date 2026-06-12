@@ -26,9 +26,10 @@ from huggingface_hub import snapshot_download
 from torch.utils.data import Subset
 
 from lerobot.configs.default import ValidationConfig
+from lerobot.configs.policies import PreTrainedConfig
 from lerobot.configs.train import TRAIN_CONFIG_NAME, TrainPipelineConfig
-from lerobot.datasets.factory import make_dataset
-from lerobot.datasets.lerobot_dataset import LeRobotDataset
+from lerobot.datasets.factory import make_dataset, resolve_delta_timestamps
+from lerobot.datasets.lerobot_dataset import LeRobotDataset, LeRobotDatasetMetadata
 from lerobot.policies.xvla.action_contract import build_slice_map, get_so101_slice_spec, slice_dataset_meta_in_place
 from lerobot.policies.xvla.modeling_xvla import XVLAPolicy
 from lerobot.processor.normalize_processor import NormalizerProcessorStep
@@ -212,9 +213,11 @@ def resolve_validation_config(name: str, resolved: ResolvedCheckpoint) -> tuple[
     return fallback, warnings
 
 
-def make_visual_thought_dataset(cfg: VisualThoughtTrainConfig):
+def make_visual_thought_dataset(cfg: VisualThoughtTrainConfig, policy_cfg) -> LeRobotDataset:
     tolerance_s = float(DATASET_TOLERANCE_S_OVERRIDE) if DATASET_TOLERANCE_S_OVERRIDE is not None else float(cfg.dataset_tolerance_s)
-    return LeRobotDataset(cfg.dataset_repo_id, root=cfg.dataset_root, revision=cfg.dataset_revision, video_backend=cfg.dataset_video_backend, tolerance_s=tolerance_s)
+    ds_meta = LeRobotDatasetMetadata(cfg.dataset_repo_id, root=cfg.dataset_root, revision=cfg.dataset_revision)
+    delta_timestamps = resolve_delta_timestamps(policy_cfg, ds_meta)
+    return LeRobotDataset(cfg.dataset_repo_id, root=cfg.dataset_root, revision=cfg.dataset_revision, delta_timestamps=delta_timestamps, video_backend=cfg.dataset_video_backend, tolerance_s=tolerance_s)
 
 
 def split_visual_thought_dataset(dataset, validation_cfg: ValidationConfig) -> tuple[Subset, Subset, list[int], list[int]]:
@@ -242,7 +245,8 @@ def prepare_datasets_and_policy_config(resolved: ResolvedCheckpoint, validation_
         policy_cfg = cfg.policy
         return train_dataset, val_dataset, split_info, policy_cfg
     if resolved.vt_cfg is None: raise RuntimeError("Missing visual-thought config.")
-    base_dataset = make_visual_thought_dataset(resolved.vt_cfg)
+    policy_cfg = PreTrainedConfig.from_pretrained(resolved.policy_path)
+    base_dataset = make_visual_thought_dataset(resolved.vt_cfg, policy_cfg)
     train_dataset, val_dataset, train_indices, val_indices = split_visual_thought_dataset(base_dataset, validation_cfg)
     episode_column = getattr(getattr(base_dataset, "hf_dataset", None), "__getitem__", None)
     episode_counts = {"train_episode_count": 0, "val_episode_count": 0}
@@ -252,7 +256,6 @@ def prepare_datasets_and_policy_config(resolved: ResolvedCheckpoint, validation_
         val_eps = sorted({int(episodes[index].item()) if torch.is_tensor(episodes[index]) else int(episodes[index]) for index in val_indices})
         episode_counts = {"train_episode_count": len(train_eps), "val_episode_count": len(val_eps), "train_episodes": train_eps, "val_episodes": val_eps}
     split_info = {"split_mode": "frame", "train_index_count": len(train_indices), "val_index_count": len(val_indices), **episode_counts}
-    policy_cfg = XVLAPolicy.from_pretrained(resolved.policy_path).config
     return train_dataset, val_dataset, split_info, policy_cfg
 
 
