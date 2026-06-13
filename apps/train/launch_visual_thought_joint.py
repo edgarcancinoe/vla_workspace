@@ -61,7 +61,7 @@ DEFAULTS = VisualThoughtLaunchConfig(
     push_repo_id=None,
     push_every=4000,
     action_loss_weight=1.0,
-    expert_loss_weight=0.0,
+    expert_loss_weight=0.5,
     steps=8000,
     log_every=20,
     save_every=4000,
@@ -100,7 +100,8 @@ DROP_CEDIRNET_NAME      = f"cedirnet_joint_stage_{RUN_TS}_cloth_box"
 DINO_CUBES_NAME         = f"dino_tokenseq_joint_cubes_{RUN_TS}"
 DINO_CLOTH_FOLD_NAME    = f"dino_tokenseq_joint_clothfold_{RUN_TS}"
 DINO_CLOTH_DROP_NAME    = f"dino_tokenseq_joint_clothbox_{RUN_TS}"
-BOTH_CLOTH_FOLD_NAME    = f"cedirnet_dino_joint_clothfold_{RUN_TS}"
+BOTH_CLOTH_FOLD_NAME    = f"both_cedirnet_dino_joint_clothfold_{RUN_TS}"
+BOTH_CLOTH_DROP_NAME    = f"both_cedirnet_dino_joint_cloth_box_{RUN_TS}"
 # =====================================================================================
 
 # DATASETS
@@ -201,6 +202,30 @@ BOTH_CLOTH_FOLD = [
     ),
 ]
 
+BOTH_CLOTH_DROP = [
+    VisualThoughtExperimentSpec(
+        expert_type                     ="cedirnet",
+        expert_types                    =("cedirnet", "dino"),
+        training_stage                  ="joint_multitask",
+        name                            =BOTH_CLOTH_DROP_NAME,
+        dataset_name                    =CLOTH_DROP_DS[0],
+        dataset_revision                =CLOTH_DROP_DS[1],
+
+        xvla_init_path                      =XVLA_INIT_CLOTHDROP,
+        cedirnet_decoder_init_path          =CEDIRNET_DECODER_INIT,
+        cedirnet_decoder_stack_config_path  =CEDIRNET_DECODER_INIT_STACK_CONFIG,
+        cedirnet_decoder_task_config_path   =CEDIRNET_DECODER_INIT_TASK_CONFIG,
+
+        dino_decoder_init_path          =DINO_CLOTH_DROP_DECODER_INIT,
+        dino_decoder_stack_config_path  =DINO_STACK_CONFIG,
+        dino_decoder_task_config_path   =DINO_TOKENSEQ_CONFIG,
+        wandb_run_name                  =BOTH_CLOTH_DROP_NAME,
+        action_loss_weight=1.0,
+        cedirnet_expert_loss_weight=0.50,
+        dino_expert_loss_weight=0.5,
+    ),
+]
+
 DINO_CUBES = [
     VisualThoughtExperimentSpec(
         expert_type                 ="dino",
@@ -221,6 +246,8 @@ DINO_CUBES = [
 # Pendiente correr estos. Ajustar a bs 32. Dino antes habia corrido con un mal pre-trained decoder. Los otros hay q volver a correrlos solo extended
 EXPERIMENTS = DINO_CLOTH_FOLD + DINO_CLOTH_DROP
 EXPERIMENTS = DINO_CUBES + FOLD_CEDIRNET + CLOTH_DROP_CEDIRNET 
+# EXPERIMENTS = FOLD_CEDIRNET + CLOTH_DROP_CEDIRNET + DINO_CLOTH_FOLD + DINO_CLOTH_DROP + DINO_CUBES
+EXPERIMENTS = BOTH_CLOTH_DROP
 def main() -> None:
     run_experiments(workspace_dir=WORKSPACE_DIR, defaults=DEFAULTS, experiments=EXPERIMENTS)
 

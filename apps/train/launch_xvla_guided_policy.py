@@ -84,7 +84,7 @@ FOLD_CEDIRNET_GUIDANCE = [
         guided_stage_config_path=None
     )
 ]
-EXPERIMENTS = []
+EXPERIMENTS = FOLD_CEDIRNET_GUIDANCE
 
 
 def main() -> None:
