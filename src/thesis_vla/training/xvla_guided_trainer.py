@@ -331,7 +331,8 @@ def compute_guided_action_loss_from_encoder(policy, processed_batch: dict[str, A
 
 def compute_guidance_loss(policy, target: TeacherTarget, guidance_tokens: torch.Tensor) -> tuple[torch.Tensor, dict[str, float]]:
     prediction = policy.model.guidance_prediction_from_tokens(guidance_tokens, target_map=target.tensor)
-    loss = compute_teacher_loss(prediction, target)
+    loss_target = TeacherTarget(name=target.name, tensor=target.tensor.to(dtype=prediction.dtype), kind=target.kind, loss_type=target.loss_type, weight=target.weight, aux=target.aux)
+    loss = compute_teacher_loss(prediction, loss_target)
     return loss, {"expert_total": float(loss.detach().item())}
 
 
