@@ -9,7 +9,7 @@ sys.path.append(str(Path(__file__).resolve().parents[1] / "src"))
 from lerobot.policies.xvla.action_contract import build_slice_map, get_so101_slice_spec
 from lerobot.policies.xvla.modeling_xvla import pad_tensor_along_dim, pad_vector
 from lerobot.processor.slice_processor import SliceProcessorStep
-from thesis_vla.training.xvla_guided_trainer import GuidedXVLATrainConfig, _configure_explicit_stage_trainability, _episode_split_indices, _maybe_init_wandb, assert_guided_resume_compatible, build_xvla_runtime, compute_guidance_loss, compute_guided_action_loss_from_encoder
+from thesis_vla.training.xvla_guided_trainer import GuidedXVLATrainConfig, _concat_gate_stats, _configure_explicit_stage_trainability, _episode_split_indices, _guidance_conditioning, _maybe_init_wandb, _validation_metrics, assert_guided_resume_compatible, build_xvla_runtime, compute_guidance_loss, compute_guided_action_loss_from_encoder
 from thesis_vla.visual_thought.targets import TeacherTarget
 
 
@@ -34,11 +34,21 @@ class _FakeGuidanceDecoder(torch.nn.Module):
         return self.proj(guidance_tokens).transpose(1, 2).reshape(b, 3, 2, 2)
 
 
+class _FakeGuidedTransformer(torch.nn.Module):
+    def __init__(self):
+        super().__init__()
+        self.anchor = torch.nn.Parameter(torch.tensor(1.0))
+
+    def forward(self, domain_id, action_with_noise, t, proprio, guidance_tokens, guidance_available=None, **enc):
+        availability = torch.ones((guidance_tokens.shape[0], 1, 1), device=guidance_tokens.device, dtype=guidance_tokens.dtype) if guidance_available is None else guidance_available
+        return action_with_noise + availability * guidance_tokens.mean(dim=(-1, -2), keepdim=True) * self.anchor
+
+
 class _FakeGuidedModel:
     def __init__(self):
         self.action_space = _FakeActionSpace()
         self.guidance_decoder = _FakeGuidanceDecoder()
-        self.transformer = lambda domain_id, action_with_noise, t, proprio, guidance_tokens, **enc: action_with_noise + 0.0 * guidance_tokens.mean()
+        self.transformer = _FakeGuidedTransformer()
 
     def _get_target_dtype(self):
         return torch.float32
@@ -67,13 +77,34 @@ class _FakeGuidedPolicy:
 
 def test_guided_action_loss_helper_smoke():
     policy = _FakeGuidedPolicy()
+    config = GuidedXVLATrainConfig(name="guided", xvla_init_path="base", decoder_init_path="decoder", decoder_stack_config_path="stack.yaml", decoder_task_config_path="task.yaml", dataset_repo_id="user/dataset", dataset_revision="main", dataset_root=None, output_dir="/tmp/out", device="cpu")
     processed_batch = {"action": torch.randn(2, 4, 6)}
     inputs = {"input_ids": torch.zeros(2, 3, dtype=torch.long), "proprio": torch.randn(2, 5), "domain_id": torch.zeros(2, dtype=torch.long)}
     enc = {"vlm_features": torch.randn(2, 8, 6), "aux_visual_inputs": torch.randn(2, 10, 6)}
-    action_loss, action_stats, guidance_tokens = compute_guided_action_loss_from_encoder(policy, processed_batch, inputs, enc)
+    action_loss, action_stats, guidance_tokens = compute_guided_action_loss_from_encoder(policy, processed_batch, inputs, enc, config=config)
     assert action_loss.ndim == 0
     assert guidance_tokens.shape == (2, 4, 6)
     assert "action_total" in action_stats
+
+
+def test_guidance_conditioning_modes_cover_guided_disabled_dropout_and_noise():
+    guidance_tokens = torch.ones(2, 4, 6)
+    guided_cfg = GuidedXVLATrainConfig(name="guided", xvla_init_path="base", decoder_init_path="decoder", decoder_stack_config_path="stack.yaml", decoder_task_config_path="task.yaml", dataset_repo_id="user/dataset", dataset_revision="main", dataset_root=None, output_dir="/tmp/out", device="cpu", guidance_dropout_prob=0.0, guidance_noise_prob=0.0, guidance_noise_std=0.0)
+    guided_tokens, guided_available = _guidance_conditioning(guidance_tokens, guided_cfg, mode="guided")
+    disabled_tokens, disabled_available = _guidance_conditioning(guidance_tokens, guided_cfg, mode="disabled")
+    dropped_cfg = GuidedXVLATrainConfig(name="guided", xvla_init_path="base", decoder_init_path="decoder", decoder_stack_config_path="stack.yaml", decoder_task_config_path="task.yaml", dataset_repo_id="user/dataset", dataset_revision="main", dataset_root=None, output_dir="/tmp/out", device="cpu", guidance_dropout_prob=1.0, guidance_noise_prob=0.0, guidance_noise_std=0.0)
+    dropped_tokens, dropped_available = _guidance_conditioning(guidance_tokens, dropped_cfg, mode="train")
+    noisy_cfg = GuidedXVLATrainConfig(name="guided", xvla_init_path="base", decoder_init_path="decoder", decoder_stack_config_path="stack.yaml", decoder_task_config_path="task.yaml", dataset_repo_id="user/dataset", dataset_revision="main", dataset_root=None, output_dir="/tmp/out", device="cpu", guidance_dropout_prob=0.0, guidance_noise_prob=1.0, guidance_noise_std=0.5)
+    torch.manual_seed(0)
+    noisy_tokens, noisy_available = _guidance_conditioning(guidance_tokens, noisy_cfg, mode="train")
+    assert torch.equal(guided_tokens, guidance_tokens)
+    assert torch.equal(guided_available, torch.ones(2, 1, 1))
+    assert torch.equal(disabled_tokens, torch.zeros_like(guidance_tokens))
+    assert torch.equal(disabled_available, torch.zeros(2, 1, 1))
+    assert torch.equal(dropped_tokens, torch.zeros_like(guidance_tokens))
+    assert torch.equal(dropped_available, torch.zeros(2, 1, 1))
+    assert torch.equal(noisy_available, torch.ones(2, 1, 1))
+    assert not torch.equal(noisy_tokens, guidance_tokens)
 
 
 def test_guidance_loss_helper_smoke():
@@ -90,6 +121,17 @@ def test_guidance_loss_helper_supports_dino_token_sequence():
     loss, stats = compute_guidance_loss(policy, target, torch.randn(2, 4, 6))
     assert loss.ndim == 0
     assert "expert_total" in stats
+
+
+def test_concat_gate_stats_report_gate_activation():
+    transformer = type("Transformer", (), {"guidance_fusion_mode": "gated_concat", "concat_gate": nn.Linear(8, 1)})()
+    nn.init.zeros_(transformer.concat_gate.weight)
+    nn.init.zeros_(transformer.concat_gate.bias)
+    stats = _concat_gate_stats(transformer, torch.randn(3, 5, 4), torch.randn(3, 2, 4))
+
+    assert stats["concat_gate_mean"] == 0.5
+    assert stats["concat_gate_min"] == 0.5
+    assert stats["concat_gate_max"] == 0.5
 
 
 def test_explicit_stage_freezes_xvla_vlm_by_default():
@@ -264,3 +306,18 @@ def test_guided_resume_compatibility_checks_guidance_expert_type():
         assert "guidance_expert_type" in str(exc)
     else:
         raise AssertionError("Expected guided resume compatibility check to reject mismatched guidance_expert_type.")
+
+
+def test_validation_metrics_optionally_adds_no_guidance(monkeypatch):
+    calls = []
+
+    def _fake_run_validation(config, runtime, policy, guidance_source, val_loader, prefix="val", guidance_mode="guided"):
+        calls.append((prefix, guidance_mode))
+        return {f"{prefix}_loss": 1.0 if guidance_mode == "guided" else 2.0}
+
+    monkeypatch.setattr("thesis_vla.training.xvla_guided_trainer.run_validation", _fake_run_validation)
+    config = GuidedXVLATrainConfig(name="guided", xvla_init_path="base", decoder_init_path="decoder", decoder_stack_config_path="stack.yaml", decoder_task_config_path="task.yaml", dataset_repo_id="user/dataset", dataset_revision="main", dataset_root=None, output_dir="/tmp/out", device="cpu", validation_include_no_guidance=True)
+    metrics = _validation_metrics(config, runtime=object(), policy=object(), guidance_source=object(), val_loader=object())
+    assert metrics["val_loss"] == 1.0
+    assert metrics["val_no_guidance_loss"] == 2.0
+    assert calls == [("val", "guided"), ("val_no_guidance", "disabled")]

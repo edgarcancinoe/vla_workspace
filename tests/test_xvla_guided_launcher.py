@@ -14,12 +14,16 @@ def test_guided_launcher_resolves_stage_defaults(tmp_path):
     assert resolved.fusion_mode == "concat"
     assert resolved.guidance_train_mode == "frozen"
     assert resolved.guidance_unfreeze_step == 1000
+    assert resolved.guidance_dropout_prob == 0.15
+    assert resolved.guidance_noise_prob == 0.15
+    assert resolved.guidance_noise_std == 0.10
     assert resolved.guidance_debug_every == 200
     assert resolved.freeze_xvla_vlm is True
     assert resolved.decoder_init_path == "/tmp/decoder"
     assert resolved.wandb_enable is True
     assert resolved.validation_enable is True
     assert resolved.validation_split_ratio == 0.1
+    assert resolved.validation_include_no_guidance is True
     assert resolved.xvla_scheduler_decay_lr == 2.5e-6
     assert resolved.normalization_mapping == '{"ACTION": "MEAN_STD", "STATE": "MEAN_STD", "VISUAL": "IDENTITY"}'
     assert resolved.resume is False
@@ -92,3 +96,12 @@ def test_guided_launcher_allows_guidance_debug_override(tmp_path):
     defaults = GuidedLaunchConfig(hf_user="tester", dataset_name="dataset", xvla_init_path="lerobot/xvla-base", decoder_init_path="/tmp/decoder", guidance_debug_every=200)
     resolved = resolve_experiment(tmp_path, defaults, GuidedExperimentSpec(guidance_debug_every=50))
     assert resolved.guidance_debug_every == 50
+
+
+def test_guided_launcher_allows_guidance_robustness_overrides(tmp_path):
+    defaults = GuidedLaunchConfig(hf_user="tester", dataset_name="dataset", xvla_init_path="lerobot/xvla-base", decoder_init_path="/tmp/decoder", guidance_dropout_prob=0.15, guidance_noise_prob=0.15, guidance_noise_std=0.10, validation_include_no_guidance=True)
+    resolved = resolve_experiment(tmp_path, defaults, GuidedExperimentSpec(guidance_dropout_prob=0.25, guidance_noise_prob=0.05, guidance_noise_std=0.2, validation_include_no_guidance=False))
+    assert resolved.guidance_dropout_prob == 0.25
+    assert resolved.guidance_noise_prob == 0.05
+    assert resolved.guidance_noise_std == 0.2
+    assert resolved.validation_include_no_guidance is False

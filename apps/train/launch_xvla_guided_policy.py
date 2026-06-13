@@ -43,6 +43,9 @@ DEFAULTS = GuidedLaunchConfig(
     xvla_scheduler_decay_lr=2.5e-6,
     guidance_train_mode="frozen", # frozen | train_from_start | warmup_freeze
     guidance_unfreeze_step = None,
+    guidance_dropout_prob=0.15,
+    guidance_noise_prob=0.15,
+    guidance_noise_std=0.10,
     freeze_xvla_vlm=False,
     steps=8000,
     log_every=20,
@@ -53,6 +56,7 @@ DEFAULTS = GuidedLaunchConfig(
     validation_split_ratio=0.1,
     validation_freq=250,
     validation_max_batches=10,
+    validation_include_no_guidance=True,
     validation_seed=1337,
     name_prefix=f"xvla-guided-{RUN_TS}",
 )
