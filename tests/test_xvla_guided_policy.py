@@ -12,6 +12,7 @@ sys.path.append(str(Path(__file__).resolve().parents[1] / "src"))
 if "gymnasium" not in sys.modules: sys.modules["gymnasium"] = types.SimpleNamespace(Env=object, Wrapper=object, vector=types.SimpleNamespace(VectorEnv=object))
 
 from lerobot.configs.types import FeatureType, PolicyFeature
+from lerobot.policies.xvla.soft_transformer import Attention
 from lerobot.utils.constants import ACTION, OBS_IMAGES, OBS_STATE
 
 from thesis_vla.inference.runtime_policy import load_runtime_policy
@@ -99,6 +100,17 @@ def test_guided_transformer_fusion_variants():
         assert out.shape == (2, 4, 4)
 
 
+def test_attention_all_true_mask_preserves_default_behavior():
+    attn = Attention(dim=16, num_heads=4)
+    x = torch.randn(2, 6, 16)
+    keep_mask = torch.ones(2, 6, dtype=torch.bool)
+    attn.eval()
+    with torch.no_grad():
+        baseline = attn(x)
+        masked = attn(x, token_keep_mask=keep_mask)
+    assert torch.allclose(baseline, masked, atol=1e-6)
+
+
 def test_guided_dino_rejects_expert_feature_query():
     try:
         base = _make_guided_config(guidance_expert_type="dino")
@@ -127,6 +139,35 @@ def test_guided_transformer_sequence_shape_rules():
             z_guided = model._apply_cross_attention_fusion(z_proj, guidance_proj)
             fused = torch.cat([action_proj, z_guided, aux_proj], dim=1)
             assert fused.shape[1] == native_len
+
+
+def test_guided_transformer_no_guidance_is_invariant_for_cross_attention_and_concat():
+    domain_id = torch.zeros(2, dtype=torch.long)
+    vlm_features, aux_visual_inputs = torch.randn(2, 6, 16), torch.randn(2, 4, 16)
+    action_with_noise, proprio, t = torch.randn(2, 4, 4), torch.randn(2, 4), torch.rand(2)
+    guidance_a, guidance_b = torch.randn(2, 5, 8), torch.randn(2, 5, 8)
+    guidance_off = torch.zeros(2, 1, 1)
+    for fusion_mode in ["concat", "cross_attention"]:
+        model = GuidedSoftPromptedTransformer(hidden_size=16, multi_modal_input_size=16, guidance_input_size=8, depth=2, num_heads=4, guidance_num_heads=4, mlp_ratio=2.0, num_domains=3, dim_action=4, dim_propio=4, dim_time=8, len_soft_prompts=2, max_len_seq=64, use_hetero_proj=False, guidance_fusion_mode=fusion_mode, guidance_gated=False)
+        model.eval()
+        with torch.no_grad():
+            out_a = model(domain_id=domain_id, vlm_features=vlm_features, aux_visual_inputs=aux_visual_inputs, guidance_tokens=guidance_a, guidance_available=guidance_off, action_with_noise=action_with_noise, proprio=proprio, t=t)
+            out_b = model(domain_id=domain_id, vlm_features=vlm_features, aux_visual_inputs=aux_visual_inputs, guidance_tokens=guidance_b, guidance_available=guidance_off, action_with_noise=action_with_noise, proprio=proprio, t=t)
+        assert torch.allclose(out_a, out_b, atol=1e-6)
+
+
+def test_guided_transformer_responds_to_guidance_when_available():
+    domain_id = torch.zeros(2, dtype=torch.long)
+    vlm_features, aux_visual_inputs = torch.randn(2, 6, 16), torch.randn(2, 4, 16)
+    action_with_noise, proprio, t = torch.randn(2, 4, 4), torch.randn(2, 4), torch.rand(2)
+    guidance_a, guidance_b = torch.randn(2, 5, 8), torch.randn(2, 5, 8)
+    guidance_on = torch.ones(2, 1, 1)
+    model = GuidedSoftPromptedTransformer(hidden_size=16, multi_modal_input_size=16, guidance_input_size=8, depth=2, num_heads=4, guidance_num_heads=4, mlp_ratio=2.0, num_domains=3, dim_action=4, dim_propio=4, dim_time=8, len_soft_prompts=2, max_len_seq=64, use_hetero_proj=False, guidance_fusion_mode="cross_attention", guidance_gated=False)
+    model.eval()
+    with torch.no_grad():
+        out_a = model(domain_id=domain_id, vlm_features=vlm_features, aux_visual_inputs=aux_visual_inputs, guidance_tokens=guidance_a, guidance_available=guidance_on, action_with_noise=action_with_noise, proprio=proprio, t=t)
+        out_b = model(domain_id=domain_id, vlm_features=vlm_features, aux_visual_inputs=aux_visual_inputs, guidance_tokens=guidance_b, guidance_available=guidance_on, action_with_noise=action_with_noise, proprio=proprio, t=t)
+    assert not torch.allclose(out_a, out_b)
 
 
 def test_gated_cross_attention_starts_with_near_zero_effect():

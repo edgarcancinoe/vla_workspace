@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import dataclasses
 import json
+import math
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -69,6 +70,9 @@ class GuidedXVLATrainConfig:
     gated_fusion: bool | None = None
     guidance_train_mode: str = "frozen"
     guidance_unfreeze_step: int = 1_000
+    guidance_dropout_prob: float = 0.15
+    guidance_noise_prob: float = 0.15
+    guidance_noise_std: float = 0.10
     guidance_debug_every: int = 200
     freeze_xvla_vlm: bool = True
     save_final_checkpoint: bool = True
@@ -80,6 +84,7 @@ class GuidedXVLATrainConfig:
     validation_split_ratio: float = 0.1
     validation_freq: int = 500
     validation_max_batches: int = 10
+    validation_include_no_guidance: bool = True
     validation_seed: int = 1337
     resume: bool = False
     resume_checkpoint_path: str | None = None
@@ -89,6 +94,9 @@ class GuidedXVLATrainConfig:
     def __post_init__(self) -> None:
         self.fusion_mode = normalize_guidance_fusion_mode(self.fusion_mode, self.gated_fusion)
         if self.guidance_expert_type not in {"cedirnet", "dino"}: raise ValueError(f"guidance_expert_type must be one of: cedirnet, dino. Got {self.guidance_expert_type!r}.")
+        if not 0.0 <= float(self.guidance_dropout_prob) <= 1.0: raise ValueError("guidance_dropout_prob must be in [0, 1].")
+        if not 0.0 <= float(self.guidance_noise_prob) <= 1.0: raise ValueError("guidance_noise_prob must be in [0, 1].")
+        if float(self.guidance_noise_std) < 0.0: raise ValueError("guidance_noise_std must be >= 0.")
 
     @classmethod
     def from_json(cls, path: str | Path) -> "GuidedXVLATrainConfig":
@@ -246,6 +254,9 @@ def assert_guided_resume_compatible(config: GuidedXVLATrainConfig, snapshot: dic
     _resume_check("fusion_mode", config.fusion_mode, snapshot.get("fusion_mode"))
     _resume_check("guidance_train_mode", config.guidance_train_mode, snapshot.get("guidance_train_mode"))
     _resume_check("guidance_unfreeze_step", int(config.guidance_unfreeze_step), snapshot.get("guidance_unfreeze_step"))
+    _resume_check("guidance_dropout_prob", float(config.guidance_dropout_prob), snapshot.get("guidance_dropout_prob"))
+    _resume_check("guidance_noise_prob", float(config.guidance_noise_prob), snapshot.get("guidance_noise_prob"))
+    _resume_check("guidance_noise_std", float(config.guidance_noise_std), snapshot.get("guidance_noise_std"))
     _resume_check("freeze_xvla_vlm", bool(config.freeze_xvla_vlm), snapshot.get("freeze_xvla_vlm"))
     _resume_check("action_mode", config.action_mode, snapshot.get("action_mode"))
     _resume_check("normalization_mapping", config.normalization_mapping, snapshot.get("normalization_mapping"))
@@ -308,22 +319,49 @@ def build_optimizer(config: GuidedXVLATrainConfig, policy) -> JointTrainingState
     return JointTrainingState(policy_optimizer=policy_optimizer, decoder_optimizer=decoder_optimizer, policy_scheduler=policy_scheduler)
 
 
-def compute_guided_action_loss_from_encoder(policy, processed_batch: dict[str, Any], inputs: dict[str, torch.Tensor], enc: dict[str, torch.Tensor]) -> tuple[torch.Tensor, dict[str, float], torch.Tensor]:
+def _transformer_dtype(transformer, fallback: torch.Tensor) -> torch.dtype:
+    transformer_parameter = next(transformer.parameters(), None)
+    return transformer_parameter.dtype if transformer_parameter is not None else fallback.dtype
+
+
+def _guidance_conditioning(guidance_tokens: torch.Tensor, config: GuidedXVLATrainConfig, *, mode: str) -> tuple[torch.Tensor, torch.Tensor]:
+    batch_size = guidance_tokens.shape[0]
+    zeros = torch.zeros((batch_size, 1, 1), device=guidance_tokens.device, dtype=guidance_tokens.dtype)
+    ones = torch.ones((batch_size, 1, 1), device=guidance_tokens.device, dtype=guidance_tokens.dtype)
+    if mode == "guided": return guidance_tokens, ones
+    if mode == "disabled": return torch.zeros_like(guidance_tokens), zeros
+    if mode != "train": raise ValueError(f"Unsupported guidance conditioning mode {mode!r}.")
+    drop_mask = torch.rand((batch_size, 1, 1), device=guidance_tokens.device) >= float(config.guidance_dropout_prob)
+    guidance_available = drop_mask.to(dtype=guidance_tokens.dtype)
+    guidance_used = guidance_tokens
+    can_corrupt = drop_mask & (torch.rand((batch_size, 1, 1), device=guidance_tokens.device) < float(config.guidance_noise_prob))
+    if float(config.guidance_noise_std) > 0.0 and bool(can_corrupt.any().item()):
+        rms = guidance_tokens.pow(2).mean(dim=(1, 2), keepdim=True).sqrt()
+        sigma = float(config.guidance_noise_std) * rms
+        guidance_used = guidance_used + can_corrupt.to(dtype=guidance_tokens.dtype) * sigma * torch.randn_like(guidance_tokens)
+    return guidance_used * guidance_available, guidance_available
+
+
+def _prepare_guided_transformer_inputs(policy, processed_batch: dict[str, Any], inputs: dict[str, torch.Tensor], enc: dict[str, torch.Tensor], *, config: GuidedXVLATrainConfig, guidance_mode: str) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, dict[str, torch.Tensor], torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
     targets = policy._prepare_action_targets(processed_batch)
     target_dtype = policy.model._get_target_dtype()
     targets = targets.to(dtype=target_dtype)
     t, action_noisy = policy.model._build_corrupted_action(action=targets, device=inputs["input_ids"].device, target_dtype=target_dtype)
     proprio_m, action_noisy_m = policy.model.action_space.preprocess(inputs["proprio"].to(dtype=target_dtype), action_noisy)
     guidance_tokens = policy.model.guidance_tokens(enc["vlm_features"])
-    transformer_parameters = policy.model.transformer.parameters() if hasattr(policy.model.transformer, "parameters") else iter(())
-    transformer_parameter = next(transformer_parameters, None)
-    transformer_dtype = transformer_parameter.dtype if transformer_parameter is not None else action_noisy_m.dtype
+    transformer_dtype = _transformer_dtype(policy.model.transformer, action_noisy_m)
     action_noisy_m = action_noisy_m.to(dtype=transformer_dtype)
     proprio_m = proprio_m.to(dtype=transformer_dtype)
     t = t.to(dtype=transformer_dtype)
     guidance_tokens = guidance_tokens.to(dtype=transformer_dtype)
     enc = {key: value.to(dtype=transformer_dtype) if torch.is_tensor(value) and value.is_floating_point() else value for key, value in enc.items()}
-    pred_action = policy.model.transformer(domain_id=inputs["domain_id"], action_with_noise=action_noisy_m, t=t, proprio=proprio_m, guidance_tokens=guidance_tokens, **enc)
+    guidance_tokens_used, guidance_available = _guidance_conditioning(guidance_tokens, config=config, mode=guidance_mode)
+    return targets, t, action_noisy_m, enc, guidance_tokens, guidance_tokens_used, guidance_available, proprio_m
+
+
+def compute_guided_action_loss_from_encoder(policy, processed_batch: dict[str, Any], inputs: dict[str, torch.Tensor], enc: dict[str, torch.Tensor], *, config: GuidedXVLATrainConfig, guidance_mode: str = "train") -> tuple[torch.Tensor, dict[str, float], torch.Tensor]:
+    targets, t, action_noisy_m, enc, guidance_tokens, guidance_tokens_used, guidance_available, proprio_m = _prepare_guided_transformer_inputs(policy, processed_batch, inputs, enc, config=config, guidance_mode=guidance_mode)
+    pred_action = policy.model.transformer(domain_id=inputs["domain_id"], action_with_noise=action_noisy_m, t=t, proprio=proprio_m, guidance_tokens=guidance_tokens_used, guidance_available=guidance_available, **enc)
     targets = targets.to(dtype=pred_action.dtype)
     loss_dict = policy.model.action_space.compute_loss(pred_action, targets)
     action_loss = sum(loss_dict.values())
@@ -349,27 +387,30 @@ def _optional_scalar(module, attr_name: str) -> float | None:
 
 
 @torch.no_grad()
-def collect_guidance_debug_metrics(policy, processed_batch: dict[str, Any]) -> dict[str, float]:
+def _concat_gate_stats(transformer, native_context: torch.Tensor, guidance_tokens: torch.Tensor) -> dict[str, float]:
+    if getattr(transformer, "guidance_fusion_mode", None) != "gated_concat" or not hasattr(transformer, "concat_gate"): return {}
+    pooled_native = native_context.mean(dim=1)
+    pooled_guidance = guidance_tokens.mean(dim=1)
+    gate = torch.sigmoid(transformer.concat_gate(torch.cat([pooled_native, pooled_guidance], dim=-1))).view(-1)
+    return {"concat_gate_mean": float(gate.mean().item()), "concat_gate_min": float(gate.min().item()), "concat_gate_max": float(gate.max().item())}
+
+
+@torch.no_grad()
+def collect_guidance_debug_metrics(policy, processed_batch: dict[str, Any], config: GuidedXVLATrainConfig) -> dict[str, float]:
     was_training = policy.training
     vlm_was_training = policy.model.vlm.training
     guidance_decoder_was_training = policy.model.guidance_decoder.training
     policy.eval()
     inputs = policy._build_model_inputs(processed_batch)
     enc = policy.model.forward_vlm(input_ids=inputs["input_ids"], pixel_values=inputs["image_input"], image_mask=inputs["image_mask"])
-    targets = policy._prepare_action_targets(processed_batch).to(dtype=policy.model._get_target_dtype())
-    t, action_noisy = policy.model._build_corrupted_action(action=targets, device=inputs["input_ids"].device, target_dtype=targets.dtype)
-    proprio_m, action_noisy_m = policy.model.action_space.preprocess(inputs["proprio"].to(dtype=targets.dtype), action_noisy)
-    guidance_tokens = policy.model.guidance_tokens(enc["vlm_features"])
-    transformer_parameter = next(policy.model.transformer.parameters(), None)
-    transformer_dtype = transformer_parameter.dtype if transformer_parameter is not None else action_noisy_m.dtype
-    action_noisy_m = action_noisy_m.to(dtype=transformer_dtype)
-    proprio_m = proprio_m.to(dtype=transformer_dtype)
-    t = t.to(dtype=transformer_dtype)
-    guidance_tokens = guidance_tokens.to(dtype=transformer_dtype)
-    enc = {key: value.to(dtype=transformer_dtype) if torch.is_tensor(value) and value.is_floating_point() else value for key, value in enc.items()}
-    pred_guided = policy.model.transformer(domain_id=inputs["domain_id"], action_with_noise=action_noisy_m, t=t, proprio=proprio_m, guidance_tokens=guidance_tokens, **enc)
-    pred_zero = policy.model.transformer(domain_id=inputs["domain_id"], action_with_noise=action_noisy_m, t=t, proprio=proprio_m, guidance_tokens=torch.zeros_like(guidance_tokens), **enc)
+    targets, t, action_noisy_m, enc, guidance_tokens, guidance_tokens_used, _, proprio_m = _prepare_guided_transformer_inputs(policy, processed_batch, inputs, enc, config=config, guidance_mode="guided")
     transformer = policy.model.transformer
+    action_proj, z_proj, aux_proj = transformer._project_native_tokens(inputs["domain_id"], enc["vlm_features"], enc["aux_visual_inputs"], action_noisy_m, proprio_m, t)
+    guidance_proj = transformer._project_guidance(guidance_tokens_used, inputs["domain_id"])
+    guidance_available_guided = torch.ones((guidance_tokens.shape[0], 1, 1), device=guidance_tokens.device, dtype=guidance_tokens.dtype)
+    guidance_available_disabled = torch.zeros_like(guidance_available_guided)
+    pred_guided = transformer(domain_id=inputs["domain_id"], action_with_noise=action_noisy_m, t=t, proprio=proprio_m, guidance_tokens=guidance_tokens_used, guidance_available=guidance_available_guided, **enc)
+    pred_zero = transformer(domain_id=inputs["domain_id"], action_with_noise=action_noisy_m, t=t, proprio=proprio_m, guidance_tokens=torch.zeros_like(guidance_tokens), guidance_available=guidance_available_disabled, **enc)
     metrics = {
         "guidance_pred_delta_mean_abs": float((pred_guided - pred_zero).abs().mean().item()),
         "guidance_pred_delta_max_abs": float((pred_guided - pred_zero).abs().max().item()),
@@ -381,8 +422,10 @@ def collect_guidance_debug_metrics(policy, processed_batch: dict[str, Any]) -> d
         "grad_norm_cross_attn_guidance_norm": _grad_norm(policy, "model.transformer.cross_attn_guidance_norm."),
         "grad_norm_concat_gate": _grad_norm(policy, "model.transformer.concat_gate."),
     }
+    metrics.update(_concat_gate_stats(transformer, torch.cat([action_proj, z_proj, aux_proj], dim=1), guidance_proj))
     cross_attn_gamma = _optional_scalar(transformer, "cross_attn_gamma")
     if cross_attn_gamma is not None: metrics["cross_attn_gamma"] = cross_attn_gamma
+    if cross_attn_gamma is not None: metrics["cross_attn_gain"] = float(math.tanh(cross_attn_gamma))
     if was_training:
         policy.train()
         if not vlm_was_training: policy.model.vlm.eval()
@@ -403,7 +446,7 @@ def load_guidance_target(source, raw_batch: dict[str, Any], config: GuidedXVLATr
 
 
 @torch.no_grad()
-def run_validation(config: GuidedXVLATrainConfig, runtime: XVLARuntime, policy, guidance_source, val_loader: DataLoader, prefix: str = "val") -> dict[str, float]:
+def run_validation(config: GuidedXVLATrainConfig, runtime: XVLARuntime, policy, guidance_source, val_loader: DataLoader, prefix: str = "val", guidance_mode: str = "guided") -> dict[str, float]:
     policy_was_training = policy.training
     policy.eval()
     total_loss, total_action, total_expert, batches = 0.0, 0.0, 0.0, 0
@@ -414,7 +457,7 @@ def run_validation(config: GuidedXVLATrainConfig, runtime: XVLARuntime, policy, 
         inputs = policy._build_model_inputs(processed_batch)
         enc = policy.model.forward_vlm(input_ids=inputs["input_ids"], pixel_values=inputs["image_input"], image_mask=inputs["image_mask"])
         target = load_guidance_target(guidance_source, raw_batch, config, runtime.teacher_image_key)
-        action_loss, action_stats, guidance_tokens = compute_guided_action_loss_from_encoder(policy, processed_batch, inputs, enc)
+        action_loss, action_stats, guidance_tokens = compute_guided_action_loss_from_encoder(policy, processed_batch, inputs, enc, config=config, guidance_mode=guidance_mode)
         expert_loss, expert_stats = compute_guidance_loss(policy, target, guidance_tokens) if float(config.expert_loss_weight) > 0.0 else (action_loss.new_zeros(()), {"expert_total": 0.0})
         total = float(config.action_loss_weight) * action_loss + float(config.expert_loss_weight) * expert_loss
         for key, value in action_stats.items(): component_totals[f"{prefix}_{key}"] = component_totals.get(f"{prefix}_{key}", 0.0) + float(value)
@@ -451,13 +494,19 @@ class GuidedTrainingModule(nn.Module):
     def forward(self, processed_batch: dict[str, Any], target):
         inputs = self.policy._build_model_inputs(processed_batch)
         enc = self.policy.model.forward_vlm(input_ids=inputs["input_ids"], pixel_values=inputs["image_input"], image_mask=inputs["image_mask"])
-        action_loss, action_stats, guidance_tokens = compute_guided_action_loss_from_encoder(self.policy, processed_batch, inputs, enc)
+        action_loss, action_stats, guidance_tokens = compute_guided_action_loss_from_encoder(self.policy, processed_batch, inputs, enc, config=self._config, guidance_mode="train")
         if float(self._config.expert_loss_weight) > 0.0:
             expert_loss, expert_stats = compute_guidance_loss(self.policy, target, guidance_tokens)
         else:
             expert_loss, expert_stats = action_loss.new_zeros(()), {"expert_total": 0.0}
         total_loss = float(self._config.action_loss_weight) * action_loss + float(self._config.expert_loss_weight) * expert_loss
         return total_loss, action_stats, expert_stats
+
+
+def _validation_metrics(config: GuidedXVLATrainConfig, runtime: XVLARuntime, policy, guidance_source, val_loader: DataLoader) -> dict[str, float]:
+    metrics = run_validation(config, runtime, policy, guidance_source, val_loader, prefix="val", guidance_mode="guided")
+    if bool(config.validation_include_no_guidance): metrics.update(run_validation(config, runtime, policy, guidance_source, val_loader, prefix="val_no_guidance", guidance_mode="disabled"))
+    return metrics
 
 
 def _save_checkpoint(config: GuidedXVLATrainConfig, runtime: XVLARuntime, optimizer: torch.optim.Optimizer | JointTrainingState, step: int, final: bool = False) -> None:
@@ -508,7 +557,7 @@ def train_guided_xvla(config: GuidedXVLATrainConfig) -> None:
     emitted_validation_steps: set[int] = set()
     if is_main: print(json.dumps({"event": "ddp_config", "gradient_accumulation_steps": int(accum_steps), "num_processes": int(accelerator.num_processes)}))
     if is_main and step == 0 and val_loader is not None and should_run_validation_step(0, config.steps, config.validation_freq, emitted_validation_steps):
-        val_metrics = {"event": "validation_step", "step": 0, **run_validation(config, runtime, runtime.policy, guidance_source, val_loader, prefix="val")}
+        val_metrics = {"event": "validation_step", "step": 0, **_validation_metrics(config, runtime, runtime.policy, guidance_source, val_loader)}
         print(json.dumps(val_metrics))
         if wandb_run is not None: wandb_run.log({key: value for key, value in val_metrics.items() if key != "event"}, step=0)
         emitted_validation_steps.add(0)
@@ -526,7 +575,7 @@ def train_guided_xvla(config: GuidedXVLATrainConfig) -> None:
                 debug_every = int(config.guidance_debug_every)
                 should_debug = is_main and debug_every > 0 and current_step % debug_every == 0
                 if should_debug:
-                    debug_metrics = {"event": "guidance_debug", "step": int(current_step), **collect_guidance_debug_metrics(accelerator.unwrap_model(train_module).policy, processed_batch)}
+                    debug_metrics = {"event": "guidance_debug", "step": int(current_step), **collect_guidance_debug_metrics(accelerator.unwrap_model(train_module).policy, processed_batch, config)}
                     print(json.dumps(debug_metrics))
                     if wandb_run is not None: wandb_run.log({key: value for key, value in debug_metrics.items() if key != "event"}, step=int(current_step))
                 accelerator.clip_grad_norm_(train_module.parameters(), XVLA_GRAD_CLIP_NORM)
@@ -546,7 +595,7 @@ def train_guided_xvla(config: GuidedXVLATrainConfig) -> None:
                 if wandb_run is not None: wandb_run.log({key: value for key, value in metrics.items() if key != "event"}, step=int(step))
                 progress.set_postfix({"loss": f"{float(total_loss.detach().item()):.4f}", "action": f"{action_stats['action_total']:.4f}", "expert": f"{expert_stats['expert_total']:.4f}"})
             if is_main and val_loader is not None and should_run_validation_step(step, config.steps, config.validation_freq, emitted_validation_steps):
-                val_metrics = {"event": "validation_step", "step": int(step), **run_validation(config, runtime, policy, guidance_source, val_loader, prefix="val")}
+                val_metrics = {"event": "validation_step", "step": int(step), **_validation_metrics(config, runtime, policy, guidance_source, val_loader)}
                 print(json.dumps(val_metrics))
                 if wandb_run is not None: wandb_run.log({key: value for key, value in val_metrics.items() if key != "event"}, step=int(step))
                 emitted_validation_steps.add(int(step))

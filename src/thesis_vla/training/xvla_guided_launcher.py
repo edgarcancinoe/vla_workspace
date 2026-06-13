@@ -68,6 +68,9 @@ class GuidedLaunchConfig:
     gated_fusion: bool | None = None
     guidance_train_mode: str = "frozen"
     guidance_unfreeze_step: int = 1_000
+    guidance_dropout_prob: float = 0.15
+    guidance_noise_prob: float = 0.15
+    guidance_noise_std: float = 0.10
     guidance_debug_every: int = 200
     freeze_xvla_vlm: bool = True
     steps: int = 2_500
@@ -83,6 +86,7 @@ class GuidedLaunchConfig:
     validation_split_ratio: float = 0.1
     validation_freq: int = 500
     validation_max_batches: int = 10
+    validation_include_no_guidance: bool = True
     validation_seed: int = 1337
     seed: int = 42
     name_prefix: str = "xvla-guided"
@@ -117,6 +121,9 @@ class GuidedExperimentSpec:
     gated_fusion: bool | None = None
     guidance_train_mode: str | None = None
     guidance_unfreeze_step: int | None = None
+    guidance_dropout_prob: float | None = None
+    guidance_noise_prob: float | None = None
+    guidance_noise_std: float | None = None
     guidance_debug_every: int | None = None
     freeze_xvla_vlm: bool | None = None
     steps: int | None = None
@@ -131,6 +138,7 @@ class GuidedExperimentSpec:
     validation_split_ratio: float | None = None
     validation_freq: int | None = None
     validation_max_batches: int | None = None
+    validation_include_no_guidance: bool | None = None
     validation_seed: int | None = None
     seed: int | None = None
     num_workers: int | None = None
@@ -166,6 +174,9 @@ class ResolvedGuidedExperiment:
     fusion_mode: str
     guidance_train_mode: str
     guidance_unfreeze_step: int
+    guidance_dropout_prob: float
+    guidance_noise_prob: float
+    guidance_noise_std: float
     guidance_debug_every: int
     freeze_xvla_vlm: bool
     steps: int
@@ -179,6 +190,7 @@ class ResolvedGuidedExperiment:
     validation_split_ratio: float
     validation_freq: int
     validation_max_batches: int
+    validation_include_no_guidance: bool
     validation_seed: int
     seed: int
     normalization_mapping: str
@@ -283,6 +295,9 @@ def resolve_experiment(workspace_dir: Path, defaults: GuidedLaunchConfig, experi
         fusion_mode=fusion_mode,
         guidance_train_mode=experiment.guidance_train_mode or str(stage_defaults.get("guidance_train_mode", defaults.guidance_train_mode)),
         guidance_unfreeze_step=experiment.guidance_unfreeze_step if experiment.guidance_unfreeze_step is not None else int(stage_defaults.get("guidance_unfreeze_step", defaults.guidance_unfreeze_step)),
+        guidance_dropout_prob=experiment.guidance_dropout_prob if experiment.guidance_dropout_prob is not None else defaults.guidance_dropout_prob,
+        guidance_noise_prob=experiment.guidance_noise_prob if experiment.guidance_noise_prob is not None else defaults.guidance_noise_prob,
+        guidance_noise_std=experiment.guidance_noise_std if experiment.guidance_noise_std is not None else defaults.guidance_noise_std,
         guidance_debug_every=experiment.guidance_debug_every if experiment.guidance_debug_every is not None else defaults.guidance_debug_every,
         freeze_xvla_vlm=experiment.freeze_xvla_vlm if experiment.freeze_xvla_vlm is not None else bool(stage_defaults.get("freeze_xvla_vlm", defaults.freeze_xvla_vlm)),
         steps=experiment.steps if experiment.steps is not None else defaults.steps,
@@ -298,6 +313,7 @@ def resolve_experiment(workspace_dir: Path, defaults: GuidedLaunchConfig, experi
         validation_split_ratio=experiment.validation_split_ratio if experiment.validation_split_ratio is not None else defaults.validation_split_ratio,
         validation_freq=experiment.validation_freq if experiment.validation_freq is not None else defaults.validation_freq,
         validation_max_batches=experiment.validation_max_batches if experiment.validation_max_batches is not None else defaults.validation_max_batches,
+        validation_include_no_guidance=experiment.validation_include_no_guidance if experiment.validation_include_no_guidance is not None else defaults.validation_include_no_guidance,
         validation_seed=experiment.validation_seed if experiment.validation_seed is not None else defaults.validation_seed,
         seed=experiment.seed if experiment.seed is not None else defaults.seed,
     )
@@ -378,6 +394,7 @@ def print_run_summary(index: int, total: int, resolved: ResolvedGuidedExperiment
     print(f"  Decoder Init:       {resolved.decoder_init_path}")
     print(f"  Fusion:             {resolved.fusion_mode}")
     print(f"  Guidance Train:     {resolved.guidance_train_mode} @ step {resolved.guidance_unfreeze_step}")
+    print(f"  Guidance Dropout:   p_drop={resolved.guidance_dropout_prob} p_noise={resolved.guidance_noise_prob} noise_std={resolved.guidance_noise_std}")
     print(f"  Guidance Debug:     every {resolved.guidance_debug_every} steps")
     print(f"  Freeze XVLA VLM:    {resolved.freeze_xvla_vlm}")
     print(f"  Dataset:            {resolved.dataset_repo_id}")
@@ -406,6 +423,7 @@ def print_run_summary(index: int, total: int, resolved: ResolvedGuidedExperiment
         print(f"  Val Split Ratio:    {resolved.validation_split_ratio}")
         print(f"  Val Frequency:      {resolved.validation_freq}")
         print(f"  Val Max Batches:    {resolved.validation_max_batches}")
+        print(f"  Val No Guidance:    {resolved.validation_include_no_guidance}")
         print(f"  Val Seed:           {resolved.validation_seed}")
     print(f"  Dry Run:            {resolved.runtime.dry_run}")
     print(f"  Command:            {' '.join(cmd)}")

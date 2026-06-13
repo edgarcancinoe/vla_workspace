@@ -121,29 +121,40 @@ class GuidedSoftPromptedTransformer(nn.Module):
         gate = torch.sigmoid(self.concat_gate(torch.cat([pooled_native, pooled_guidance], dim=-1))).view(-1, 1, 1)
         return torch.cat([native_context, gate * guidance_tokens], dim=1)
 
-    def _apply_cross_attention_fusion(self, z_proj: torch.Tensor, guidance_tokens: torch.Tensor) -> torch.Tensor:
+    def _apply_cross_attention_fusion(self, z_proj: torch.Tensor, guidance_tokens: torch.Tensor, guidance_available: torch.Tensor | None = None) -> torch.Tensor:
+        guidance_available = torch.ones((z_proj.shape[0], 1, 1), device=z_proj.device, dtype=z_proj.dtype) if guidance_available is None else guidance_available.to(device=z_proj.device, dtype=z_proj.dtype)
         attn, _ = self.cross_attn(self.cross_attn_query_norm(z_proj), self.cross_attn_guidance_norm(guidance_tokens), self.cross_attn_guidance_norm(guidance_tokens), need_weights=False)
-        if self.guidance_fusion_mode == "gated_cross_attention": return z_proj + torch.tanh(self.cross_attn_gamma) * attn
-        return z_proj + attn
+        if self.guidance_fusion_mode == "gated_cross_attention": return z_proj + guidance_available * torch.tanh(self.cross_attn_gamma) * attn
+        return z_proj + guidance_available * attn
 
     def _append_soft_prompts(self, x: torch.Tensor, domain_id: torch.LongTensor) -> torch.Tensor:
         if self.len_soft_prompts <= 0: return x
         soft_prompts = self.soft_prompt_hub(domain_id).view(x.shape[0], self.len_soft_prompts, self.hidden_size)
         return torch.cat([x, soft_prompts], dim=1)
 
-    def forward(self, *, domain_id: torch.LongTensor, vlm_features: torch.Tensor, aux_visual_inputs: torch.Tensor, guidance_tokens: torch.Tensor, action_with_noise: torch.Tensor, proprio: torch.Tensor, t: torch.Tensor) -> torch.Tensor:
+    def forward(self, *, domain_id: torch.LongTensor, vlm_features: torch.Tensor, aux_visual_inputs: torch.Tensor, guidance_tokens: torch.Tensor, guidance_available: torch.Tensor | None = None, action_with_noise: torch.Tensor, proprio: torch.Tensor, t: torch.Tensor) -> torch.Tensor:
         action_proj, z_proj, aux_proj = self._project_native_tokens(domain_id, vlm_features, aux_visual_inputs, action_with_noise, proprio, t)
         guidance_proj = self._project_guidance(guidance_tokens, domain_id)
+        guidance_available = torch.ones((guidance_proj.shape[0], 1, 1), device=guidance_proj.device, dtype=guidance_proj.dtype) if guidance_available is None else guidance_available.to(device=guidance_proj.device, dtype=guidance_proj.dtype)
+        token_keep_mask = None
         if self.guidance_fusion_mode in {"concat", "gated_concat"}:
-            x = self._apply_concat_fusion(torch.cat([action_proj, z_proj, aux_proj], dim=1), guidance_proj)
+            native_context = torch.cat([action_proj, z_proj, aux_proj], dim=1)
+            guidance_proj = guidance_proj * guidance_available
+            x = self._apply_concat_fusion(native_context, guidance_proj)
+            native_keep_mask = torch.ones((native_context.shape[0], native_context.shape[1]), device=guidance_proj.device, dtype=torch.bool)
+            guidance_keep_mask = guidance_available.view(-1, 1).to(dtype=torch.bool).expand(-1, guidance_proj.shape[1])
+            token_keep_mask = torch.cat([native_keep_mask, guidance_keep_mask], dim=1)
         else:
-            z_guided = self._apply_cross_attention_fusion(z_proj, guidance_proj)
+            z_guided = self._apply_cross_attention_fusion(z_proj, guidance_proj, guidance_available)
             x = torch.cat([action_proj, z_guided, aux_proj], dim=1)
         seq_len = x.shape[1]
         if seq_len > self.pos_emb.shape[1]: raise ValueError(f"Sequence length {seq_len} exceeds max_len_seq={self.pos_emb.shape[1]}.")
         x = x + self.pos_emb[:, :seq_len, :]
         x = self._append_soft_prompts(x, domain_id)
-        for block in self.blocks: x = block(x)
+        if token_keep_mask is not None and self.len_soft_prompts > 0:
+            prompt_keep_mask = torch.ones((token_keep_mask.shape[0], self.len_soft_prompts), device=token_keep_mask.device, dtype=torch.bool)
+            token_keep_mask = torch.cat([token_keep_mask, prompt_keep_mask], dim=1)
+        for block in self.blocks: x = block(x, token_keep_mask=token_keep_mask)
         return self.action_decoder(self.norm(x[:, : action_with_noise.shape[1]]), domain_id)
 
 
@@ -198,7 +209,7 @@ class XVLAGuidedModel(XVLAModel):
         tokens = self.guidance_tokens(vlm_features)
         return self.guidance_prediction_from_tokens(tokens, target_map=target_map, output_size=output_size)
 
-    def forward(self, input_ids: torch.LongTensor, image_input: torch.FloatTensor, image_mask: torch.Tensor, domain_id: torch.LongTensor, proprio: torch.Tensor, action: torch.Tensor, t: torch.Tensor | None = None, action_noise: torch.Tensor | None = None) -> tuple[dict[str, torch.Tensor], torch.Tensor]:
+    def forward(self, input_ids: torch.LongTensor, image_input: torch.FloatTensor, image_mask: torch.Tensor, domain_id: torch.LongTensor, proprio: torch.Tensor, action: torch.Tensor, t: torch.Tensor | None = None, action_noise: torch.Tensor | None = None, guidance_available: torch.Tensor | None = None) -> tuple[dict[str, torch.Tensor], torch.Tensor]:
         target_dtype = self._get_target_dtype()
         image_input = image_input.to(dtype=target_dtype)
         proprio = proprio.to(dtype=target_dtype)
@@ -207,7 +218,7 @@ class XVLAGuidedModel(XVLAModel):
         guidance_tokens = self.guidance_tokens(enc["vlm_features"])
         t, action_noisy = self._build_corrupted_action(action=action, device=input_ids.device, target_dtype=target_dtype, t=t, action_noise=action_noise)
         proprio_m, action_noisy_m = self.action_space.preprocess(proprio, action_noisy)
-        pred_action = self.transformer(domain_id=domain_id, action_with_noise=action_noisy_m, proprio=proprio_m, t=t, guidance_tokens=guidance_tokens, **enc)
+        pred_action = self.transformer(domain_id=domain_id, action_with_noise=action_noisy_m, proprio=proprio_m, t=t, guidance_tokens=guidance_tokens, guidance_available=guidance_available, **enc)
         return self.action_space.compute_loss(pred_action, action), pred_action
 
     @torch.no_grad()
@@ -220,6 +231,7 @@ class XVLAGuidedModel(XVLAModel):
         guidance_tokens = self.guidance_tokens(enc["vlm_features"])
         batch_size = input_ids.shape[0]
         action_dim = self.dim_action
+        guidance_available = torch.ones((batch_size, 1, 1), device=proprio.device, dtype=target_dtype)
         x1 = torch.randn(batch_size, self.chunk_size, action_dim, device=proprio.device, dtype=target_dtype)
         action = torch.zeros_like(x1)
         steps = max(1, int(steps))
@@ -227,7 +239,7 @@ class XVLAGuidedModel(XVLAModel):
             t = torch.full((batch_size,), i / steps, device=proprio.device, dtype=target_dtype)
             x_t = x1 * t.view(-1, 1, 1) + action * (1 - t).view(-1, 1, 1)
             proprio_m, x_t_m = self.action_space.preprocess(proprio, x_t)
-            action = self.transformer(domain_id=domain_id, action_with_noise=x_t_m, proprio=proprio_m, t=t, guidance_tokens=guidance_tokens, **enc)
+            action = self.transformer(domain_id=domain_id, action_with_noise=x_t_m, proprio=proprio_m, t=t, guidance_tokens=guidance_tokens, guidance_available=guidance_available, **enc)
         return self.action_space.postprocess(action)
 
 
