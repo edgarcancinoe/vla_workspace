@@ -24,7 +24,7 @@ from thesis_vla.training.xvla_guided_launcher import GuidedExperimentSpec, Guide
 WORKSPACE_DIR = PROJECT_ROOT
 RUN_TS = dt.datetime.now().strftime("%Y%m%d_%H%M%S")
 
-RUNTIME_CONFIG = GuidedRuntimeConfig(launch_mode="accelerate", cuda_devices=(2,3), num_workers=2, dry_run=False)
+RUNTIME_CONFIG = GuidedRuntimeConfig(launch_mode="accelerate", cuda_devices=(0,1), num_workers=2, dry_run=False)
 
 DEFAULTS = GuidedLaunchConfig(
     hf_user="edgarcancinoe",
@@ -41,8 +41,8 @@ DEFAULTS = GuidedLaunchConfig(
     decoder_optimizer_lr=1e-4,
     xvla_optimizer_lr=1e-5,
     xvla_scheduler_decay_lr=2.5e-6,
-    guidance_train_mode="frozen", # frozen | train_from_start | warmup_freeze
-    guidance_unfreeze_step = None,
+    guidance_train_mode="train_from_start", # frozen | train_from_start | warmup_freeze
+    guidance_unfreeze_step = 1000,
     freeze_xvla_vlm=False,
     steps=8000,
     log_every=20,
@@ -65,14 +65,21 @@ CLOTH_BOX_DS = ("cloth-corner-box_7p5hz",      "main")
 
 # EXP NAMING
 # =====================================================================================
-FOLD_CROSS_ATTN_NAME        = f"expl_cedir_ca_{RUN_TS}_cloth_fold"
-FOLD_GATED_CROSS_ATTN_NAME  = f"expl_cedir_g-ca_{RUN_TS}_cloth_fold"
-BOX_CROSS_ATTN_NAME        = f"expl_cedir_ca_{RUN_TS}_cloth_box"
-BOX_GATED_CROSS_ATTN_NAME  = f"expl_cedir_g-ca_{RUN_TS}_cloth_box"
+FOLD_CONCAT_NAME              = f"expl_cedir_concat_{RUN_TS}_cloth_fold"
+FOLD_GATED_CONCAT_NAME        = f"expl_cedir_g-concat_{RUN_TS}_cloth_fold"
+FOLD_CROSS_ATTN_NAME          = f"expl_cedir_ca_{RUN_TS}_cloth_fold"
+FOLD_GATED_CROSS_ATTN_NAME    = f"expl_cedir_g-ca_{RUN_TS}_cloth_fold"
+
+BOX_CONCAT_NAME              = f"expl_cedir_concat_{RUN_TS}_cloth_box"
+BOX_GATED_CONCAT_NAME        = f"expl_cedir_g-concat_{RUN_TS}_cloth_box"
+BOX_CROSS_ATTN_NAME          = f"expl_cedir_ca_{RUN_TS}_cloth_box"
+BOX_GATED_CROSS_ATTN_NAME    = f"expl_cedir_g-ca_{RUN_TS}_cloth_box"
+
 FOLD_BOTH_CROSS_ATTN_NAME        = f"expl_both_cedir_dino_ca_{RUN_TS}_cloth_fold"
 FOLD_BOTH_GATED_CROSS_ATTN_NAME  = f"expl_both_cedir_dino_g-ca_{RUN_TS}_cloth_fold"
 BOX_BOTH_CROSS_ATTN_NAME        = f"expl_both_cedir_dino_ca_{RUN_TS}_cloth_box"
 BOX_BOTH_GATED_CROSS_ATTN_NAME  = f"expl_both_cedir_dino_g-ca_{RUN_TS}_cloth_box"
+
 # =====================================================================================
 
 # JOINT PRETRAINED CEDIRNET FOLD CHECKPOINT
@@ -126,9 +133,45 @@ FOLD_CEDIRNET_GUIDANCE = [
         decoder_init_path=JOINT_CEDIRNET_FOLD_DECODER_INIT,
         fusion_mode="gated_cross_attention",
     ),
+    GuidedExperimentSpec(
+        name=FOLD_CONCAT_NAME,
+        wandb_run_name=FOLD_CONCAT_NAME,
+        dataset_name=CLOTH_FOLD_DS[0],
+        dataset_revision=CLOTH_FOLD_DS[1],
+        xvla_init_path=JOINT_CEDIRNET_FOLD_XVLA_INIT,
+        decoder_init_path=JOINT_CEDIRNET_FOLD_DECODER_INIT,
+        fusion_mode="concat",
+    ),
+    GuidedExperimentSpec(
+        name=FOLD_GATED_CONCAT_NAME,
+        wandb_run_name=FOLD_GATED_CONCAT_NAME,
+        dataset_name=CLOTH_FOLD_DS[0],
+        dataset_revision=CLOTH_FOLD_DS[1],
+        xvla_init_path=JOINT_CEDIRNET_FOLD_XVLA_INIT,
+        decoder_init_path=JOINT_CEDIRNET_FOLD_DECODER_INIT,
+        fusion_mode="gated_concat",
+    ),
 ]
 
 BOX_CEDIRNET_GUIDANCE = [
+    GuidedExperimentSpec(
+        name=BOX_CONCAT_NAME,
+        wandb_run_name=BOX_CONCAT_NAME,
+        dataset_name=CLOTH_BOX_DS[0],
+        dataset_revision=CLOTH_BOX_DS[1],
+        xvla_init_path=JOINT_CEDIRNET_BOX_XVLA_INIT,
+        decoder_init_path=JOINT_CEDIRNET_BOX_DECODER_INIT,
+        fusion_mode="concat",
+    ),
+    GuidedExperimentSpec(
+        name=BOX_GATED_CONCAT_NAME,
+        wandb_run_name=BOX_GATED_CONCAT_NAME,
+        dataset_name=CLOTH_BOX_DS[0],
+        dataset_revision=CLOTH_BOX_DS[1],
+        xvla_init_path=JOINT_CEDIRNET_BOX_XVLA_INIT,
+        decoder_init_path=JOINT_CEDIRNET_BOX_DECODER_INIT,
+        fusion_mode="gated_concat",
+    ),
     GuidedExperimentSpec(
         name=BOX_CROSS_ATTN_NAME,
         wandb_run_name=BOX_CROSS_ATTN_NAME,
