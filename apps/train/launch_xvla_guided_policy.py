@@ -24,7 +24,7 @@ from thesis_vla.training.xvla_guided_launcher import GuidedExperimentSpec, Guide
 WORKSPACE_DIR = PROJECT_ROOT
 RUN_TS = dt.datetime.now().strftime("%Y%m%d_%H%M%S")
 
-RUNTIME_CONFIG = GuidedRuntimeConfig(launch_mode="accelerate", cuda_devices=(0,1), num_workers=2, dry_run=False)
+RUNTIME_CONFIG = GuidedRuntimeConfig(launch_mode="accelerate", cuda_devices=(2,3), num_workers=2, dry_run=False)
 
 DEFAULTS = GuidedLaunchConfig(
     hf_user="edgarcancinoe",
@@ -41,7 +41,8 @@ DEFAULTS = GuidedLaunchConfig(
     decoder_optimizer_lr=1e-4,
     xvla_optimizer_lr=1e-5,
     xvla_scheduler_decay_lr=2.5e-6,
-    guidance_train_mode="train_from_start",
+    guidance_train_mode="frozen", # frozen | train_from_start | warmup_freeze
+    guidance_unfreeze_step = None,
     freeze_xvla_vlm=False,
     steps=8000,
     log_every=20,
@@ -189,8 +190,8 @@ BOX_BOTH_CEDIRNET_DINO_GUIDANCE = [
         fusion_mode="gated_cross_attention",
     ),
 ]
-EXPERIMENTS = FOLD_CEDIRNET_GUIDANCE
 
+EXPERIMENTS = FOLD_CEDIRNET_GUIDANCE + BOX_CEDIRNET_GUIDANCE
 
 def main() -> None:
     run_experiments(workspace_dir=WORKSPACE_DIR, defaults=DEFAULTS, experiments=EXPERIMENTS)
