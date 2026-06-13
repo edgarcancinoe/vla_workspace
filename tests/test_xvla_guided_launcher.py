@@ -14,6 +14,7 @@ def test_guided_launcher_resolves_stage_defaults(tmp_path):
     assert resolved.fusion_mode == "concat"
     assert resolved.guidance_train_mode == "frozen"
     assert resolved.guidance_unfreeze_step == 1000
+    assert resolved.guidance_debug_every == 200
     assert resolved.freeze_xvla_vlm is True
     assert resolved.decoder_init_path == "/tmp/decoder"
     assert resolved.wandb_enable is True
@@ -85,3 +86,9 @@ def test_guided_launcher_builds_accelerate_command(tmp_path):
     assert "--mixed_precision=bf16" in cmd
     assert "--module" in cmd
     assert "thesis_vla.training.xvla_guided_trainer" in cmd
+
+
+def test_guided_launcher_allows_guidance_debug_override(tmp_path):
+    defaults = GuidedLaunchConfig(hf_user="tester", dataset_name="dataset", xvla_init_path="lerobot/xvla-base", decoder_init_path="/tmp/decoder", guidance_debug_every=200)
+    resolved = resolve_experiment(tmp_path, defaults, GuidedExperimentSpec(guidance_debug_every=50))
+    assert resolved.guidance_debug_every == 50

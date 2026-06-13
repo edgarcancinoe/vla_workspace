@@ -68,6 +68,7 @@ class GuidedLaunchConfig:
     gated_fusion: bool | None = None
     guidance_train_mode: str = "frozen"
     guidance_unfreeze_step: int = 1_000
+    guidance_debug_every: int = 200
     freeze_xvla_vlm: bool = True
     steps: int = 2_500
     log_every: int = 20
@@ -116,6 +117,7 @@ class GuidedExperimentSpec:
     gated_fusion: bool | None = None
     guidance_train_mode: str | None = None
     guidance_unfreeze_step: int | None = None
+    guidance_debug_every: int | None = None
     freeze_xvla_vlm: bool | None = None
     steps: int | None = None
     log_every: int | None = None
@@ -164,6 +166,7 @@ class ResolvedGuidedExperiment:
     fusion_mode: str
     guidance_train_mode: str
     guidance_unfreeze_step: int
+    guidance_debug_every: int
     freeze_xvla_vlm: bool
     steps: int
     log_every: int
@@ -280,6 +283,7 @@ def resolve_experiment(workspace_dir: Path, defaults: GuidedLaunchConfig, experi
         fusion_mode=fusion_mode,
         guidance_train_mode=experiment.guidance_train_mode or str(stage_defaults.get("guidance_train_mode", defaults.guidance_train_mode)),
         guidance_unfreeze_step=experiment.guidance_unfreeze_step if experiment.guidance_unfreeze_step is not None else int(stage_defaults.get("guidance_unfreeze_step", defaults.guidance_unfreeze_step)),
+        guidance_debug_every=experiment.guidance_debug_every if experiment.guidance_debug_every is not None else defaults.guidance_debug_every,
         freeze_xvla_vlm=experiment.freeze_xvla_vlm if experiment.freeze_xvla_vlm is not None else bool(stage_defaults.get("freeze_xvla_vlm", defaults.freeze_xvla_vlm)),
         steps=experiment.steps if experiment.steps is not None else defaults.steps,
         log_every=experiment.log_every if experiment.log_every is not None else defaults.log_every,
@@ -374,6 +378,7 @@ def print_run_summary(index: int, total: int, resolved: ResolvedGuidedExperiment
     print(f"  Decoder Init:       {resolved.decoder_init_path}")
     print(f"  Fusion:             {resolved.fusion_mode}")
     print(f"  Guidance Train:     {resolved.guidance_train_mode} @ step {resolved.guidance_unfreeze_step}")
+    print(f"  Guidance Debug:     every {resolved.guidance_debug_every} steps")
     print(f"  Freeze XVLA VLM:    {resolved.freeze_xvla_vlm}")
     print(f"  Dataset:            {resolved.dataset_repo_id}")
     print(f"  Video Backend:      {resolved.dataset_video_backend}")
