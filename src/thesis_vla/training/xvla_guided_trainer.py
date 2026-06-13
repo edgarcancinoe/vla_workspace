@@ -310,6 +310,7 @@ def build_optimizer(config: GuidedXVLATrainConfig, policy) -> JointTrainingState
 def compute_guided_action_loss_from_encoder(policy, processed_batch: dict[str, Any], inputs: dict[str, torch.Tensor], enc: dict[str, torch.Tensor]) -> tuple[torch.Tensor, dict[str, float], torch.Tensor]:
     targets = policy._prepare_action_targets(processed_batch)
     target_dtype = policy.model._get_target_dtype()
+    targets = targets.to(dtype=target_dtype)
     t, action_noisy = policy.model._build_corrupted_action(action=targets, device=inputs["input_ids"].device, target_dtype=target_dtype)
     proprio_m, action_noisy_m = policy.model.action_space.preprocess(inputs["proprio"].to(dtype=target_dtype), action_noisy)
     guidance_tokens = policy.model.guidance_tokens(enc["vlm_features"])
@@ -322,6 +323,7 @@ def compute_guided_action_loss_from_encoder(policy, processed_batch: dict[str, A
     guidance_tokens = guidance_tokens.to(dtype=transformer_dtype)
     enc = {key: value.to(dtype=transformer_dtype) if torch.is_tensor(value) and value.is_floating_point() else value for key, value in enc.items()}
     pred_action = policy.model.transformer(domain_id=inputs["domain_id"], action_with_noise=action_noisy_m, t=t, proprio=proprio_m, guidance_tokens=guidance_tokens, **enc)
+    targets = targets.to(dtype=pred_action.dtype)
     loss_dict = policy.model.action_space.compute_loss(pred_action, targets)
     action_loss = sum(loss_dict.values())
     stats = {key: float(value.detach().item()) for key, value in loss_dict.items()}
