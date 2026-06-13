@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 import atexit
+import dataclasses
 import json
 import os
 import select
@@ -10,9 +11,11 @@ import time
 import tty
 import yaml
 import numpy as np
+import torch
 from functools import partial
 from pathlib import Path
 import pandas as pd
+from PIL import Image
 
 ROOT_DIR = Path(__file__).resolve().parents[2]
 src_root = ROOT_DIR / "src"
@@ -49,6 +52,8 @@ from thesis_vla.inference.xvla_runtime import (
     sync_xvla_policy_config,
 )
 from thesis_vla.robot.so101_control import SO101Control
+from thesis_vla.visual_thought import CeDirNetDistillationModel, DinoTokenSequenceModel, load_cedirnet_decoder_config, load_dino_decoder_config
+from thesis_vla.visual_thought.checkpoints import DECODER_STATE_FILENAME, DECODER_STATE_TEMPLATE, DECODER_STACK_CONFIG_FILENAME, DECODER_STACK_CONFIG_TEMPLATE, DECODER_TASK_CONFIG_FILENAME, DECODER_TASK_CONFIG_TEMPLATE, METADATA_FILENAME, load_decoder_state
 from huggingface_hub import HfApi, snapshot_download
 
 # DEBUG UTILITIES
@@ -140,7 +145,8 @@ def validate_configuration():
     if not CALIBRATION_DIR:
         raise ValueError("'calibration_dir' not found in config/robot_config.yaml.")
 
-    assert POLICY_TYPE in ["smolvla", "xvla"], f"Unknown policy type: {POLICY_TYPE}"
+    assert POLICY_TYPE in ["smolvla", "xvla", "xvla_guided"], f"Unknown policy type: {POLICY_TYPE}"
+    _normalize_decoder_rerun_mode(DECODER_RERUN_MODE)
     print(f"Loading policy from {POLICY_PATH}")
     print(f"Policy type: {POLICY_TYPE}, Device: {DEVICE}")
     
@@ -204,6 +210,328 @@ def resolve_pretrained_policy_path(path: str) -> str:
         raise FileNotFoundError(f"Downloaded repo {path!r} stores checkpoints under subdirectories ({example}). Use policy_path like '{path}::{staged_candidates[-1].name}'.")
     raise FileNotFoundError(f"Downloaded repo {path!r} does not contain config.json at root or policy/config.json.")
 
+
+def resolve_visual_thought_checkpoint_root(path: str) -> str | None:
+    revision = None
+    subdir = None
+
+    def _normalize_root(candidate: Path) -> Path:
+        if candidate.name == "policy" and (candidate.parent / METADATA_FILENAME).is_file(): return candidate.parent
+        return candidate
+
+    if "::" in path:
+        path, subdir = path.split("::", 1)
+        subdir = subdir.strip("/") or None
+    candidate = Path(path).expanduser()
+    if candidate.exists():
+        return str(_normalize_root(candidate / subdir if subdir is not None else candidate))
+    if candidate.is_absolute() or path.startswith(".") or path.startswith("~"):
+        return None
+    if path.count("/") == 1 and "@" in path.split("/", 1)[1]:
+        path, revision = path.rsplit("@", 1)
+    if "/" not in path:
+        return None
+    if subdir is not None:
+        allow_patterns = [f"{subdir}/{METADATA_FILENAME}", f"{subdir}/visual_thought_config.json", f"{subdir}/decoder*", f"{subdir}/decoder_*", f"{subdir}/decoder_stack_config*.yaml", f"{subdir}/decoder_task_config*.yaml", f"{subdir}/policy/config.json"]
+    else:
+        allow_patterns = [METADATA_FILENAME, "visual_thought_config.json", "decoder*", "decoder_*", "decoder_stack_config*.yaml", "decoder_task_config*.yaml", "policy/config.json", f"step_*/{METADATA_FILENAME}", "step_*/visual_thought_config.json", "step_*/decoder*", "step_*/decoder_*", "step_*/decoder_stack_config*.yaml", "step_*/decoder_task_config*.yaml", "step_*/policy/config.json"]
+    local_root = Path(snapshot_download(repo_id=path, repo_type="model", allow_patterns=allow_patterns, revision=revision))
+    if subdir is not None:
+        target_root = _normalize_root(local_root / subdir)
+        return str(target_root) if (target_root / METADATA_FILENAME).is_file() else None
+    if (local_root / METADATA_FILENAME).is_file():
+        return str(_normalize_root(local_root))
+    staged_candidates = sorted([child for child in local_root.iterdir() if child.is_dir() and (child / METADATA_FILENAME).is_file()])
+    return str(staged_candidates[-1]) if staged_candidates else None
+
+
+def _visual_thought_expert_types(metadata: dict) -> list[str]:
+    return [str(expert) for expert in (metadata.get("expert_types") or ([metadata["expert_type"]] if metadata.get("expert_type") is not None else []))]
+
+
+def _normalize_decoder_rerun_mode(mode: str) -> str:
+    normalized = str(mode).strip().lower().replace("-", "_")
+    if normalized in {"off", "none", "false", "0"}: return "off"
+    if normalized in {"auto", "all", "cedirnet", "dino"}: return normalized
+    raise ValueError(f"DECODER_RERUN_MODE must be one of: off, auto, all, cedirnet, dino. Got {mode!r}.")
+
+
+def _decoder_rerun_requested_experts(mode: str, policy_type: str) -> set[str]:
+    normalized = _normalize_decoder_rerun_mode(mode)
+    if normalized == "off": return set()
+    if normalized in {"cedirnet", "dino"}: return {normalized}
+    if policy_type == "xvla_guided": return {"cedirnet"}
+    return {"cedirnet", "dino"}
+
+
+def load_joint_cedirnet_decoder_for_rerun(policy, policy_source_path: str, device: str):
+    checkpoint_root = resolve_visual_thought_checkpoint_root(policy_source_path)
+    if checkpoint_root is None:
+        print("[decoder-rerun] Could not resolve a visual-thought checkpoint root. Skipping decoder visualization.")
+        return None
+    root = Path(checkpoint_root)
+    metadata = json.loads((root / METADATA_FILENAME).read_text()) if (root / METADATA_FILENAME).is_file() else {}
+    expert_types = _visual_thought_expert_types(metadata)
+    cedirnet_state_path = root / DECODER_STATE_TEMPLATE.format(expert="cedirnet")
+    cedirnet_stack_path = root / DECODER_STACK_CONFIG_TEMPLATE.format(expert="cedirnet")
+    cedirnet_task_path = root / DECODER_TASK_CONFIG_TEMPLATE.format(expert="cedirnet")
+    if not cedirnet_state_path.is_file():
+        if expert_types and "cedirnet" not in expert_types:
+            print(f"[decoder-rerun] Visual-thought checkpoint under {root} does not include a CeDirNet decoder (expert_types={expert_types}). Skipping decoder visualization.")
+            return None
+        cedirnet_state_path = root / DECODER_STATE_FILENAME
+        cedirnet_stack_path = root / DECODER_STACK_CONFIG_FILENAME
+        cedirnet_task_path = root / DECODER_TASK_CONFIG_FILENAME
+    if not cedirnet_state_path.is_file():
+        print(f"[decoder-rerun] No CeDirNet decoder weights found under {root}. Skipping decoder visualization.")
+        return None
+    if not cedirnet_stack_path.is_file() or not cedirnet_task_path.is_file():
+        print(f"[decoder-rerun] Missing CeDirNet decoder config sidecars under {root}. Skipping decoder visualization.")
+        return None
+    projection_dim = getattr(getattr(policy.model, "vlm", None).config, "projection_dim", None)
+    if projection_dim is None:
+        print("[decoder-rerun] Policy VLM does not expose projection_dim. Skipping decoder visualization.")
+        return None
+    try:
+        task_cfg = load_cedirnet_decoder_config(cedirnet_stack_path, cedirnet_task_path)
+        decoder = CeDirNetDistillationModel.from_config(student_vlm_dim=int(projection_dim), cfg=task_cfg)
+        decoder.load_state_dict(load_decoder_state(cedirnet_state_path), strict=True)
+    except Exception as error:
+        print(f"[decoder-rerun] Failed to load CeDirNet decoder artifacts from {root}: {error}")
+        return None
+    decoder.to(device)
+    decoder.eval()
+    print(f"[decoder-rerun] Loaded CeDirNet decoder from {root} (expert_type={metadata.get('expert_type')}, expert_types={metadata.get('expert_types')}).")
+    return {"checkpoint_root": str(root), "decoder": decoder, "metadata": metadata, "task_cfg": task_cfg}
+
+
+def _infer_token_grid(num_tokens: int) -> tuple[int, int]:
+    side = int(round(float(num_tokens) ** 0.5))
+    if side * side == int(num_tokens): return side, side
+    for height in range(int(float(num_tokens) ** 0.5), 0, -1):
+        if int(num_tokens) % height == 0: return height, int(num_tokens) // height
+    return 1, int(num_tokens)
+
+
+def load_joint_dino_decoder_for_rerun(policy, policy_source_path: str, device: str):
+    checkpoint_root = resolve_visual_thought_checkpoint_root(policy_source_path)
+    if checkpoint_root is None:
+        return None
+    root = Path(checkpoint_root)
+    metadata = json.loads((root / METADATA_FILENAME).read_text()) if (root / METADATA_FILENAME).is_file() else {}
+    expert_types = _visual_thought_expert_types(metadata)
+    dino_state_path = root / DECODER_STATE_TEMPLATE.format(expert="dino")
+    dino_stack_path = root / DECODER_STACK_CONFIG_TEMPLATE.format(expert="dino")
+    dino_task_path = root / DECODER_TASK_CONFIG_TEMPLATE.format(expert="dino")
+    if not dino_state_path.is_file():
+        if expert_types and "dino" not in expert_types: return None
+        dino_state_path = root / DECODER_STATE_FILENAME
+        dino_stack_path = root / DECODER_STACK_CONFIG_FILENAME
+        dino_task_path = root / DECODER_TASK_CONFIG_FILENAME
+    if not dino_state_path.is_file():
+        return None
+    if not dino_stack_path.is_file() or not dino_task_path.is_file():
+        print(f"[decoder-rerun] Missing DINO decoder config sidecars under {root}. Skipping DINO visualization.")
+        return None
+    projection_dim = getattr(getattr(policy.model, "vlm", None).config, "projection_dim", None)
+    if projection_dim is None:
+        print("[decoder-rerun] Policy VLM does not expose projection_dim. Skipping DINO visualization.")
+        return None
+    try:
+        task_cfg = load_dino_decoder_config(dino_stack_path, dino_task_path)
+        if str(task_cfg.teacher.target_kind) != "token_sequence":
+            print(f"[decoder-rerun] DINO visualization currently supports token_sequence only, got {task_cfg.teacher.target_kind!r}.")
+            return None
+        state = load_decoder_state(dino_state_path)
+        query_vectors = state.get("strategy.query_vectors")
+        if query_vectors is None or getattr(query_vectors, "ndim", None) != 2:
+            raise ValueError("Missing strategy.query_vectors in DINO decoder checkpoint.")
+        num_decoder_tokens, decoder_dim = int(query_vectors.shape[0]), int(query_vectors.shape[1])
+        resolved_stack = dataclasses.replace(task_cfg.stack, decoder_dim=decoder_dim, num_decoder_tokens=num_decoder_tokens)
+        decoder = DinoTokenSequenceModel(student_vlm_dim=int(projection_dim), stack_cfg=resolved_stack)
+        decoder.load_state_dict(state, strict=True)
+    except Exception as error:
+        print(f"[decoder-rerun] Failed to load DINO decoder artifacts from {root}: {error}")
+        return None
+    decoder.to(device)
+    decoder.eval()
+    grid_hw = _infer_token_grid(num_decoder_tokens)
+    print(f"[decoder-rerun] Loaded DINO decoder from {root} (expert_type={metadata.get('expert_type')}, expert_types={metadata.get('expert_types')}, grid_hw={grid_hw}).")
+    return {"checkpoint_root": str(root), "decoder": decoder, "metadata": metadata, "task_cfg": task_cfg, "grid_hw": grid_hw}
+
+
+def load_guided_cedirnet_decoder_for_rerun(policy, device: str):
+    if getattr(getattr(policy, "config", None), "type", None) != "xvla_guided": return None
+    if getattr(getattr(policy, "config", None), "guidance_expert_type", None) != "cedirnet":
+        print(f"[decoder-rerun] Guided policy guidance_expert_type={getattr(policy.config, 'guidance_expert_type', None)!r} is not supported for visualization.")
+        return None
+    decoder = getattr(getattr(policy, "model", None), "guidance_decoder", None)
+    if decoder is None:
+        print("[decoder-rerun] Guided policy does not expose guidance_decoder. Skipping decoder visualization.")
+        return None
+    decoder.to(device)
+    decoder.eval()
+    print(f"[decoder-rerun] Using embedded guided CeDirNet decoder (fusion_mode={getattr(policy.config, 'guidance_fusion_mode', None)}).")
+    return {"checkpoint_root": None, "decoder": decoder, "metadata": {"policy_type": "xvla_guided", "guidance_expert_type": "cedirnet"}}
+
+
+def load_policy_decoder_runtimes_for_rerun(policy, policy_source_path: str, device: str, policy_type: str, mode: str):
+    requested = _decoder_rerun_requested_experts(mode, policy_type)
+    if not requested: return None
+    runtimes = {}
+    if policy_type == "xvla_guided":
+        cedirnet = load_guided_cedirnet_decoder_for_rerun(policy, device) if "cedirnet" in requested else None
+        if cedirnet is not None: runtimes["cedirnet"] = cedirnet
+        if "dino" in requested: print("[decoder-rerun] DINO visualization is not available for xvla_guided policies.")
+        return runtimes or None
+    cedirnet = load_joint_cedirnet_decoder_for_rerun(policy, policy_source_path, device) if "cedirnet" in requested else None
+    dino = load_joint_dino_decoder_for_rerun(policy, policy_source_path, device) if "dino" in requested else None
+    if cedirnet is not None: runtimes["cedirnet"] = cedirnet
+    if dino is not None: runtimes["dino"] = dino
+    return runtimes or None
+
+
+def _tensor_chw_to_rgb01(tensor: torch.Tensor) -> np.ndarray:
+    arr = tensor.detach().cpu().float().numpy()
+    if arr.ndim != 3:
+        raise ValueError(f"Expected CHW tensor for Rerun image logging, got shape={arr.shape}.")
+    if arr.shape[0] == 1:
+        arr = np.repeat(arr, 3, axis=0)
+    elif arr.shape[0] == 2:
+        arr = np.concatenate([arr, np.zeros_like(arr[:1])], axis=0)
+    elif arr.shape[0] > 3:
+        arr = arr[:3]
+    arr = np.transpose(arr, (1, 2, 0))
+    lo, hi = float(arr.min()), float(arr.max())
+    if hi > lo:
+        arr = (arr - lo) / (hi - lo)
+    return np.clip(arr, 0.0, 1.0)
+
+
+def _signed_field_to_rgb01(field: torch.Tensor, limit: float = 1.0) -> np.ndarray:
+    arr = field.detach().cpu().float().numpy()
+    scale = max(float(limit), 1e-6)
+    arr = np.clip(arr / scale, -1.0, 1.0)
+    pos = np.clip(arr, 0.0, 1.0)
+    neg = np.clip(-arr, 0.0, 1.0)
+    mid = 1.0 - np.abs(arr)
+    return np.stack([pos, mid, neg], axis=-1)
+
+
+def _angle_field_to_rgb01(angle: torch.Tensor) -> np.ndarray:
+    arr = angle.detach().cpu().float().numpy()
+    hue = ((arr + np.pi) / (2.0 * np.pi)) % 1.0
+    sat = np.ones_like(hue, dtype=np.float32)
+    val = np.ones_like(hue, dtype=np.float32)
+    i = np.floor(hue * 6.0).astype(np.int32)
+    f = hue * 6.0 - i
+    p = val * (1.0 - sat)
+    q = val * (1.0 - f * sat)
+    t = val * (1.0 - (1.0 - f) * sat)
+    i = i % 6
+    r = np.choose(i, [val, q, p, p, t, val])
+    g = np.choose(i, [t, val, val, q, p, p])
+    b = np.choose(i, [p, p, t, val, val, q])
+    return np.stack([r, g, b], axis=-1)
+
+
+def _draw_patch_borders(image_hwc: np.ndarray, gh: int, gw: int, color: tuple[int, int, int] = (255, 255, 255)) -> np.ndarray:
+    canvas = image_hwc.copy(); height, width = canvas.shape[:2]
+    for row in range(1, int(gh)):
+        y = int(round(row * height / max(int(gh), 1)))
+        canvas[max(0, y - 1):min(height, y + 1), :] = color
+    for col in range(1, int(gw)):
+        x = int(round(col * width / max(int(gw), 1)))
+        canvas[:, max(0, x - 1):min(width, x + 1)] = color
+    return canvas
+
+
+def _compute_token_pca(tokens: torch.Tensor) -> tuple[np.ndarray, np.ndarray]:
+    token_np = tokens.detach().float().cpu().numpy()
+    if token_np.ndim != 2:
+        raise ValueError(f"Expected token matrix [N,D], got shape={token_np.shape}.")
+    if token_np.shape[0] <= 1:
+        return np.full((token_np.shape[0], 3), 0.5, dtype=np.float32), np.ones((token_np.shape[0],), dtype=bool)
+    norms = np.linalg.norm(token_np, axis=-1, keepdims=True)
+    token_norm = token_np / np.clip(norms, 1e-8, None)
+    centered = token_norm - token_norm.mean(axis=0, keepdims=True)
+    _, _, vt = np.linalg.svd(centered, full_matrices=False)
+    pc1 = centered @ vt[0]
+    hi_mask = pc1 > np.median(pc1)
+    flat_norms = norms.squeeze(-1)
+    lo_mask = ~hi_mask
+    if hi_mask.any() and lo_mask.any():
+        fg_mask = hi_mask if flat_norms[hi_mask].mean() >= flat_norms[lo_mask].mean() else lo_mask
+    else:
+        fg_mask = np.ones((token_np.shape[0],), dtype=bool)
+    if fg_mask.sum() > 3:
+        fg_tokens = centered[fg_mask]
+        _, _, vt_fg = np.linalg.svd(fg_tokens - fg_tokens.mean(axis=0, keepdims=True), full_matrices=False)
+        projected = (centered - fg_tokens.mean(axis=0, keepdims=True)) @ vt_fg[:3].T
+    else:
+        basis = vt[: min(3, vt.shape[0])].T
+        projected = centered @ basis
+        if projected.shape[1] < 3: projected = np.pad(projected, ((0, 0), (0, 3 - projected.shape[1])), mode="constant")
+    for channel in range(3):
+        support = projected[fg_mask, channel] if fg_mask.any() else projected[:, channel]
+        lo = np.percentile(support, 2) if support.size > 1 else float(projected[:, channel].min())
+        hi = np.percentile(support, 98) if support.size > 1 else float(projected[:, channel].max())
+        projected[:, channel] = np.clip((projected[:, channel] - lo) / max(hi - lo, 1e-8), 0.0, 1.0)
+    pca_rgb = projected * fg_mask[:, None].astype(np.float32) + 0.3 * (~fg_mask)[:, None].astype(np.float32)
+    return pca_rgb.astype(np.float32), fg_mask
+
+
+def _log_cedirnet_decoder_rerun(runtime, prediction: torch.Tensor) -> None:
+    import rerun as rr
+
+    if int(prediction.shape[1]) < 2:
+        raise ValueError(f"Expected at least 2 decoder channels for sin/cos visualization, got shape={tuple(prediction.shape)}.")
+    # Joint CeDirNet checkpoints here are assumed to expose [sin, cos, radius, ...];
+    # keep only the angular channels in Rerun and derive angle with atan2(sin, cos).
+    sin_map = prediction[0, 0]
+    cos_map = prediction[0, 1]
+    atan_map = torch.atan2(sin_map, cos_map)
+    rr.log("decoder/cedirnet_sin", rr.Image((_signed_field_to_rgb01(sin_map) * 255.0).astype(np.uint8)))
+    rr.log("decoder/cedirnet_cos", rr.Image((_signed_field_to_rgb01(cos_map) * 255.0).astype(np.uint8)))
+    rr.log("decoder/cedirnet_atan2", rr.Image((_angle_field_to_rgb01(atan_map) * 255.0).astype(np.uint8)))
+
+
+def _log_dino_decoder_rerun(runtime, prediction: torch.Tensor, output_hw: tuple[int, int]) -> None:
+    import rerun as rr
+
+    tokens = prediction[0]
+    pca_rgb, fg_mask = _compute_token_pca(tokens)
+    gh, gw = runtime["grid_hw"]
+    if int(gh) * int(gw) != int(tokens.shape[0]):
+        raise ValueError(f"DINO grid_hw={runtime['grid_hw']} does not match token count={int(tokens.shape[0])}.")
+    pca_small = (pca_rgb.reshape(int(gh), int(gw), 3) * 255.0).astype(np.uint8)
+    fg_small = (fg_mask.reshape(int(gh), int(gw)).astype(np.float32) * 255.0).astype(np.uint8)
+    target_size = (int(output_hw[1]), int(output_hw[0]))
+    pca_img = np.array(Image.fromarray(pca_small).resize(target_size, Image.NEAREST))
+    fg_img = np.array(Image.fromarray(fg_small).resize(target_size, Image.NEAREST))
+    rr.log("decoder/dino_pca", rr.Image(_draw_patch_borders(pca_img, int(gh), int(gw))))
+    rr.log("decoder/dino_fg_mask", rr.Image(_draw_patch_borders(np.stack([fg_img, fg_img, fg_img], axis=-1), int(gh), int(gw))))
+
+
+def log_policy_decoder_rerun(decoder_runtime, policy, batch: dict, inference_index: int) -> None:
+    if decoder_runtime is None:
+        return
+    import rerun as rr
+
+    with torch.no_grad():
+        inputs = policy._build_model_inputs(batch)
+        enc = policy.model.forward_vlm(input_ids=inputs["input_ids"], pixel_values=inputs["image_input"], image_mask=inputs["image_mask"])
+        output_hw = tuple(int(value) for value in inputs["image_input"].shape[-2:])
+        input_rgb = _tensor_chw_to_rgb01(inputs["image_input"][0, 0])
+        rr.set_time("decoder_inference", sequence=int(inference_index))
+        rr.log("decoder/input_view_0", rr.Image((input_rgb * 255.0).astype(np.uint8)))
+        if decoder_runtime.get("cedirnet") is not None:
+            prediction = decoder_runtime["cedirnet"]["decoder"](enc["vlm_features"], output_size=output_hw)
+            _log_cedirnet_decoder_rerun(decoder_runtime["cedirnet"], prediction)
+        if decoder_runtime.get("dino") is not None:
+            prediction = decoder_runtime["dino"]["decoder"](enc["vlm_features"])
+            _log_dino_decoder_rerun(decoder_runtime["dino"], prediction, output_hw)
+
 # CONFIGURATION
 # ============================================================================
 
@@ -244,7 +572,7 @@ FOLD_128_50K        = None
 
 
 # WITH IMPLICIT CEDIRNET
-IMPLICIT_CEDIRNET = "edgarcancinoe/cedirnet_joint_stage_20260611_203608_cloth_fold::step_0000500"
+IMPLICIT_CEDIRNET = "edgarcancinoe/both_cedirnet_dino_joint_cloth_box_20260613_022649::step_0004000"
 # -----------------------------------------------------------------------------------------------
 
 # PICKPLACE -------------------------------------------------------------------------------------
@@ -372,18 +700,19 @@ NUM_EPISODES               = 16
 START_FROM_SCRATCH         = True
 RESUME_DATASET             = False
 OVERWRITE_DATASET          = False
-N_ACTION_STEPS             = 24  # Number of control steps to execute before running the next inference chunk. Only for XVLA.
+N_ACTION_STEPS             = 20  # Number of control steps to execute before running the next inference chunk. Only for XVLA.
 EPISODE_TIME_SEC           = 45
 
 
 POLICY_PATH       = resolve_pretrained_policy_path(experiment["policy_path"])
+POLICY_SOURCE_PATH = experiment["policy_path"]
 TASK_DESCRIPTION  = experiment["task_description"]
 print('Desc:' + TASK_DESCRIPTION)
 # TASK_DESCRIPTION  = "Pick up orange cube and place inside white box."
 EVAL_DATASET_NAME = experiment["eval_name"]
 DATA_DIR          = DATASETS_OUTPUT_DIR / EVAL_DATASET_NAME
 
-POLICY_TYPE = "xvla" # "xvla" | "smolvla"
+POLICY_TYPE = "xvla" # "xvla" | "xvla_guided" | "smolvla"
 DEVICE      = "mps"  # "cuda" | "mps" | "cpu"
 
 POLICY_PIPELINE = None
@@ -458,7 +787,8 @@ HOME_FPS = CONTROL_FPS
 USE_MESHCAT_VIZ                = True   # Set False to disable
 
 # --- Rerun Visualization ---
-USE_RERUN                      = True  # Set True to enable Rerun telemetry
+USE_RERUN                      = True   # Set True to enable Rerun telemetry
+DECODER_RERUN_MODE             = "auto" # "off" | "auto" | "all" | "cedirnet" | "dino"; works for joint XVLA and guided XVLA.
 
 # --- Dry Run (visualization only, no robot commands) ---
 # Set True to run policy inference + Meshcat visualization WITHOUT sending any
@@ -1196,13 +1526,14 @@ def set_custom_select_action(policy, delay_s: float):
 #   Draws the full predicted EEF path every time a new inference chunk fires.
 #   Works for both xvla (EEF action space) and smolvla (motor action space).
 #   Must be called BEFORE set_custom_select_action so it is the innermost wrapper.
-def set_trajectory_visualization(policy, so101: SO101Control, viz, postprocessor, action_names: list[str]):
+def set_trajectory_visualization(policy, so101: SO101Control, viz, postprocessor, action_names: list[str], decoder_rerun_runtime=None):
     """Patches policy.select_action to visualise the predicted chunk in Meshcat."""
-    if viz is None:
+    if viz is None and decoder_rerun_runtime is None:
         return
 
     original_select_action = policy.select_action
     _last_first_xyz = [None]
+    _decoder_inference_idx = [0]
 
     def _ensure_dict(action) -> dict | None:
         """Convert postprocessed action (dict or tensor) → dictionary of named features."""
@@ -1277,12 +1608,18 @@ def set_trajectory_visualization(policy, so101: SO101Control, viz, postprocessor
 
         # ── DEBUG: raw result tensor from policy ──────────────────────────────
         if is_new_inference:
+            _decoder_inference_idx[0] += 1
             DBG.tensor("teal", "POST", "select_action result (unnorm/remapped)", result)
             if hasattr(policy.model, 'action_space'):
                 asp = policy.model.action_space
                 g_max = getattr(asp, 'gripper_max', 'N/A')
                 g_idx = getattr(asp, 'gripper_idx', 'N/A')
                 DBG.info(f"ActionSpace: type={type(asp).__name__}  gripper_max={g_max}  gripper_idx={g_idx}")
+            if decoder_rerun_runtime is not None:
+                try:
+                    log_policy_decoder_rerun(decoder_rerun_runtime, policy, batch, _decoder_inference_idx[0])
+                except Exception as e:
+                    print(f"[decoder-rerun] Logging error: {e}")
 
         if is_new_inference:
             try:
@@ -1290,7 +1627,7 @@ def set_trajectory_visualization(policy, so101: SO101Control, viz, postprocessor
                 remaining = _policy_queue_list(policy)
                 chunk = [result] + remaining
                 
-                if POLICY_TYPE == "xvla":
+                if POLICY_TYPE in {"xvla", "xvla_guided"}:
                     DBG.divider("magenta", f"XVLA Inference  chunk={len(chunk)} waypoints")
                     DBG.infer("Raw model output (normalized space):")
                     if hasattr(result, 'shape'):
@@ -1387,7 +1724,7 @@ def set_trajectory_visualization(policy, so101: SO101Control, viz, postprocessor
         return result
 
     policy.select_action = patched_select_action
-    print("[x] Policy patched for predicted trajectory visualization in Meshcat.")
+    print("[x] Policy patched for inference visualization in Meshcat/Rerun.")
 
 def get_policy_processors(policy, dataset, pipeline_key: str | None = None):
     """
@@ -1450,10 +1787,10 @@ def get_policy(policy_type: str, path: str, device: str):
         ),
     )
 
-    if policy_type == "xvla":
+    if policy_type in {"xvla", "xvla_guided"}:
         action_space_name = type(policy.model.action_space).__name__
         norm_mode = policy.config.normalization_mapping.get("ACTION", "?")
-        print("[x] XVLA loaded successfully:")
+        print("[x] XVLA-family policy loaded successfully:")
         print(f"    model.chunk_size    = {policy.model.chunk_size}")
         print(f"    config.chunk_size   = {policy.config.chunk_size}")
         print(f"    n_action_steps      = {policy.config.n_action_steps}")
@@ -1464,6 +1801,9 @@ def get_policy(policy_type: str, path: str, device: str):
         print(f"    normalization(ACTION)= {norm_mode}")
         print(f"    num_denoising_steps = {policy.config.num_denoising_steps}")
         print(f"    binary_gripper_inf  = {getattr(policy.config, 'binary_gripper_inference', False)}")
+        if policy_type == "xvla_guided":
+            print(f"    guidance_expert_type= {getattr(policy.config, 'guidance_expert_type', 'N/A')}")
+            print(f"    guidance_fusion_mode= {getattr(policy.config, 'guidance_fusion_mode', 'N/A')}")
         assert policy.model.chunk_size == policy.config.chunk_size, (
             f"MISMATCH: model.chunk_size={policy.model.chunk_size} != "
             f"config.chunk_size={policy.config.chunk_size}. "
@@ -1517,6 +1857,7 @@ def main():
     robot_config = SO100FollowerConfig(id=ROBOT_NAME, cameras=CAMERAS, port=FOLLOWER_PORT, calibration_dir=Path(CALIBRATION_DIR))
     robot        = SO100Follower(robot_config)
     dataset = None
+    decoder_rerun_runtime = None
     terminal_keyboard_listener = None
     _keyboard_listener = None
     should_attempt_push = False
@@ -1526,7 +1867,7 @@ def main():
         # Policy Object
         policy, INCLUDE_EEF_STATE = get_policy(POLICY_TYPE, POLICY_PATH, DEVICE)
         action_slice_spec = None
-        if POLICY_TYPE == "xvla":
+        if POLICY_TYPE in {"xvla", "xvla_guided"}:
             action_slice_spec = get_so101_slice_spec(getattr(policy.config, "action_mode", None))
             if action_slice_spec is None:
                 raise ValueError(
@@ -1563,7 +1904,7 @@ def main():
         dataset, episode_idx = get_dataset(dataset_features, robot.name)
         DBG.pre(f"dataset.features['observation.state'] = {dataset.features.get('observation.state')}")
         DBG.pre(f"dataset.features['action'] = {dataset.features.get('action')}")
-        if POLICY_TYPE == "xvla":
+        if POLICY_TYPE in {"xvla", "xvla_guided"}:
             global ACTIVE_XVLA_RENAME_MAP
             ACTIVE_XVLA_RENAME_MAP = resolve_xvla_rename_map(dataset.meta.camera_keys)
             if not ACTIVE_XVLA_RENAME_MAP:
@@ -1586,6 +1927,8 @@ def main():
         if USE_RERUN:
             import uuid
             init_rerun(session_name=f"inference_evaluation_{uuid.uuid4().hex[:8]}")
+            if POLICY_TYPE in {"xvla", "xvla_guided"} and _normalize_decoder_rerun_mode(DECODER_RERUN_MODE) != "off":
+                decoder_rerun_runtime = load_policy_decoder_runtimes_for_rerun(policy, POLICY_SOURCE_PATH, DEVICE, POLICY_TYPE, DECODER_RERUN_MODE)
 
         teleop_action_processor, robot_action_processor, robot_observation_processor = make_default_processors()
 
@@ -1601,6 +1944,7 @@ def main():
             viz=viz,
             postprocessor=postprocessor,
             action_names=action_names,
+            decoder_rerun_runtime=decoder_rerun_runtime,
         )
         set_custom_select_action(policy, POLICY_DELAY)
 

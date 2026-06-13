@@ -41,6 +41,8 @@ DEFAULTS = GuidedLaunchConfig(
     decoder_optimizer_lr=1e-4,
     xvla_optimizer_lr=1e-5,
     xvla_scheduler_decay_lr=2.5e-6,
+    guidance_train_mode="train_from_start",
+    freeze_xvla_vlm=False,
     steps=2500,
     log_every=20,
     save_every=500,
@@ -62,27 +64,39 @@ CLOTH_DROP_DS = ("cloth-corner-box_7p5hz",      "main")
 
 # EXP NAMING
 # =====================================================================================
-FOLD_CEDIRNET_NAME      = f"explicit_cedirnet_{RUN_TS}_cloth_fold"
-DROP_CEDIRNET_NAME      = f"explicit_cedirnet_{RUN_TS}_cloth_box"
+FOLD_CROSS_ATTN_NAME        = f"guided_cedirnet_cross_attention_{RUN_TS}_cloth_fold"
+FOLD_GATED_CROSS_ATTN_NAME  = f"guided_cedirnet_gated_cross_attention_{RUN_TS}_cloth_fold"
 # =====================================================================================
 
-# XVLA 
+# JOINT PRETRAINED CEDIRNET FOLD CHECKPOINT
 # =====================================================================================
 OUT = "/home/jose/EMAI-Thesis/vla_workspace/runtime/outputs/train/"
-XVLA_INIT_CLOTHFOLD     = OUT + "orange196_cloth-corner-fold_7p5hz_so101_ee6d_am_sm_b16_ga2_eb64_full_adapt_stagedpw_v1_20260604_230620/checkpoints/015000/pretrained_model"  
-XVLA_INIT_CLOTHDROP     = OUT + "orange196_cloth-corner-box_7p5hz_so101_ee6d_am_sm_b8_ga4_eb64_full_adapt_stagedpw_v1_20260603_111556/checkpoints/030000/pretrained_model"
+# Set this to the checkpoint root of the joint CeDirNet fold run, e.g.
+# .../cedirnet_joint_stage_<timestamp>_cloth_fold/checkpoint_final
+JOINT_CEDIRNET_FOLD_CHECKPOINT_ROOT = OUT + "<set_joint_cedirnet_fold_checkpoint_root>"
+JOINT_CEDIRNET_FOLD_XVLA_INIT       = JOINT_CEDIRNET_FOLD_CHECKPOINT_ROOT + "/policy"
+JOINT_CEDIRNET_FOLD_DECODER_INIT    = JOINT_CEDIRNET_FOLD_CHECKPOINT_ROOT
 # =====================================================================================
 
 FOLD_CEDIRNET_GUIDANCE = [
-    GuidedLaunchConfig(
-        name=FOLD_CEDIRNET_NAME,
+    GuidedExperimentSpec(
+        name=FOLD_CROSS_ATTN_NAME,
+        wandb_run_name=FOLD_CROSS_ATTN_NAME,
         dataset_name=CLOTH_FOLD_DS[0],
         dataset_revision=CLOTH_FOLD_DS[1],
-        xvla_init_path=None,
-        decoder_stack_config_path=None,
-        decoder_task_config_path=None,
-        guided_stage_config_path=None
-    )
+        xvla_init_path=JOINT_CEDIRNET_FOLD_XVLA_INIT,
+        decoder_init_path=JOINT_CEDIRNET_FOLD_DECODER_INIT,
+        fusion_mode="cross_attention",
+    ),
+    GuidedExperimentSpec(
+        name=FOLD_GATED_CROSS_ATTN_NAME,
+        wandb_run_name=FOLD_GATED_CROSS_ATTN_NAME,
+        dataset_name=CLOTH_FOLD_DS[0],
+        dataset_revision=CLOTH_FOLD_DS[1],
+        xvla_init_path=JOINT_CEDIRNET_FOLD_XVLA_INIT,
+        decoder_init_path=JOINT_CEDIRNET_FOLD_DECODER_INIT,
+        fusion_mode="gated_cross_attention",
+    ),
 ]
 EXPERIMENTS = FOLD_CEDIRNET_GUIDANCE
 
