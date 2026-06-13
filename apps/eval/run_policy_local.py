@@ -375,14 +375,41 @@ def load_guided_cedirnet_decoder_for_rerun(policy, device: str):
     return {"checkpoint_root": None, "decoder": decoder, "metadata": {"policy_type": "xvla_guided", "guidance_expert_type": "cedirnet"}}
 
 
+def load_guided_dino_decoder_for_rerun(policy, device: str):
+    if getattr(getattr(policy, "config", None), "type", None) != "xvla_guided": return None
+    if getattr(getattr(policy, "config", None), "guidance_expert_type", None) != "dino":
+        print(f"[decoder-rerun] Guided policy guidance_expert_type={getattr(policy.config, 'guidance_expert_type', None)!r} is not supported for DINO visualization.")
+        return None
+    decoder = getattr(getattr(policy, "model", None), "guidance_decoder", None)
+    if decoder is None:
+        print("[decoder-rerun] Guided policy does not expose guidance_decoder. Skipping DINO visualization.")
+        return None
+    query_vectors = getattr(getattr(decoder, "strategy", None), "query_vectors", None)
+    num_decoder_tokens = int(query_vectors.shape[0]) if getattr(query_vectors, "ndim", None) == 2 else int(getattr(getattr(policy, "config", None), "guidance_decoder_stack", {}).get("num_decoder_tokens", 0))
+    if num_decoder_tokens <= 0:
+        print("[decoder-rerun] Unable to infer guided DINO token grid. Skipping DINO visualization.")
+        return None
+    decoder.to(device)
+    decoder.eval()
+    grid_hw = _infer_token_grid(num_decoder_tokens)
+    print(f"[decoder-rerun] Using embedded guided DINO decoder (fusion_mode={getattr(policy.config, 'guidance_fusion_mode', None)}, grid_hw={grid_hw}).")
+    return {"checkpoint_root": None, "decoder": decoder, "metadata": {"policy_type": "xvla_guided", "guidance_expert_type": "dino"}, "grid_hw": grid_hw}
+
+
 def load_policy_decoder_runtimes_for_rerun(policy, policy_source_path: str, device: str, policy_type: str, mode: str):
     requested = _decoder_rerun_requested_experts(mode, policy_type)
     if not requested: return None
     runtimes = {}
     if policy_type == "xvla_guided":
+        guided_expert_type = str(getattr(getattr(policy, "config", None), "guidance_expert_type", "")).strip().lower()
+        normalized_mode = _normalize_decoder_rerun_mode(mode)
+        if normalized_mode in {"auto", "all"}: requested = {guided_expert_type} if guided_expert_type in {"cedirnet", "dino"} else set()
         cedirnet = load_guided_cedirnet_decoder_for_rerun(policy, device) if "cedirnet" in requested else None
+        dino = load_guided_dino_decoder_for_rerun(policy, device) if "dino" in requested else None
         if cedirnet is not None: runtimes["cedirnet"] = cedirnet
-        if "dino" in requested: print("[decoder-rerun] DINO visualization is not available for xvla_guided policies.")
+        if dino is not None: runtimes["dino"] = dino
+        if not runtimes and requested:
+            print(f"[decoder-rerun] Requested decoder visualization {sorted(requested)} is incompatible with guided_expert_type={guided_expert_type!r}.")
         return runtimes or None
     cedirnet = load_joint_cedirnet_decoder_for_rerun(policy, policy_source_path, device) if "cedirnet" in requested else None
     dino = load_joint_dino_decoder_for_rerun(policy, policy_source_path, device) if "dino" in requested else None

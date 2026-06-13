@@ -8,6 +8,7 @@ from typing import Any
 from huggingface_hub.constants import CONFIG_NAME
 from lerobot.configs.policies import PreTrainedConfig
 from lerobot.policies.xvla.configuration_xvla import XVLAConfig
+from thesis_vla.visual_thought.config import CeDirNetTeacherConfig, DinoTeacherConfig
 
 
 GUIDANCE_FUSION_MODES = frozenset({"concat", "gated_concat", "cross_attention", "gated_cross_attention"})
@@ -40,13 +41,20 @@ class XVLAGuidedConfig(XVLAConfig):
         super().__post_init__()
         self.guidance_fusion_mode = normalize_guidance_fusion_mode(self.guidance_fusion_mode, self.guidance_gated)
         self.guidance_gated = self.guidance_fusion_mode.startswith("gated_")
-        if self.guidance_expert_type != "cedirnet": raise ValueError(f"Only CeDirNet guidance is supported in v1, got {self.guidance_expert_type!r}.")
+        if self.guidance_expert_type not in {"cedirnet", "dino"}: raise ValueError(f"guidance_expert_type must be one of: cedirnet, dino. Got {self.guidance_expert_type!r}.")
         if self.guidance_source != "decoder_tokens": raise ValueError(f"Only decoder_tokens guidance_source is supported in v1, got {self.guidance_source!r}.")
         if self.guidance_train_mode not in {"warmup_freeze", "train_from_start", "frozen"}: raise ValueError(f"guidance_train_mode must be one of: warmup_freeze, train_from_start, frozen. Got {self.guidance_train_mode!r}.")
         if int(self.guidance_unfreeze_step) < 0: raise ValueError("guidance_unfreeze_step must be >= 0.")
         if not isinstance(self.guidance_decoder_stack, dict) or not self.guidance_decoder_stack: raise ValueError("guidance_decoder_stack must be a non-empty mapping.")
         if not isinstance(self.guidance_decoder_head, dict) or not self.guidance_decoder_head: raise ValueError("guidance_decoder_head must be a non-empty mapping.")
         if not isinstance(self.guidance_decoder_teacher, dict) or not self.guidance_decoder_teacher: raise ValueError("guidance_decoder_teacher must be a non-empty mapping.")
+        target_kind = str(self.guidance_decoder_teacher.get("target_kind", "")).strip()
+        if self.guidance_expert_type == "cedirnet":
+            CeDirNetTeacherConfig.from_dict(self.guidance_decoder_teacher)
+            if target_kind != "dense_map": raise ValueError(f"CeDirNet guided policy expects teacher.target_kind='dense_map', got {target_kind!r}.")
+        else:
+            DinoTeacherConfig.from_dict(self.guidance_decoder_teacher)
+            if target_kind != "token_sequence": raise ValueError(f"Guided DINO v1 supports teacher.target_kind='token_sequence' only, got {target_kind!r}.")
 
     @staticmethod
     def _to_jsonable(value: Any) -> Any:
@@ -76,6 +84,7 @@ class XVLAGuidedConfig(XVLAConfig):
         cls,
         base: XVLAConfig,
         *,
+        guidance_expert_type: str = "cedirnet",
         guidance_decoder_stack: dict[str, Any],
         guidance_decoder_head: dict[str, Any],
         guidance_decoder_teacher: dict[str, Any],
@@ -90,6 +99,7 @@ class XVLAGuidedConfig(XVLAConfig):
         if guidance_fusion_mode in {"concat", "gated_concat"}: payload["max_len_seq"] = int(base.max_len_seq) + int(guidance_decoder_stack["num_decoder_tokens"])
         return cls(
             **payload,
+            guidance_expert_type=str(guidance_expert_type),
             guidance_fusion_mode=guidance_fusion_mode,
             guidance_gated=guidance_fusion_mode.startswith("gated_"),
             guidance_train_mode=str(guidance_train_mode),

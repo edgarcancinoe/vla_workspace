@@ -18,6 +18,12 @@ from thesis_vla.training.xvla_finetune_launcher import validate_mean_std_normali
 
 
 LaunchMode = Literal["single", "accelerate"]
+DEFAULT_CEDIRNET_STACK_CONFIG_PATH = str(CONFIG_ROOT / "visual_thought" / "cedirnet_stack.yaml")
+DEFAULT_CEDIRNET_TASK_CONFIG_PATH = str(CONFIG_ROOT / "visual_thought" / "cedirnet_head.yaml")
+DEFAULT_DINO_STACK_CONFIG_PATH = str(CONFIG_ROOT / "visual_thought" / "dino_stack.yaml")
+DEFAULT_DINO_TASK_CONFIG_PATH = str(CONFIG_ROOT / "visual_thought" / "dino_decoder.yaml")
+DEFAULT_CEDIRNET_GUIDED_STAGE_CONFIG_PATH = str(CONFIG_ROOT / "visual_thought" / "cedirnet_guided_policy.yaml")
+DEFAULT_DINO_GUIDED_STAGE_CONFIG_PATH = str(CONFIG_ROOT / "visual_thought" / "dino_guided_policy.yaml")
 
 
 @dataclass(frozen=True)
@@ -40,11 +46,12 @@ class GuidedLaunchConfig:
     dataset_root: str | None = None
     runtime: GuidedRuntimeConfig = GuidedRuntimeConfig()
     xvla_init_path: str = "lerobot/xvla-base"
+    guidance_expert_type: str = "cedirnet"
     action_mode: str | None = None
     decoder_init_path: str = ""
-    decoder_stack_config_path: str = str(CONFIG_ROOT / "visual_thought" / "cedirnet_stack.yaml")
-    decoder_task_config_path: str = str(CONFIG_ROOT / "visual_thought" / "cedirnet_head.yaml")
-    guided_stage_config_path: str = str(CONFIG_ROOT / "visual_thought" / "cedirnet_guided_policy.yaml")
+    decoder_stack_config_path: str = DEFAULT_CEDIRNET_STACK_CONFIG_PATH
+    decoder_task_config_path: str = DEFAULT_CEDIRNET_TASK_CONFIG_PATH
+    guided_stage_config_path: str | None = DEFAULT_CEDIRNET_GUIDED_STAGE_CONFIG_PATH
     teacher_image_feature_key: str = "observation.images.image"
     dataset_video_backend: str = "pyav"
     dataset_tolerance_s: float = 1e-4
@@ -88,10 +95,12 @@ class GuidedExperimentSpec:
     dataset_revision: str | None = None
     dataset_root: str | None = None
     xvla_init_path: str | None = None
+    guidance_expert_type: str | None = None
     action_mode: str | None = None
     decoder_init_path: str | None = None
     decoder_stack_config_path: str | None = None
     decoder_task_config_path: str | None = None
+    guided_stage_config_path: str | None = None
     teacher_image_feature_key: str | None = None
     dataset_video_backend: str | None = None
     dataset_tolerance_s: float | None = None
@@ -136,6 +145,7 @@ class ResolvedGuidedExperiment:
     dataset_root: str | None
     runtime: GuidedRuntimeConfig
     xvla_init_path: str
+    guidance_expert_type: str
     action_mode: str | None
     decoder_init_path: str
     decoder_stack_config_path: str
@@ -199,6 +209,16 @@ def _stage_defaults(path: str | Path) -> dict:
     return {key: payload[key] for key in ["fusion_mode", "guidance_fusion_mode", "gated_fusion", "guidance_train_mode", "guidance_unfreeze_step", "freeze_xvla_vlm", "action_loss_weight", "expert_loss_weight"] if key in payload}
 
 
+def _default_stage_config_path(guidance_expert_type: str) -> str:
+    if str(guidance_expert_type) == "dino": return DEFAULT_DINO_GUIDED_STAGE_CONFIG_PATH
+    return DEFAULT_CEDIRNET_GUIDED_STAGE_CONFIG_PATH
+
+
+def _default_decoder_config_paths(guidance_expert_type: str) -> tuple[str, str]:
+    if str(guidance_expert_type) == "dino": return DEFAULT_DINO_STACK_CONFIG_PATH, DEFAULT_DINO_TASK_CONFIG_PATH
+    return DEFAULT_CEDIRNET_STACK_CONFIG_PATH, DEFAULT_CEDIRNET_TASK_CONFIG_PATH
+
+
 def _resolve_fusion_mode(*, defaults: GuidedLaunchConfig, experiment: GuidedExperimentSpec, stage_defaults: dict) -> str:
     if experiment.fusion_mode is not None: return normalize_guidance_fusion_mode(experiment.fusion_mode, experiment.gated_fusion)
     if "guidance_fusion_mode" in stage_defaults: return normalize_guidance_fusion_mode(stage_defaults["guidance_fusion_mode"])
@@ -209,7 +229,16 @@ def _resolve_fusion_mode(*, defaults: GuidedLaunchConfig, experiment: GuidedExpe
 def resolve_experiment(workspace_dir: Path, defaults: GuidedLaunchConfig, experiment: GuidedExperimentSpec, timestamp: str | None = None) -> ResolvedGuidedExperiment:
     runtime = _with_overrides(defaults.runtime, launch_mode=experiment.launch_mode, cuda_devices=experiment.cuda_devices, num_workers=experiment.num_workers)
     dataset_repo_id = _resolve_hf_repo_id(experiment.dataset_name or defaults.dataset_name, defaults.hf_user)
-    stage_defaults = _stage_defaults(defaults.guided_stage_config_path)
+    guidance_expert_type = str(experiment.guidance_expert_type or defaults.guidance_expert_type)
+    if guidance_expert_type not in {"cedirnet", "dino"}: raise ValueError(f"guidance_expert_type must be one of: cedirnet, dino. Got {guidance_expert_type!r}.")
+    default_stage_path = defaults.guided_stage_config_path
+    if experiment.guided_stage_config_path is not None:
+        stage_config_path = experiment.guided_stage_config_path
+    elif default_stage_path == DEFAULT_CEDIRNET_GUIDED_STAGE_CONFIG_PATH and guidance_expert_type == "dino":
+        stage_config_path = DEFAULT_DINO_GUIDED_STAGE_CONFIG_PATH
+    else:
+        stage_config_path = default_stage_path or _default_stage_config_path(guidance_expert_type)
+    stage_defaults = _stage_defaults(stage_config_path)
     xvla_init_path = experiment.xvla_init_path or defaults.xvla_init_path
     decoder_init_path = experiment.decoder_init_path or defaults.decoder_init_path
     fusion_mode = _resolve_fusion_mode(defaults=defaults, experiment=experiment, stage_defaults=stage_defaults)
@@ -220,6 +249,9 @@ def resolve_experiment(workspace_dir: Path, defaults: GuidedLaunchConfig, experi
     timestamp = timestamp or dt.datetime.now().strftime("%Y%m%d_%H%M%S")
     name = experiment.name or defaults.name or f"{defaults.name_prefix}_{_slug(dataset_repo_id)}_{timestamp}"
     output_dir = experiment.output_dir or str(TRAIN_OUTPUT_DIR / name)
+    default_stack_path, default_task_path = _default_decoder_config_paths(guidance_expert_type)
+    decoder_stack_config_path = experiment.decoder_stack_config_path or (default_stack_path if defaults.decoder_stack_config_path == DEFAULT_CEDIRNET_STACK_CONFIG_PATH and guidance_expert_type == "dino" else defaults.decoder_stack_config_path)
+    decoder_task_config_path = experiment.decoder_task_config_path or (default_task_path if defaults.decoder_task_config_path == DEFAULT_CEDIRNET_TASK_CONFIG_PATH and guidance_expert_type == "dino" else defaults.decoder_task_config_path)
     return ResolvedGuidedExperiment(
         name=name,
         output_dir=output_dir,
@@ -228,10 +260,11 @@ def resolve_experiment(workspace_dir: Path, defaults: GuidedLaunchConfig, experi
         dataset_root=experiment.dataset_root if experiment.dataset_root is not None else defaults.dataset_root,
         runtime=runtime,
         xvla_init_path=xvla_init_path,
+        guidance_expert_type=guidance_expert_type,
         action_mode=experiment.action_mode if experiment.action_mode is not None else defaults.action_mode,
         decoder_init_path=decoder_init_path,
-        decoder_stack_config_path=experiment.decoder_stack_config_path or defaults.decoder_stack_config_path,
-        decoder_task_config_path=experiment.decoder_task_config_path or defaults.decoder_task_config_path,
+        decoder_stack_config_path=decoder_stack_config_path,
+        decoder_task_config_path=decoder_task_config_path,
         teacher_image_feature_key=experiment.teacher_image_feature_key or defaults.teacher_image_feature_key,
         dataset_video_backend=experiment.dataset_video_backend or defaults.dataset_video_backend,
         dataset_tolerance_s=experiment.dataset_tolerance_s if experiment.dataset_tolerance_s is not None else defaults.dataset_tolerance_s,
@@ -336,6 +369,7 @@ def print_run_summary(index: int, total: int, resolved: ResolvedGuidedExperiment
     print("=" * 88)
     print(f"  Name:               {resolved.name}")
     print(f"  XVLA Init:          {resolved.xvla_init_path}")
+    print(f"  Guidance Expert:    {resolved.guidance_expert_type}")
     print(f"  Action Mode:        {resolved.action_mode}")
     print(f"  Decoder Init:       {resolved.decoder_init_path}")
     print(f"  Fusion:             {resolved.fusion_mode}")

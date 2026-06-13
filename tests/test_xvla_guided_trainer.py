@@ -52,6 +52,10 @@ class _FakeGuidedModel:
     def guidance_tokens(self, vlm_features):
         return self.guidance_decoder.decoder_tokens(vlm_features)
 
+    def guidance_prediction_from_tokens(self, guidance_tokens, target_map=None, output_size=None):
+        if target_map is not None and getattr(target_map, "ndim", 0) == 4: return self.guidance_decoder.predict_from_tokens(guidance_tokens, target_map=target_map, output_size=output_size)
+        return guidance_tokens
+
 
 class _FakeGuidedPolicy:
     def __init__(self):
@@ -75,6 +79,14 @@ def test_guided_action_loss_helper_smoke():
 def test_guidance_loss_helper_smoke():
     policy = _FakeGuidedPolicy()
     target = TeacherTarget(name="cedirnet", tensor=torch.randn(2, 3, 2, 2), kind="dense_map", loss_type="mse", weight=1.0)
+    loss, stats = compute_guidance_loss(policy, target, torch.randn(2, 4, 6))
+    assert loss.ndim == 0
+    assert "expert_total" in stats
+
+
+def test_guidance_loss_helper_supports_dino_token_sequence():
+    policy = _FakeGuidedPolicy()
+    target = TeacherTarget(name="dinov2", tensor=torch.randn(2, 4, 6), kind="token_sequence", loss_type="mse", weight=1.0)
     loss, stats = compute_guidance_loss(policy, target, torch.randn(2, 4, 6))
     assert loss.ndim == 0
     assert "expert_total" in stats
@@ -241,3 +253,14 @@ def test_guided_resume_compatibility_checks_normalization_and_fusion():
         assert "fusion_mode" in str(exc)
     else:
         raise AssertionError("Expected guided resume compatibility check to reject mismatched fusion_mode.")
+
+
+def test_guided_resume_compatibility_checks_guidance_expert_type():
+    config = GuidedXVLATrainConfig(name="guided", xvla_init_path="base", decoder_init_path="decoder", decoder_stack_config_path="stack.yaml", decoder_task_config_path="task.yaml", dataset_repo_id="user/dataset", dataset_revision="main", dataset_root=None, output_dir="/tmp/out", device="cpu", guidance_expert_type="dino")
+    assert_guided_resume_compatible(config, {"guidance_expert_type": "dino"})
+    try:
+        assert_guided_resume_compatible(config, {"guidance_expert_type": "cedirnet"})
+    except ValueError as exc:
+        assert "guidance_expert_type" in str(exc)
+    else:
+        raise AssertionError("Expected guided resume compatibility check to reject mismatched guidance_expert_type.")

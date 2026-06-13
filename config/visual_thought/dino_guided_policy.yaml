@@ -1,0 +1,6 @@
+fusion_mode: concat
+guidance_train_mode: frozen
+guidance_unfreeze_step: 1000
+freeze_xvla_vlm: true
+action_loss_weight: 1.0
+expert_loss_weight: 0.25

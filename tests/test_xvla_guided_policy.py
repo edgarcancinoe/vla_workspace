@@ -64,7 +64,9 @@ def _patch_dummy_vlm(monkeypatch):
     monkeypatch.setattr(XVLAGuidedConfig, "get_florence_config", lambda self: SimpleNamespace(projection_dim=16))
 
 
-def _make_guided_config():
+def _make_guided_config(guidance_expert_type="cedirnet"):
+    guidance_head = {"grid_hw": [2, 2], "projection_mode": "linear", "projection_mlp_ratio": 2.0, "projection_dropout": 0.0, "refine_layers": 1, "refine_kernel_size": 3, "refine_dropout": 0.0, "out_layers": 1, "out_dropout": 0.0, "resize_mode": "bilinear", "align_corners": False} if guidance_expert_type == "cedirnet" else {"query_projection_mode": "mlp", "query_projection_mlp_ratio": 1.0, "query_projection_dropout": 0.0, "query_aggregation_mode": "mean", "align_weight": 1.0, "recon_weight": 1.0, "recon_scale": 1.0}
+    guidance_teacher = {"name": "cedirnet", "target_kind": "dense_map", "loss_type": "mse", "weight": 1.0, "target_channel_indices": [0, 1, 2]} if guidance_expert_type == "cedirnet" else {"name": "dinov2", "target_kind": "token_sequence", "loss_type": "mse", "weight": 1.0, "model_type": "vitb14"}
     return XVLAGuidedConfig(
         input_features={
             f"{OBS_IMAGES}.image": PolicyFeature(type=FeatureType.VISUAL, shape=(3, 8, 8)),
@@ -73,6 +75,7 @@ def _make_guided_config():
         },
         output_features={ACTION: PolicyFeature(type=FeatureType.ACTION, shape=(4,))},
         florence_config={"vision_config": {}, "text_config": {}},
+        guidance_expert_type=guidance_expert_type,
         hidden_size=16,
         depth=2,
         num_heads=4,
@@ -84,8 +87,8 @@ def _make_guided_config():
         num_image_views=2,
         action_mode="auto",
         guidance_decoder_stack={"decoder_dim": 8, "num_decoder_tokens": 4, "num_heads": 4, "num_layers": 1, "ffn_enabled": True, "ffn_mlp_ratio": 2.0, "ffn_dropout": 0.0, "self_attn_queries": True, "self_attn_student": False, "gating_enabled": False, "gating_mode": "none", "cross_attn_residual": False, "student_projection_mode": "linear", "student_projection_mlp_ratio": 2.0, "student_projection_dropout": 0.0, "positional_encodings": False},
-        guidance_decoder_head={"grid_hw": [2, 2], "projection_mode": "linear", "projection_mlp_ratio": 2.0, "projection_dropout": 0.0, "refine_layers": 1, "refine_kernel_size": 3, "refine_dropout": 0.0, "out_layers": 1, "out_dropout": 0.0, "resize_mode": "bilinear", "align_corners": False},
-        guidance_decoder_teacher={"name": "cedirnet", "target_kind": "dense_map", "loss_type": "mse", "weight": 1.0, "target_channel_indices": [0, 1, 2]},
+        guidance_decoder_head=guidance_head,
+        guidance_decoder_teacher=guidance_teacher,
     )
 
 
@@ -94,6 +97,18 @@ def test_guided_transformer_fusion_variants():
         model = GuidedSoftPromptedTransformer(hidden_size=16, multi_modal_input_size=16, guidance_input_size=8, depth=2, num_heads=4, guidance_num_heads=4, mlp_ratio=2.0, num_domains=3, dim_action=4, dim_propio=4, dim_time=8, len_soft_prompts=2, max_len_seq=64, use_hetero_proj=False, guidance_fusion_mode=fusion_mode, guidance_gated=False)
         out = model(domain_id=torch.zeros(2, dtype=torch.long), vlm_features=torch.randn(2, 6, 16), aux_visual_inputs=torch.randn(2, 4, 16), guidance_tokens=torch.randn(2, 5, 8), action_with_noise=torch.randn(2, 4, 4), proprio=torch.randn(2, 4), t=torch.rand(2))
         assert out.shape == (2, 4, 4)
+
+
+def test_guided_dino_rejects_expert_feature_query():
+    try:
+        base = _make_guided_config(guidance_expert_type="dino")
+        payload = {name: getattr(base, name) for name in base.__dataclass_fields__}
+        payload["guidance_decoder_teacher"] = {"name": "dinov2", "target_kind": "expert_feature_query", "loss_type": "mse", "weight": 1.0, "model_type": "vitb14"}
+        _ = XVLAGuidedConfig(**payload)
+    except ValueError as exc:
+        assert "token_sequence" in str(exc)
+    else:
+        raise AssertionError("Expected guided DINO config to reject expert_feature_query.")
 
 
 def test_guided_transformer_sequence_shape_rules():
@@ -135,3 +150,23 @@ def test_guided_policy_save_load_and_runtime_resolution(monkeypatch):
         assert actions.shape == (2, 4, 4)
         assert runtime_policy.config.type == "xvla_guided"
         assert include_eef_state is False
+
+
+def test_guided_dino_policy_save_load_and_runtime_resolution(monkeypatch):
+    _patch_dummy_vlm(monkeypatch)
+    config = _make_guided_config(guidance_expert_type="dino")
+    policy = XVLAGuidedPolicy(config)
+    with tempfile.TemporaryDirectory() as tmpdir:
+        save_dir = Path(tmpdir)
+        policy.save_pretrained(save_dir)
+        loaded = XVLAGuidedPolicy.from_pretrained(save_dir, device="cpu")
+        actions = loaded.model.generate_actions(input_ids=torch.zeros(2, 5, dtype=torch.long), image_input=torch.randn(2, 2, 3, 8, 8), image_mask=torch.ones(2, 2, dtype=torch.bool), domain_id=torch.zeros(2, dtype=torch.long), proprio=torch.randn(2, 4), steps=2)
+        runtime_policy, _ = load_runtime_policy("xvla_guided", str(save_dir), "cpu")
+        assert actions.shape == (2, 4, 4)
+        assert runtime_policy.config.guidance_expert_type == "dino"
+        try:
+            runtime_policy.model.guidance_map(torch.randn(1, 4, 16))
+        except ValueError as exc:
+            assert "CeDirNet guidance only" in str(exc)
+        else:
+            raise AssertionError("Expected DINO guided policy to reject guidance_map().")

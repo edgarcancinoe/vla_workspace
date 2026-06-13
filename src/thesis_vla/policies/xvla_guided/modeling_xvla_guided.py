@@ -16,8 +16,9 @@ from lerobot.policies.xvla.modeling_xvla import XVLAModel, XVLAPolicy
 from lerobot.policies.xvla.soft_transformer import DomainAwareLinear, TransformerBlock, basic_init, timestep_embedding
 
 from thesis_vla.policies.xvla_guided.configuration_xvla_guided import XVLAGuidedConfig, normalize_guidance_fusion_mode
+from thesis_vla.visual_thought import DinoTokenSequenceModel
 from thesis_vla.visual_thought.cedirnet_decoder import CeDirNetDistillationModel
-from thesis_vla.visual_thought.config import CeDirNetDecoderConfig, CeDirNetTeacherConfig, DecoderStackConfig, DenseMapHeadConfig
+from thesis_vla.visual_thought.config import CeDirNetDecoderConfig, CeDirNetTeacherConfig, DecoderStackConfig, DenseMapHeadConfig, DinoDecoderConfig, DinoTeacherConfig, ExpertQueryHeadConfig
 
 
 def _build_cedirnet_decoder_config(config: XVLAGuidedConfig) -> CeDirNetDecoderConfig:
@@ -26,6 +27,23 @@ def _build_cedirnet_decoder_config(config: XVLAGuidedConfig) -> CeDirNetDecoderC
         head=DenseMapHeadConfig.from_dict(config.guidance_decoder_head),
         teacher=CeDirNetTeacherConfig.from_dict(config.guidance_decoder_teacher),
     ).validate()
+
+
+def _build_dino_decoder_config(config: XVLAGuidedConfig) -> DinoDecoderConfig:
+    return DinoDecoderConfig(
+        stack=DecoderStackConfig.from_dict(config.guidance_decoder_stack),
+        head=ExpertQueryHeadConfig.from_dict(config.guidance_decoder_head),
+        teacher=DinoTeacherConfig.from_dict(config.guidance_decoder_teacher),
+    ).validate()
+
+
+def _build_guidance_decoder(config: XVLAGuidedConfig, projection_dim: int) -> tuple[nn.Module, int]:
+    if config.guidance_expert_type == "cedirnet":
+        decoder_cfg = _build_cedirnet_decoder_config(config)
+        return CeDirNetDistillationModel.from_config(student_vlm_dim=int(projection_dim), cfg=decoder_cfg), int(decoder_cfg.stack.decoder_dim)
+    decoder_cfg = _build_dino_decoder_config(config)
+    if decoder_cfg.teacher.target_kind != "token_sequence": raise ValueError(f"Guided DINO v1 supports token_sequence only, got {decoder_cfg.teacher.target_kind!r}.")
+    return DinoTokenSequenceModel(student_vlm_dim=int(projection_dim), stack_cfg=decoder_cfg.stack), int(decoder_cfg.stack.decoder_dim)
 
 
 class GuidedSoftPromptedTransformer(nn.Module):
@@ -134,14 +152,13 @@ class XVLAGuidedModel(XVLAModel):
 
     def __init__(self, config: XVLAGuidedConfig, florence_config, proprio_dim: int) -> None:
         super().__init__(config=config, florence_config=florence_config, proprio_dim=proprio_dim)
-        decoder_cfg = _build_cedirnet_decoder_config(config)
         projection_dim = getattr(self.vlm.config, "projection_dim", None)
         if projection_dim is None: raise ValueError("Florence2 config must provide `projection_dim` for multimodal fusion.")
-        self.guidance_decoder = CeDirNetDistillationModel.from_config(student_vlm_dim=int(projection_dim), cfg=decoder_cfg)
+        self.guidance_decoder, guidance_input_size = _build_guidance_decoder(config, int(projection_dim))
         self.transformer = GuidedSoftPromptedTransformer(
             hidden_size=config.hidden_size,
             multi_modal_input_size=int(projection_dim),
-            guidance_input_size=int(decoder_cfg.stack.decoder_dim),
+            guidance_input_size=int(guidance_input_size),
             depth=config.depth,
             num_heads=config.num_heads,
             guidance_num_heads=config.resolved_guidance_num_heads,
@@ -169,11 +186,17 @@ class XVLAGuidedModel(XVLAModel):
         if not trainable: self.guidance_decoder.eval()
 
     def guidance_tokens(self, vlm_features: torch.Tensor) -> torch.Tensor:
-        return self.guidance_decoder.decoder_tokens(vlm_features)
+        if self.config.guidance_expert_type == "cedirnet": return self.guidance_decoder.decoder_tokens(vlm_features)
+        return self.guidance_decoder(vlm_features)
+
+    def guidance_prediction_from_tokens(self, guidance_tokens: torch.Tensor, target_map: torch.Tensor | None = None, output_size: tuple[int, int] | None = None) -> torch.Tensor:
+        if self.config.guidance_expert_type == "cedirnet": return self.guidance_decoder.predict_from_tokens(guidance_tokens, target_map=target_map, output_size=output_size)
+        return guidance_tokens
 
     def guidance_map(self, vlm_features: torch.Tensor, target_map: torch.Tensor | None = None, output_size: tuple[int, int] | None = None) -> torch.Tensor:
+        if self.config.guidance_expert_type != "cedirnet": raise ValueError(f"guidance_map is defined for CeDirNet guidance only, got {self.config.guidance_expert_type!r}.")
         tokens = self.guidance_tokens(vlm_features)
-        return self.guidance_decoder.predict_from_tokens(tokens, target_map=target_map, output_size=output_size)
+        return self.guidance_prediction_from_tokens(tokens, target_map=target_map, output_size=output_size)
 
     def forward(self, input_ids: torch.LongTensor, image_input: torch.FloatTensor, image_mask: torch.Tensor, domain_id: torch.LongTensor, proprio: torch.Tensor, action: torch.Tensor, t: torch.Tensor | None = None, action_noise: torch.Tensor | None = None) -> tuple[dict[str, torch.Tensor], torch.Tensor]:
         target_dtype = self._get_target_dtype()

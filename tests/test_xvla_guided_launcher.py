@@ -48,6 +48,18 @@ def test_guided_launcher_allows_action_mode_and_scheduler_override(tmp_path):
     assert resolved.xvla_scheduler_decay_lr == 1e-6
 
 
+def test_guided_launcher_resolves_dino_guidance_expert(tmp_path):
+    stage_cfg = tmp_path / "dino_guided_stage.yaml"
+    stage_cfg.write_text("fusion_mode: cross_attention\nguidance_train_mode: train_from_start\n")
+    defaults = GuidedLaunchConfig(hf_user="tester", dataset_name="dataset", xvla_init_path="lerobot/xvla-base", decoder_init_path="/tmp/decoder")
+    resolved = resolve_experiment(tmp_path, defaults, GuidedExperimentSpec(guidance_expert_type="dino", guided_stage_config_path=str(stage_cfg)))
+    assert resolved.guidance_expert_type == "dino"
+    assert resolved.decoder_stack_config_path.endswith("dino_stack.yaml")
+    assert resolved.decoder_task_config_path.endswith("dino_decoder.yaml")
+    assert resolved.fusion_mode == "cross_attention"
+    assert resolved.guidance_train_mode == "train_from_start"
+
+
 def test_guided_launcher_allows_normalization_and_resume_override(tmp_path):
     defaults = GuidedLaunchConfig(hf_user="tester", dataset_name="dataset", xvla_init_path="lerobot/xvla-base", decoder_init_path="/tmp/decoder")
     resolved = resolve_experiment(tmp_path, defaults, GuidedExperimentSpec(normalization_mapping='{"ACTION":"MEAN_STD","STATE":"MEAN_STD","VISUAL":"IDENTITY"}', resume=True, resume_checkpoint_path="/tmp/checkpoint_0000100"))
