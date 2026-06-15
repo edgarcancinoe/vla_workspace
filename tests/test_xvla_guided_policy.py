@@ -100,6 +100,17 @@ def test_guided_transformer_fusion_variants():
         assert out.shape == (2, 4, 4)
 
 
+def test_guided_transformer_supports_legacy_blocks_without_token_keep_mask():
+    class _LegacyBlock(nn.Module):
+        def forward(self, x):
+            return x
+
+    model = GuidedSoftPromptedTransformer(hidden_size=16, multi_modal_input_size=16, guidance_input_size=8, depth=1, num_heads=4, guidance_num_heads=4, mlp_ratio=2.0, num_domains=3, dim_action=4, dim_propio=4, dim_time=8, len_soft_prompts=2, max_len_seq=64, use_hetero_proj=False, guidance_fusion_mode="concat", guidance_gated=False)
+    model.blocks = nn.ModuleList([_LegacyBlock()])
+    out = model(domain_id=torch.zeros(2, dtype=torch.long), vlm_features=torch.randn(2, 6, 16), aux_visual_inputs=torch.randn(2, 4, 16), guidance_tokens=torch.randn(2, 5, 8), guidance_available=torch.ones(2, 1, 1), action_with_noise=torch.randn(2, 4, 4), proprio=torch.randn(2, 4), t=torch.rand(2))
+    assert out.shape == (2, 4, 4)
+
+
 def test_attention_all_true_mask_preserves_default_behavior():
     attn = Attention(dim=16, num_heads=4)
     x = torch.randn(2, 6, 16)

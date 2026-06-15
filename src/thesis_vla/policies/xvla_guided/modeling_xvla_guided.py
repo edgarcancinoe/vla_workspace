@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import builtins
+import inspect
 import logging
 import os
 from pathlib import Path
@@ -132,6 +133,11 @@ class GuidedSoftPromptedTransformer(nn.Module):
         soft_prompts = self.soft_prompt_hub(domain_id).view(x.shape[0], self.len_soft_prompts, self.hidden_size)
         return torch.cat([x, soft_prompts], dim=1)
 
+    def _run_block(self, block: nn.Module, x: torch.Tensor, token_keep_mask: torch.Tensor | None = None) -> torch.Tensor:
+        if token_keep_mask is None: return block(x)
+        if "token_keep_mask" in inspect.signature(block.forward).parameters: return block(x, token_keep_mask=token_keep_mask)
+        return block(x)
+
     def forward(self, *, domain_id: torch.LongTensor, vlm_features: torch.Tensor, aux_visual_inputs: torch.Tensor, guidance_tokens: torch.Tensor, guidance_available: torch.Tensor | None = None, action_with_noise: torch.Tensor, proprio: torch.Tensor, t: torch.Tensor) -> torch.Tensor:
         action_proj, z_proj, aux_proj = self._project_native_tokens(domain_id, vlm_features, aux_visual_inputs, action_with_noise, proprio, t)
         guidance_proj = self._project_guidance(guidance_tokens, domain_id)
@@ -154,7 +160,7 @@ class GuidedSoftPromptedTransformer(nn.Module):
         if token_keep_mask is not None and self.len_soft_prompts > 0:
             prompt_keep_mask = torch.ones((token_keep_mask.shape[0], self.len_soft_prompts), device=token_keep_mask.device, dtype=torch.bool)
             token_keep_mask = torch.cat([token_keep_mask, prompt_keep_mask], dim=1)
-        for block in self.blocks: x = block(x, token_keep_mask=token_keep_mask)
+        for block in self.blocks: x = self._run_block(block, x, token_keep_mask=token_keep_mask)
         return self.action_decoder(self.norm(x[:, : action_with_noise.shape[1]]), domain_id)
 
 
