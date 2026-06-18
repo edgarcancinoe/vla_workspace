@@ -346,6 +346,29 @@ def build_optimizer(config: GuidedXVLATrainConfig, policy) -> JointTrainingState
     return JointTrainingState(policy_optimizer=policy_optimizer, decoder_optimizer=decoder_optimizer, policy_scheduler=policy_scheduler)
 
 
+def _count_parameters(parameters) -> int:
+    return sum(int(parameter.numel()) for parameter in parameters)
+
+
+def _optimizer_parameter_count(optimizer: torch.optim.Optimizer) -> int:
+    return sum(int(parameter.numel()) for group in optimizer.param_groups for parameter in group["params"])
+
+
+def _trainability_metrics(policy, optimizer: JointTrainingState) -> dict[str, float]:
+    guidance_decoder_params = list(policy.model.guidance_decoder.parameters())
+    vlm_params = list(policy.model.vlm.parameters())
+    all_trainable = [parameter for parameter in policy.parameters() if parameter.requires_grad]
+    return {
+        "params_trainable_total": float(_count_parameters(all_trainable)),
+        "params_guidance_decoder_total": float(_count_parameters(guidance_decoder_params)),
+        "params_guidance_decoder_trainable": float(_count_parameters([parameter for parameter in guidance_decoder_params if parameter.requires_grad])),
+        "params_vlm_total": float(_count_parameters(vlm_params)),
+        "params_vlm_trainable": float(_count_parameters([parameter for parameter in vlm_params if parameter.requires_grad])),
+        "params_policy_optimizer": float(_optimizer_parameter_count(optimizer.policy_optimizer)),
+        "params_decoder_optimizer": float(_optimizer_parameter_count(optimizer.decoder_optimizer)),
+    }
+
+
 def _transformer_dtype(transformer, fallback: torch.Tensor) -> torch.dtype:
     transformer_parameter = next(transformer.parameters(), None)
     return transformer_parameter.dtype if transformer_parameter is not None else fallback.dtype
@@ -583,6 +606,10 @@ def train_guided_xvla(config: GuidedXVLATrainConfig) -> None:
     progress = tqdm(total=max(int(config.steps) - int(step), 0), desc=config.name, disable=not is_main)
     emitted_validation_steps: set[int] = set()
     if is_main: print(json.dumps({"event": "ddp_config", "gradient_accumulation_steps": int(accum_steps), "num_processes": int(accelerator.num_processes)}))
+    if is_main:
+        trainability_metrics = {"event": "param_trainability", "step": int(step), "guidance_train_mode": str(config.guidance_train_mode), "freeze_xvla_vlm": bool(config.freeze_xvla_vlm), **_trainability_metrics(policy, optimizer)}
+        print(json.dumps(trainability_metrics))
+        if wandb_run is not None: wandb_run.log({key: value for key, value in trainability_metrics.items() if key != "event"}, step=int(step))
     if is_main and step == 0 and val_loader is not None and should_run_validation_step(0, config.steps, config.validation_freq, emitted_validation_steps):
         val_metrics = {"event": "validation_step", "step": 0, **_validation_metrics(config, runtime, runtime.policy, guidance_source, val_loader)}
         print(json.dumps(val_metrics))
