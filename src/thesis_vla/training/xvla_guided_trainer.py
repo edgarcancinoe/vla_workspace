@@ -369,6 +369,22 @@ def _trainability_metrics(policy, optimizer: JointTrainingState) -> dict[str, fl
     }
 
 
+def _focus_metrics_from_train(action_stats: dict[str, float]) -> dict[str, float]:
+    focus = {}
+    if "position_loss" in action_stats: focus["focus/train_pos"] = float(action_stats["position_loss"])
+    if "rotate6D_loss" in action_stats: focus["focus/train_rot"] = float(action_stats["rotate6D_loss"])
+    if "gripper_loss" in action_stats: focus["focus/train_gripper"] = float(action_stats["gripper_loss"])
+    return focus
+
+
+def _focus_metrics_from_val(metrics: dict[str, float]) -> dict[str, float]:
+    focus = {}
+    if "val_position_loss" in metrics: focus["focus/val_pos"] = float(metrics["val_position_loss"])
+    if "val_rotate6D_loss" in metrics: focus["focus/val_rot"] = float(metrics["val_rotate6D_loss"])
+    if "val_gripper_loss" in metrics: focus["focus/val_gripper"] = float(metrics["val_gripper_loss"])
+    return focus
+
+
 def _transformer_dtype(transformer, fallback: torch.Tensor) -> torch.dtype:
     transformer_parameter = next(transformer.parameters(), None)
     return transformer_parameter.dtype if transformer_parameter is not None else fallback.dtype
@@ -613,7 +629,7 @@ def train_guided_xvla(config: GuidedXVLATrainConfig) -> None:
     if is_main and step == 0 and val_loader is not None and should_run_validation_step(0, config.steps, config.validation_freq, emitted_validation_steps):
         val_metrics = {"event": "validation_step", "step": 0, **_validation_metrics(config, runtime, runtime.policy, guidance_source, val_loader)}
         print(json.dumps(val_metrics))
-        if wandb_run is not None: wandb_run.log({key: value for key, value in val_metrics.items() if key != "event"}, step=0)
+        if wandb_run is not None: wandb_run.log({key: value for key, value in val_metrics.items() if key != "event"} | _focus_metrics_from_val(val_metrics), step=0)
         emitted_validation_steps.add(0)
     while step < config.steps:
         for raw_batch in loader:
@@ -646,12 +662,12 @@ def train_guided_xvla(config: GuidedXVLATrainConfig) -> None:
                     **optimizer_metrics(optimizer),
                 }
                 print(json.dumps(metrics))
-                if wandb_run is not None: wandb_run.log({key: value for key, value in metrics.items() if key != "event"}, step=int(step))
+                if wandb_run is not None: wandb_run.log({key: value for key, value in metrics.items() if key != "event"} | _focus_metrics_from_train(action_stats), step=int(step))
                 progress.set_postfix({"loss": f"{float(total_loss.detach().item()):.4f}", "action": f"{action_stats['action_total']:.4f}", "expert": f"{expert_stats['expert_total']:.4f}"})
             if is_main and val_loader is not None and should_run_validation_step(step, config.steps, config.validation_freq, emitted_validation_steps):
                 val_metrics = {"event": "validation_step", "step": int(step), **_validation_metrics(config, runtime, policy, guidance_source, val_loader)}
                 print(json.dumps(val_metrics))
-                if wandb_run is not None: wandb_run.log({key: value for key, value in val_metrics.items() if key != "event"}, step=int(step))
+                if wandb_run is not None: wandb_run.log({key: value for key, value in val_metrics.items() if key != "event"} | _focus_metrics_from_val(val_metrics), step=int(step))
                 emitted_validation_steps.add(int(step))
             if is_main: _save_checkpoint(config, runtime, optimizer, step, final=False)
             progress.update(1)
