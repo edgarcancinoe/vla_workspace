@@ -16,7 +16,7 @@ from lerobot.policies.pretrained import T
 from lerobot.policies.xvla.modeling_xvla import XVLAModel, XVLAPolicy
 from lerobot.policies.xvla.soft_transformer import DomainAwareLinear, TransformerBlock, basic_init, timestep_embedding
 
-from thesis_vla.policies.xvla_guided.configuration_xvla_guided import XVLAGuidedConfig, normalize_guidance_fusion_mode
+from thesis_vla.policies.xvla_guided.configuration_xvla_guided import XVLAGuidedConfig
 from thesis_vla.visual_thought import DinoTokenSequenceModel
 from thesis_vla.visual_thought.cedirnet_decoder import CeDirNetDistillationModel
 from thesis_vla.visual_thought.config import CeDirNetDecoderConfig, CeDirNetTeacherConfig, DecoderStackConfig, DenseMapHeadConfig, DinoDecoderConfig, DinoTeacherConfig, ExpertQueryHeadConfig
@@ -47,6 +47,18 @@ def _build_guidance_decoder(config: XVLAGuidedConfig, projection_dim: int) -> tu
     return DinoTokenSequenceModel(student_vlm_dim=int(projection_dim), stack_cfg=decoder_cfg.stack), int(decoder_cfg.stack.decoder_dim)
 
 
+class GuidanceInterfaceProjector(nn.Module):
+    def __init__(self, hidden_size: int, num_tokens: int, num_heads: int, dropout: float = 0.0) -> None:
+        super().__init__()
+        self.query_vectors = nn.Parameter(torch.randn(int(num_tokens), int(hidden_size)) * 0.02)
+        self.cross_attn = nn.MultiheadAttention(int(hidden_size), num_heads=int(num_heads), batch_first=True, dropout=float(dropout))
+
+    def forward(self, guidance_tokens: torch.Tensor) -> torch.Tensor:
+        queries = self.query_vectors.unsqueeze(0).expand(guidance_tokens.shape[0], -1, -1)
+        update, _ = self.cross_attn(queries, guidance_tokens, guidance_tokens, need_weights=False)
+        return queries + update
+
+
 class GuidedSoftPromptedTransformer(nn.Module):
     def __init__(
         self,
@@ -65,16 +77,25 @@ class GuidedSoftPromptedTransformer(nn.Module):
         len_soft_prompts: int,
         max_len_seq: int,
         use_hetero_proj: bool,
-        guidance_fusion_mode: str,
-        guidance_gated: bool,
+        guidance_mode: str,
+        guidance_insertion_position: str,
+        guidance_use_interface_projection: bool,
+        guidance_interface_num_tokens: int | None,
+        guidance_concat_gating: bool,
+        guidance_selected_layers: tuple[int, ...] | list[int],
     ) -> None:
         super().__init__()
         self.hidden_size = int(hidden_size)
         self.dim_time = int(dim_time)
         self.len_soft_prompts = int(len_soft_prompts)
         self.use_hetero_proj = bool(use_hetero_proj)
-        self.guidance_fusion_mode = normalize_guidance_fusion_mode(guidance_fusion_mode, guidance_gated)
-        self.guidance_gated = self.guidance_fusion_mode.startswith("gated_")
+        self.guidance_mode = str(guidance_mode).lower()
+        self.guidance_insertion_position = str(guidance_insertion_position).lower()
+        self.guidance_use_interface_projection = bool(guidance_use_interface_projection)
+        self.guidance_concat_gating = bool(guidance_concat_gating)
+        self.guidance_selected_layers = tuple(sorted(set(int(idx) for idx in guidance_selected_layers)))
+        self.guidance_fusion_mode = "gated_concat" if self.guidance_mode == "concat" and self.guidance_concat_gating else self.guidance_mode
+        self.guidance_gated = bool(self.guidance_concat_gating)
         self.blocks = nn.ModuleList([TransformerBlock(hidden_size, num_heads, mlp_ratio=mlp_ratio) for _ in range(depth)])
         if self.use_hetero_proj:
             self.vlm_proj = DomainAwareLinear(multi_modal_input_size, hidden_size, num_domains=num_domains)
@@ -92,17 +113,17 @@ class GuidedSoftPromptedTransformer(nn.Module):
         if self.len_soft_prompts > 0:
             self.soft_prompt_hub = nn.Embedding(num_domains, self.len_soft_prompts * hidden_size)
             nn.init.normal_(self.soft_prompt_hub.weight, std=0.02)
-        if self.guidance_fusion_mode == "gated_concat": self.concat_gate = nn.Linear(hidden_size * 2, 1)
-        if self.guidance_fusion_mode in {"cross_attention", "gated_cross_attention"}:
-            self.cross_attn_query_norm = nn.LayerNorm(hidden_size)
-            self.cross_attn_guidance_norm = nn.LayerNorm(hidden_size)
-            self.cross_attn = nn.MultiheadAttention(hidden_size, num_heads=guidance_num_heads, batch_first=True, dropout=0.1)
-            if self.guidance_fusion_mode == "gated_cross_attention": self.cross_attn_gamma = nn.Parameter(torch.zeros(()))
+        self.concat_gate = nn.Linear(hidden_size * 2, 1) if self.guidance_concat_gating else None
+        self.guidance_interface = None if not self.guidance_use_interface_projection else GuidanceInterfaceProjector(hidden_size=hidden_size, num_tokens=int(guidance_interface_num_tokens or 0), num_heads=guidance_num_heads, dropout=0.1)
         self.apply(basic_init)
 
     def _project_guidance(self, guidance_tokens: torch.Tensor, domain_id: torch.LongTensor) -> torch.Tensor:
         if self.use_hetero_proj: return self.guidance_proj(guidance_tokens, domain_id)
         return self.guidance_proj(guidance_tokens)
+
+    def _prepare_guidance_context(self, guidance_tokens: torch.Tensor, domain_id: torch.LongTensor) -> torch.Tensor:
+        guidance_proj = self._project_guidance(guidance_tokens, domain_id)
+        return guidance_proj if self.guidance_interface is None else self.guidance_interface(guidance_proj)
 
     def _project_native_tokens(self, domain_id: torch.LongTensor, vlm_features: torch.Tensor, aux_visual_inputs: torch.Tensor, action_with_noise: torch.Tensor, proprio: torch.Tensor, t: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
         batch_size, num_actions = action_with_noise.shape[:2]
@@ -115,18 +136,15 @@ class GuidedSoftPromptedTransformer(nn.Module):
             return action_proj, self.vlm_proj(vlm_features, domain_id), self.aux_visual_proj(aux_visual_inputs, domain_id)
         return action_proj, self.vlm_proj(vlm_features), self.aux_visual_proj(aux_visual_inputs)
 
-    def _apply_concat_fusion(self, native_context: torch.Tensor, guidance_tokens: torch.Tensor) -> torch.Tensor:
-        if self.guidance_fusion_mode == "concat": return torch.cat([native_context, guidance_tokens], dim=1)
-        pooled_native = native_context.mean(dim=1)
-        pooled_guidance = guidance_tokens.mean(dim=1)
-        gate = torch.sigmoid(self.concat_gate(torch.cat([pooled_native, pooled_guidance], dim=-1))).view(-1, 1, 1)
-        return torch.cat([native_context, gate * guidance_tokens], dim=1)
-
-    def _apply_cross_attention_fusion(self, z_proj: torch.Tensor, guidance_tokens: torch.Tensor, guidance_available: torch.Tensor | None = None) -> torch.Tensor:
-        guidance_available = torch.ones((z_proj.shape[0], 1, 1), device=z_proj.device, dtype=z_proj.dtype) if guidance_available is None else guidance_available.to(device=z_proj.device, dtype=z_proj.dtype)
-        attn, _ = self.cross_attn(self.cross_attn_query_norm(z_proj), self.cross_attn_guidance_norm(guidance_tokens), self.cross_attn_guidance_norm(guidance_tokens), need_weights=False)
-        if self.guidance_fusion_mode == "gated_cross_attention": return z_proj + guidance_available * torch.tanh(self.cross_attn_gamma) * attn
-        return z_proj + guidance_available * attn
+    def _apply_concat_fusion(self, action_proj: torch.Tensor, z_proj: torch.Tensor, aux_proj: torch.Tensor, guidance_tokens: torch.Tensor) -> torch.Tensor:
+        appended = guidance_tokens
+        if self.concat_gate is not None:
+            pooled_visual = torch.cat([z_proj, aux_proj], dim=1).mean(dim=1)
+            pooled_guidance = guidance_tokens.mean(dim=1)
+            gate = torch.sigmoid(self.concat_gate(torch.cat([pooled_visual, pooled_guidance], dim=-1))).view(-1, 1, 1)
+            appended = gate * guidance_tokens
+        if self.guidance_insertion_position == "before_vlm": return torch.cat([action_proj, appended, z_proj, aux_proj], dim=1)
+        return torch.cat([action_proj, z_proj, aux_proj, appended], dim=1)
 
     def _append_soft_prompts(self, x: torch.Tensor, domain_id: torch.LongTensor) -> torch.Tensor:
         if self.len_soft_prompts <= 0: return x
@@ -138,29 +156,62 @@ class GuidedSoftPromptedTransformer(nn.Module):
         if "token_keep_mask" in inspect.signature(block.forward).parameters: return block(x, token_keep_mask=token_keep_mask)
         return block(x)
 
+    def _selected_layer_pos_start(self, action_len: int, base_nonsoft_len: int) -> int:
+        return int(action_len) if self.guidance_insertion_position == "before_vlm" else int(base_nonsoft_len)
+
+    def _selected_layer_keep_mask(self, x: torch.Tensor, guidance_keep_mask: torch.Tensor, action_len: int, visual_len: int) -> torch.Tensor:
+        soft_len = int(x.shape[1] - (action_len + visual_len))
+        base_mask = torch.ones((x.shape[0], action_len + visual_len), device=x.device, dtype=torch.bool)
+        soft_mask = torch.ones((x.shape[0], soft_len), device=x.device, dtype=torch.bool) if soft_len > 0 else base_mask[:, 0:0]
+        if self.guidance_insertion_position == "before_vlm": 
+            return torch.cat([base_mask[:, :action_len], guidance_keep_mask, base_mask[:, action_len:], soft_mask], dim=1)
+        return torch.cat([base_mask, guidance_keep_mask, soft_mask], dim=1)
+
+    def _run_selected_layer_with_guidance(self, block: nn.Module, x: torch.Tensor, guidance_tokens: torch.Tensor, guidance_available: torch.Tensor, *, action_len: int, visual_len: int, base_nonsoft_len: int) -> torch.Tensor:
+        guidance_len = int(guidance_tokens.shape[1]); soft_len = int(x.shape[1] - (action_len + visual_len)); pos_start = self._selected_layer_pos_start(action_len, base_nonsoft_len)
+        if pos_start + guidance_len > self.pos_emb.shape[1]: raise ValueError(f"Guidance insertion requires positional slots up to {pos_start + guidance_len}, exceeding max_len_seq={self.pos_emb.shape[1]}.")
+        guidance_with_pos = guidance_tokens + self.pos_emb[:, pos_start : pos_start + guidance_len, :]
+        x_action = x[:, :action_len]; x_visual = x[:, action_len : action_len + visual_len]; x_soft = x[:, action_len + visual_len :] if soft_len > 0 else x[:, 0:0]
+        guidance_keep_mask = guidance_available.view(-1, 1).to(dtype=torch.bool).expand(-1, guidance_len)
+        if self.guidance_insertion_position == "before_vlm":
+            y = self._run_block(block, torch.cat([x_action, guidance_with_pos, x_visual, x_soft], dim=1), token_keep_mask=self._selected_layer_keep_mask(x, guidance_keep_mask, action_len, visual_len))
+            y_action = y[:, :action_len]; y_visual = y[:, action_len + guidance_len : action_len + guidance_len + visual_len]; y_soft = y[:, action_len + guidance_len + visual_len :] if soft_len > 0 else y[:, 0:0]
+        else:
+            y = self._run_block(block, torch.cat([x_action, x_visual, guidance_with_pos, x_soft], dim=1), token_keep_mask=self._selected_layer_keep_mask(x, guidance_keep_mask, action_len, visual_len))
+            y_action = y[:, :action_len]; y_visual = y[:, action_len : action_len + visual_len]; y_soft = y[:, action_len + visual_len + guidance_len :] if soft_len > 0 else y[:, 0:0]
+        return torch.cat([y_action, y_visual, y_soft], dim=1)
+
     def forward(self, *, domain_id: torch.LongTensor, vlm_features: torch.Tensor, aux_visual_inputs: torch.Tensor, guidance_tokens: torch.Tensor, guidance_available: torch.Tensor | None = None, action_with_noise: torch.Tensor, proprio: torch.Tensor, t: torch.Tensor) -> torch.Tensor:
         action_proj, z_proj, aux_proj = self._project_native_tokens(domain_id, vlm_features, aux_visual_inputs, action_with_noise, proprio, t)
-        guidance_proj = self._project_guidance(guidance_tokens, domain_id)
-        guidance_available = torch.ones((guidance_proj.shape[0], 1, 1), device=guidance_proj.device, dtype=guidance_proj.dtype) if guidance_available is None else guidance_available.to(device=guidance_proj.device, dtype=guidance_proj.dtype)
-        token_keep_mask = None
-        if self.guidance_fusion_mode in {"concat", "gated_concat"}:
-            native_context = torch.cat([action_proj, z_proj, aux_proj], dim=1)
-            guidance_proj = guidance_proj * guidance_available
-            x = self._apply_concat_fusion(native_context, guidance_proj)
-            native_keep_mask = torch.ones((native_context.shape[0], native_context.shape[1]), device=guidance_proj.device, dtype=torch.bool)
-            guidance_keep_mask = guidance_available.view(-1, 1).to(dtype=torch.bool).expand(-1, guidance_proj.shape[1])
-            token_keep_mask = torch.cat([native_keep_mask, guidance_keep_mask], dim=1)
+        guidance_context = self._prepare_guidance_context(guidance_tokens, domain_id)
+        guidance_available = torch.ones((guidance_context.shape[0], 1, 1), device=guidance_context.device, dtype=guidance_context.dtype) if guidance_available is None else guidance_available.to(device=guidance_context.device, dtype=guidance_context.dtype)
+        if self.guidance_mode == "concat":
+            guidance_context = guidance_context * guidance_available
+            x = self._apply_concat_fusion(action_proj, z_proj, aux_proj, guidance_context)
+            seq_len = x.shape[1]
+            if seq_len > self.pos_emb.shape[1]: raise ValueError(f"Sequence length {seq_len} exceeds max_len_seq={self.pos_emb.shape[1]}.")
+            x = x + self.pos_emb[:, :seq_len, :]
+            token_keep_mask = None
+            guidance_keep_mask = guidance_available.view(-1, 1).to(dtype=torch.bool).expand(-1, guidance_context.shape[1])
+            native_keep_mask = torch.ones((x.shape[0], action_proj.shape[1] + z_proj.shape[1] + aux_proj.shape[1]), device=x.device, dtype=torch.bool)
+            if self.guidance_insertion_position == "before_vlm":
+                token_keep_mask = torch.cat([native_keep_mask[:, : action_proj.shape[1]], guidance_keep_mask, native_keep_mask[:, action_proj.shape[1] :]], dim=1)
+            else:
+                token_keep_mask = torch.cat([native_keep_mask, guidance_keep_mask], dim=1)
+            x = self._append_soft_prompts(x, domain_id)
+            if self.len_soft_prompts > 0:
+                prompt_keep_mask = torch.ones((token_keep_mask.shape[0], self.len_soft_prompts), device=token_keep_mask.device, dtype=torch.bool)
+                token_keep_mask = torch.cat([token_keep_mask, prompt_keep_mask], dim=1)
+            for block in self.blocks: x = self._run_block(block, x, token_keep_mask=token_keep_mask)
         else:
-            z_guided = self._apply_cross_attention_fusion(z_proj, guidance_proj, guidance_available)
-            x = torch.cat([action_proj, z_guided, aux_proj], dim=1)
-        seq_len = x.shape[1]
-        if seq_len > self.pos_emb.shape[1]: raise ValueError(f"Sequence length {seq_len} exceeds max_len_seq={self.pos_emb.shape[1]}.")
-        x = x + self.pos_emb[:, :seq_len, :]
-        x = self._append_soft_prompts(x, domain_id)
-        if token_keep_mask is not None and self.len_soft_prompts > 0:
-            prompt_keep_mask = torch.ones((token_keep_mask.shape[0], self.len_soft_prompts), device=token_keep_mask.device, dtype=torch.bool)
-            token_keep_mask = torch.cat([token_keep_mask, prompt_keep_mask], dim=1)
-        for block in self.blocks: x = self._run_block(block, x, token_keep_mask=token_keep_mask)
+            x = torch.cat([action_proj, z_proj, aux_proj], dim=1)
+            base_nonsoft_len = int(x.shape[1]); visual_len = int(z_proj.shape[1] + aux_proj.shape[1]); action_len = int(action_proj.shape[1])
+            if base_nonsoft_len > self.pos_emb.shape[1]: raise ValueError(f"Sequence length {base_nonsoft_len} exceeds max_len_seq={self.pos_emb.shape[1]}.")
+            x = x + self.pos_emb[:, :base_nonsoft_len, :]
+            x = self._append_soft_prompts(x, domain_id)
+            guidance_context = guidance_context * guidance_available
+            for idx, block in enumerate(self.blocks):
+                x = self._run_selected_layer_with_guidance(block, x, guidance_context, guidance_available, action_len=action_len, visual_len=visual_len, base_nonsoft_len=base_nonsoft_len) if idx in self.guidance_selected_layers else self._run_block(block, x)
         return self.action_decoder(self.norm(x[:, : action_with_noise.shape[1]]), domain_id)
 
 
@@ -187,8 +238,12 @@ class XVLAGuidedModel(XVLAModel):
             len_soft_prompts=config.len_soft_prompts,
             max_len_seq=config.max_len_seq,
             use_hetero_proj=config.use_hetero_proj,
-            guidance_fusion_mode=config.guidance_fusion_mode,
-            guidance_gated=config.guidance_gated,
+            guidance_mode=config.guidance_mode,
+            guidance_insertion_position=config.guidance_insertion_position,
+            guidance_use_interface_projection=config.guidance_use_interface_projection,
+            guidance_interface_num_tokens=config.guidance_appended_num_tokens if config.guidance_use_interface_projection else None,
+            guidance_concat_gating=config.guidance_concat_gating,
+            guidance_selected_layers=config.guidance_selected_layers,
         )
         self._apply_freezing()
         self.set_guidance_trainability(step=0)

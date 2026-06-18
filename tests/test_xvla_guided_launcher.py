@@ -1,7 +1,8 @@
 from pathlib import Path
 import sys
 
-sys.path.append(str(Path(__file__).resolve().parents[1] / "src"))
+for candidate in [Path(__file__).resolve().parents[2] / "repos" / "lerobot" / "src", Path(__file__).resolve().parents[1] / "lerobot" / "src", Path(__file__).resolve().parents[1] / "src"]:
+    if candidate.exists(): sys.path.insert(0, str(candidate))
 
 from thesis_vla.training.xvla_guided_launcher import GuidedExperimentSpec, GuidedLaunchConfig, GuidedRuntimeConfig, build_training_command, resolve_experiment
 
@@ -12,6 +13,8 @@ def test_guided_launcher_resolves_stage_defaults(tmp_path):
     assert resolved.dataset_repo_id == "tester/dataset"
     assert resolved.action_mode is None
     assert resolved.fusion_mode == "concat"
+    assert resolved.guidance_mode == "concat"
+    assert resolved.guidance_insertion_position == "after_visual"
     assert resolved.guidance_train_mode == "frozen"
     assert resolved.guidance_unfreeze_step == 1000
     assert resolved.guidance_dropout_prob == 0.15
@@ -32,10 +35,12 @@ def test_guided_launcher_resolves_stage_defaults(tmp_path):
 
 def test_guided_launcher_maps_legacy_gated_fusion(tmp_path, tmp_path_factory):
     stage_cfg = tmp_path / "guided_stage.yaml"
-    stage_cfg.write_text("fusion_mode: cross_attn\ngated_fusion: true\n")
+    stage_cfg.write_text("fusion_mode: concat\ngated_fusion: true\n")
     defaults = GuidedLaunchConfig(hf_user="tester", dataset_name="dataset", xvla_init_path="lerobot/xvla-base", decoder_init_path="/tmp/decoder", guided_stage_config_path=str(stage_cfg))
     resolved = resolve_experiment(tmp_path_factory.mktemp("workspace"), defaults, GuidedExperimentSpec())
-    assert resolved.fusion_mode == "gated_cross_attention"
+    assert resolved.fusion_mode == "gated_concat"
+    assert resolved.guidance_mode == "concat"
+    assert resolved.guidance_concat_gating is True
 
 
 def test_guided_launcher_allows_wandb_override(tmp_path):
@@ -55,14 +60,25 @@ def test_guided_launcher_allows_action_mode_and_scheduler_override(tmp_path):
 
 def test_guided_launcher_resolves_dino_guidance_expert(tmp_path):
     stage_cfg = tmp_path / "dino_guided_stage.yaml"
-    stage_cfg.write_text("fusion_mode: cross_attention\nguidance_train_mode: train_from_start\n")
+    stage_cfg.write_text("guidance_mode: selected_layers\nguidance_selected_layers: [1]\nguidance_train_mode: train_from_start\n")
     defaults = GuidedLaunchConfig(hf_user="tester", dataset_name="dataset", xvla_init_path="lerobot/xvla-base", decoder_init_path="/tmp/decoder")
     resolved = resolve_experiment(tmp_path, defaults, GuidedExperimentSpec(guidance_expert_type="dino", guided_stage_config_path=str(stage_cfg)))
     assert resolved.guidance_expert_type == "dino"
     assert resolved.decoder_stack_config_path.endswith("dino_stack.yaml")
     assert resolved.decoder_task_config_path.endswith("dino_decoder.yaml")
-    assert resolved.fusion_mode == "cross_attention"
+    assert resolved.guidance_mode == "selected_layers"
+    assert resolved.guidance_selected_layers == (1,)
     assert resolved.guidance_train_mode == "train_from_start"
+
+
+def test_guided_launcher_supports_interface_and_position_overrides(tmp_path):
+    defaults = GuidedLaunchConfig(hf_user="tester", dataset_name="dataset", xvla_init_path="lerobot/xvla-base", decoder_init_path="/tmp/decoder")
+    resolved = resolve_experiment(tmp_path, defaults, GuidedExperimentSpec(guidance_mode="concat", guidance_insertion_position="before_vlm", guidance_use_interface_projection=True, guidance_interface_num_tokens=4, guidance_concat_gating=True))
+    assert resolved.guidance_mode == "concat"
+    assert resolved.guidance_insertion_position == "before_vlm"
+    assert resolved.guidance_use_interface_projection is True
+    assert resolved.guidance_interface_num_tokens == 4
+    assert resolved.guidance_concat_gating is True
 
 
 def test_guided_launcher_allows_normalization_and_resume_override(tmp_path):

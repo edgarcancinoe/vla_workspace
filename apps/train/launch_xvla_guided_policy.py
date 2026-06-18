@@ -134,7 +134,9 @@ FOLD_CEDIRNET_GUIDANCE = [
         dataset_revision=CLOTH_FOLD_DS[1],
         xvla_init_path=JOINT_CEDIRNET_FOLD_XVLA_INIT,
         decoder_init_path=JOINT_CEDIRNET_FOLD_DECODER_INIT,
-        fusion_mode="cross_attention",
+        guidance_mode="selected_layers",
+        guidance_insertion_position="before_vlm",
+        guidance_selected_layers=(11,),
     ),
     GuidedExperimentSpec(
         name=FOLD_GATED_CROSS_ATTN_NAME,
@@ -143,7 +145,9 @@ FOLD_CEDIRNET_GUIDANCE = [
         dataset_revision=CLOTH_FOLD_DS[1],
         xvla_init_path=JOINT_CEDIRNET_FOLD_XVLA_INIT,
         decoder_init_path=JOINT_CEDIRNET_FOLD_DECODER_INIT,
-        fusion_mode="gated_cross_attention",
+        guidance_mode="selected_layers",
+        guidance_insertion_position="after_visual",
+        guidance_selected_layers=(11,),
     ),
     GuidedExperimentSpec(
         name=FOLD_CONCAT_NAME,
@@ -191,7 +195,9 @@ BOX_CEDIRNET_GUIDANCE = [
         dataset_revision=CLOTH_BOX_DS[1],
         xvla_init_path=JOINT_CEDIRNET_BOX_XVLA_INIT,
         decoder_init_path=JOINT_CEDIRNET_BOX_DECODER_INIT,
-        fusion_mode="cross_attention",
+        guidance_mode="selected_layers",
+        guidance_insertion_position="before_vlm",
+        guidance_selected_layers=(11,),
     ),
     GuidedExperimentSpec(
         name=BOX_GATED_CROSS_ATTN_NAME,
@@ -200,7 +206,9 @@ BOX_CEDIRNET_GUIDANCE = [
         dataset_revision=CLOTH_BOX_DS[1],
         xvla_init_path=JOINT_CEDIRNET_BOX_XVLA_INIT,
         decoder_init_path=JOINT_CEDIRNET_BOX_DECODER_INIT,
-        fusion_mode="gated_cross_attention",
+        guidance_mode="selected_layers",
+        guidance_insertion_position="after_visual",
+        guidance_selected_layers=(11,),
     ),
 ]
 
@@ -212,7 +220,9 @@ FOLD_BOTH_CEDIRNET_DINO_GUIDANCE = [
         dataset_revision=CLOTH_FOLD_DS[1],
         xvla_init_path=BOTH_CEDIRNET_DINO_FOLD_XVLA_INIT,
         decoder_init_path=BOTH_CEDIRNET_DINO_FOLD_DECODER_INIT,
-        fusion_mode="cross_attention",
+        guidance_mode="selected_layers",
+        guidance_insertion_position="before_vlm",
+        guidance_selected_layers=(11,),
     ),
     GuidedExperimentSpec(
         name=FOLD_BOTH_GATED_CROSS_ATTN_NAME,
@@ -221,7 +231,9 @@ FOLD_BOTH_CEDIRNET_DINO_GUIDANCE = [
         dataset_revision=CLOTH_FOLD_DS[1],
         xvla_init_path=BOTH_CEDIRNET_DINO_FOLD_XVLA_INIT,
         decoder_init_path=BOTH_CEDIRNET_DINO_FOLD_DECODER_INIT,
-        fusion_mode="gated_cross_attention",
+        guidance_mode="selected_layers",
+        guidance_insertion_position="after_visual",
+        guidance_selected_layers=(11,),
     ),
 ]
 
@@ -233,7 +245,9 @@ BOX_BOTH_CEDIRNET_DINO_GUIDANCE = [
         dataset_revision=CLOTH_BOX_DS[1],
         xvla_init_path=BOTH_CEDIRNET_DINO_BOX_XVLA_INIT,
         decoder_init_path=BOTH_CEDIRNET_DINO_BOX_DECODER_INIT,
-        fusion_mode="cross_attention",
+        guidance_mode="selected_layers",
+        guidance_insertion_position="before_vlm",
+        guidance_selected_layers=(11,),
     ),
     GuidedExperimentSpec(
         name=BOX_BOTH_GATED_CROSS_ATTN_NAME,
@@ -242,7 +256,9 @@ BOX_BOTH_CEDIRNET_DINO_GUIDANCE = [
         dataset_revision=CLOTH_BOX_DS[1],
         xvla_init_path=BOTH_CEDIRNET_DINO_BOX_XVLA_INIT,
         decoder_init_path=BOTH_CEDIRNET_DINO_BOX_DECODER_INIT,
-        fusion_mode="gated_cross_attention",
+        guidance_mode="selected_layers",
+        guidance_insertion_position="after_visual",
+        guidance_selected_layers=(11,),
     ),
 ]
 

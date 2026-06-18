@@ -4,7 +4,8 @@ import sys
 import torch
 from torch import nn
 
-sys.path.append(str(Path(__file__).resolve().parents[1] / "src"))
+for candidate in [Path(__file__).resolve().parents[2] / "repos" / "lerobot" / "src", Path(__file__).resolve().parents[1] / "lerobot" / "src", Path(__file__).resolve().parents[1] / "src"]:
+    if candidate.exists(): sys.path.insert(0, str(candidate))
 
 from lerobot.policies.xvla.action_contract import build_slice_map, get_so101_slice_spec
 from lerobot.policies.xvla.modeling_xvla import pad_tensor_along_dim, pad_vector

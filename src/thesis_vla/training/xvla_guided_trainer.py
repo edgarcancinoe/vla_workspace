@@ -19,7 +19,7 @@ from lerobot.datasets.factory import resolve_delta_timestamps
 from lerobot.datasets.lerobot_dataset import LeRobotDataset, LeRobotDatasetMetadata
 from lerobot.policies.xvla.action_contract import get_so101_slice_spec
 from lerobot.policies.xvla.modeling_xvla import XVLAPolicy
-from thesis_vla.policies.xvla_guided.configuration_xvla_guided import normalize_guidance_fusion_mode
+from thesis_vla.policies.xvla_guided.configuration_xvla_guided import guidance_mode_from_fusion_alias, normalize_guidance_fusion_mode, normalize_guidance_insertion_position, normalize_guidance_mode
 from thesis_vla.inference.xvla_runtime import make_xvla_runtime_processors, resolve_xvla_rename_map, sync_xvla_policy_config
 from thesis_vla.training.visual_thought_trainer import JointTrainingState, XVLA_GRAD_CLIP_NORM, XVLARuntime, _as_device, _resolve_dataset_root, _resolve_teacher_image_key, _set_seed, apply_normalization_mapping_override, ensure_xvla_slice_step, get_teacher_images, load_saved_trainer_state, optimizer_metrics, preprocess_batch, resolve_resume_checkpoint, restore_optimizer_state, should_run_validation_step, step_optimizer, trainer_state_dict, zero_optimizer_grad
 from thesis_vla.visual_thought import load_cedirnet_decoder_config, load_dino_decoder_config
@@ -68,6 +68,12 @@ class GuidedXVLATrainConfig:
     normalization_mapping: str = '{"ACTION": "MEAN_STD", "STATE": "MEAN_STD", "VISUAL": "IDENTITY"}'
     fusion_mode: str = "concat"
     gated_fusion: bool | None = None
+    guidance_mode: str | None = None
+    guidance_insertion_position: str = "after_visual"
+    guidance_use_interface_projection: bool = False
+    guidance_interface_num_tokens: int | None = None
+    guidance_concat_gating: bool = False
+    guidance_selected_layers: tuple[int, ...] = ()
     guidance_train_mode: str = "frozen"
     guidance_unfreeze_step: int = 1_000
     guidance_dropout_prob: float = 0.15
@@ -93,6 +99,17 @@ class GuidedXVLATrainConfig:
 
     def __post_init__(self) -> None:
         self.fusion_mode = normalize_guidance_fusion_mode(self.fusion_mode, self.gated_fusion)
+        if self.guidance_mode is None:
+            self.guidance_mode, gated_from_alias = guidance_mode_from_fusion_alias(self.fusion_mode, self.gated_fusion)
+            if self.guidance_mode == "concat": self.guidance_concat_gating = bool(gated_from_alias)
+        self.guidance_mode = normalize_guidance_mode(self.guidance_mode)
+        self.guidance_insertion_position = normalize_guidance_insertion_position(self.guidance_insertion_position)
+        self.guidance_selected_layers = tuple(sorted(set(int(idx) for idx in self.guidance_selected_layers)))
+        if self.guidance_interface_num_tokens is not None and int(self.guidance_interface_num_tokens) <= 0: raise ValueError("guidance_interface_num_tokens must be > 0 when provided.")
+        if self.guidance_mode == "selected_layers":
+            if self.guidance_use_interface_projection: raise ValueError("selected_layers mode does not support guidance_use_interface_projection in v1.")
+            if self.guidance_concat_gating: raise ValueError("selected_layers mode does not support guidance_concat_gating in v1.")
+            if len(self.guidance_selected_layers) == 0: raise ValueError("selected_layers mode requires a non-empty guidance_selected_layers tuple.")
         if self.guidance_expert_type not in {"cedirnet", "dino"}: raise ValueError(f"guidance_expert_type must be one of: cedirnet, dino. Got {self.guidance_expert_type!r}.")
         if not 0.0 <= float(self.guidance_dropout_prob) <= 1.0: raise ValueError("guidance_dropout_prob must be in [0, 1].")
         if not 0.0 <= float(self.guidance_noise_prob) <= 1.0: raise ValueError("guidance_noise_prob must be in [0, 1].")
@@ -252,6 +269,12 @@ def _resume_check(field_name: str, current_value, saved_value) -> None:
 def assert_guided_resume_compatible(config: GuidedXVLATrainConfig, snapshot: dict[str, Any]) -> None:
     _resume_check("guidance_expert_type", config.guidance_expert_type, snapshot.get("guidance_expert_type"))
     _resume_check("fusion_mode", config.fusion_mode, snapshot.get("fusion_mode"))
+    _resume_check("guidance_mode", config.guidance_mode, snapshot.get("guidance_mode"))
+    _resume_check("guidance_insertion_position", config.guidance_insertion_position, snapshot.get("guidance_insertion_position"))
+    _resume_check("guidance_use_interface_projection", bool(config.guidance_use_interface_projection), snapshot.get("guidance_use_interface_projection"))
+    _resume_check("guidance_interface_num_tokens", config.guidance_interface_num_tokens, snapshot.get("guidance_interface_num_tokens"))
+    _resume_check("guidance_concat_gating", bool(config.guidance_concat_gating), snapshot.get("guidance_concat_gating"))
+    _resume_check("guidance_selected_layers", tuple(config.guidance_selected_layers), snapshot.get("guidance_selected_layers"))
     _resume_check("guidance_train_mode", config.guidance_train_mode, snapshot.get("guidance_train_mode"))
     _resume_check("guidance_unfreeze_step", int(config.guidance_unfreeze_step), snapshot.get("guidance_unfreeze_step"))
     _resume_check("guidance_dropout_prob", float(config.guidance_dropout_prob), snapshot.get("guidance_dropout_prob"))
@@ -292,8 +315,12 @@ def _init_guided_policy_from_base(runtime: XVLARuntime, config: GuidedXVLATrainC
         guidance_decoder_stack=stack_payload,
         guidance_decoder_head=head_payload,
         guidance_decoder_teacher=teacher_payload,
-        guidance_fusion_mode=config.fusion_mode,
-        guidance_gated=bool(config.gated_fusion),
+        guidance_mode=config.guidance_mode,
+        guidance_insertion_position=config.guidance_insertion_position,
+        guidance_use_interface_projection=bool(config.guidance_use_interface_projection),
+        guidance_interface_num_tokens=config.guidance_interface_num_tokens,
+        guidance_concat_gating=bool(config.guidance_concat_gating),
+        guidance_selected_layers=config.guidance_selected_layers,
         guidance_train_mode=config.guidance_train_mode,
         guidance_unfreeze_step=config.guidance_unfreeze_step,
     )
@@ -388,7 +415,7 @@ def _optional_scalar(module, attr_name: str) -> float | None:
 
 @torch.no_grad()
 def _concat_gate_stats(transformer, native_context: torch.Tensor, guidance_tokens: torch.Tensor) -> dict[str, float]:
-    if getattr(transformer, "guidance_fusion_mode", None) != "gated_concat" or not hasattr(transformer, "concat_gate"): return {}
+    if getattr(transformer, "guidance_fusion_mode", None) != "gated_concat" or not hasattr(transformer, "concat_gate") or transformer.concat_gate is None: return {}
     pooled_native = native_context.mean(dim=1)
     pooled_guidance = guidance_tokens.mean(dim=1)
     gate = torch.sigmoid(transformer.concat_gate(torch.cat([pooled_native, pooled_guidance], dim=-1))).view(-1)
@@ -406,7 +433,7 @@ def collect_guidance_debug_metrics(policy, processed_batch: dict[str, Any], conf
     targets, t, action_noisy_m, enc, guidance_tokens, guidance_tokens_used, _, proprio_m = _prepare_guided_transformer_inputs(policy, processed_batch, inputs, enc, config=config, guidance_mode="guided")
     transformer = policy.model.transformer
     action_proj, z_proj, aux_proj = transformer._project_native_tokens(inputs["domain_id"], enc["vlm_features"], enc["aux_visual_inputs"], action_noisy_m, proprio_m, t)
-    guidance_proj = transformer._project_guidance(guidance_tokens_used, inputs["domain_id"])
+    guidance_proj = transformer._prepare_guidance_context(guidance_tokens_used, inputs["domain_id"])
     guidance_available_guided = torch.ones((guidance_tokens.shape[0], 1, 1), device=guidance_tokens.device, dtype=guidance_tokens.dtype)
     guidance_available_disabled = torch.zeros_like(guidance_available_guided)
     pred_guided = transformer(domain_id=inputs["domain_id"], action_with_noise=action_noisy_m, t=t, proprio=proprio_m, guidance_tokens=guidance_tokens_used, guidance_available=guidance_available_guided, **enc)
