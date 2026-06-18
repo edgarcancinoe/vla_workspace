@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import csv
 import dataclasses
 import json
 import math
@@ -385,6 +386,33 @@ def _focus_metrics_from_val(metrics: dict[str, float]) -> dict[str, float]:
     return focus
 
 
+def _append_validation_summary(config: GuidedXVLATrainConfig, val_metrics: dict[str, float], *, step: int) -> None:
+    summary_path = Path(config.output_dir) / "validation_summary.csv"
+    columns = [
+        "step",
+        "val_loss",
+        "val_action_total",
+        "val_expert_total",
+        "val_position_loss",
+        "val_rotate6D_loss",
+        "val_gripper_loss",
+        "val_no_guidance_loss",
+        "val_no_guidance_action_total",
+        "val_no_guidance_expert_total",
+        "val_no_guidance_position_loss",
+        "val_no_guidance_rotate6D_loss",
+        "val_no_guidance_gripper_loss",
+    ]
+    row = {"step": int(step)}
+    for key in columns[1:]:
+        row[key] = val_metrics.get(key)
+    write_header = not summary_path.exists()
+    with summary_path.open("a", newline="") as handle:
+        writer = csv.DictWriter(handle, fieldnames=columns)
+        if write_header: writer.writeheader()
+        writer.writerow(row)
+
+
 def _transformer_dtype(transformer, fallback: torch.Tensor) -> torch.dtype:
     transformer_parameter = next(transformer.parameters(), None)
     return transformer_parameter.dtype if transformer_parameter is not None else fallback.dtype
@@ -629,6 +657,7 @@ def train_guided_xvla(config: GuidedXVLATrainConfig) -> None:
     if is_main and step == 0 and val_loader is not None and should_run_validation_step(0, config.steps, config.validation_freq, emitted_validation_steps):
         val_metrics = {"event": "validation_step", "step": 0, **_validation_metrics(config, runtime, runtime.policy, guidance_source, val_loader)}
         print(json.dumps(val_metrics))
+        _append_validation_summary(config, val_metrics, step=0)
         if wandb_run is not None: wandb_run.log({key: value for key, value in val_metrics.items() if key != "event"} | _focus_metrics_from_val(val_metrics), step=0)
         emitted_validation_steps.add(0)
     while step < config.steps:
@@ -667,6 +696,7 @@ def train_guided_xvla(config: GuidedXVLATrainConfig) -> None:
             if is_main and val_loader is not None and should_run_validation_step(step, config.steps, config.validation_freq, emitted_validation_steps):
                 val_metrics = {"event": "validation_step", "step": int(step), **_validation_metrics(config, runtime, policy, guidance_source, val_loader)}
                 print(json.dumps(val_metrics))
+                _append_validation_summary(config, val_metrics, step=int(step))
                 if wandb_run is not None: wandb_run.log({key: value for key, value in val_metrics.items() if key != "event"} | _focus_metrics_from_val(val_metrics), step=int(step))
                 emitted_validation_steps.add(int(step))
             if is_main: _save_checkpoint(config, runtime, optimizer, step, final=False)
