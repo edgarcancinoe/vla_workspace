@@ -192,14 +192,15 @@ class GuidedSoftPromptedTransformer(nn.Module):
             if seq_len > self.pos_emb.shape[1]: raise ValueError(f"Sequence length {seq_len} exceeds max_len_seq={self.pos_emb.shape[1]}.")
             x = x + self.pos_emb[:, :seq_len, :]
             token_keep_mask = None
-            guidance_keep_mask = guidance_available.view(-1, 1).to(dtype=torch.bool).expand(-1, guidance_context.shape[1])
-            native_keep_mask = torch.ones((x.shape[0], action_proj.shape[1] + z_proj.shape[1] + aux_proj.shape[1]), device=x.device, dtype=torch.bool)
-            if self.guidance_insertion_position == "before_vlm":
-                token_keep_mask = torch.cat([native_keep_mask[:, : action_proj.shape[1]], guidance_keep_mask, native_keep_mask[:, action_proj.shape[1] :]], dim=1)
-            else:
-                token_keep_mask = torch.cat([native_keep_mask, guidance_keep_mask], dim=1)
+            if bool((guidance_available.view(-1) <= 0).any().item()):
+                guidance_keep_mask = guidance_available.view(-1, 1).to(dtype=torch.bool).expand(-1, guidance_context.shape[1])
+                native_keep_mask = torch.ones((x.shape[0], action_proj.shape[1] + z_proj.shape[1] + aux_proj.shape[1]), device=x.device, dtype=torch.bool)
+                if self.guidance_insertion_position == "before_vlm":
+                    token_keep_mask = torch.cat([native_keep_mask[:, : action_proj.shape[1]], guidance_keep_mask, native_keep_mask[:, action_proj.shape[1] :]], dim=1)
+                else:
+                    token_keep_mask = torch.cat([native_keep_mask, guidance_keep_mask], dim=1)
             x = self._append_soft_prompts(x, domain_id)
-            if self.len_soft_prompts > 0:
+            if token_keep_mask is not None and self.len_soft_prompts > 0:
                 prompt_keep_mask = torch.ones((token_keep_mask.shape[0], self.len_soft_prompts), device=token_keep_mask.device, dtype=torch.bool)
                 token_keep_mask = torch.cat([token_keep_mask, prompt_keep_mask], dim=1)
             for block in self.blocks: x = self._run_block(block, x, token_keep_mask=token_keep_mask)
