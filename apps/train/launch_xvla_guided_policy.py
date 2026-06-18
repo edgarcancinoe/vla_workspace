@@ -75,25 +75,6 @@ CLOTH_FOLD_DS = ("cloth-corner-fold_7p5hz",     "main")
 CLOTH_BOX_DS = ("cloth-corner-box_7p5hz",      "main")
 # =====================================================================================
 
-# EXP NAMING
-# =====================================================================================
-FOLD_CONCAT_NAME              = f"expl_cedir_concat_{RUN_TS}_cloth_fold"
-FOLD_GATED_CONCAT_NAME        = f"expl_cedir_g-concat_{RUN_TS}_cloth_fold"
-FOLD_CROSS_ATTN_NAME          = f"expl_cedir_ca_{RUN_TS}_cloth_fold"
-FOLD_GATED_CROSS_ATTN_NAME    = f"expl_cedir_g-ca_{RUN_TS}_cloth_fold"
-
-BOX_CONCAT_NAME              = f"expl_cedir_concat_{RUN_TS}_cloth_box"
-BOX_GATED_CONCAT_NAME        = f"expl_cedir_g-concat_{RUN_TS}_cloth_box"
-BOX_CROSS_ATTN_NAME          = f"expl_cedir_ca_{RUN_TS}_cloth_box"
-BOX_GATED_CROSS_ATTN_NAME    = f"expl_cedir_g-ca_{RUN_TS}_cloth_box"
-
-FOLD_BOTH_CROSS_ATTN_NAME        = f"expl_both_cedir_dino_ca_{RUN_TS}_cloth_fold"
-FOLD_BOTH_GATED_CROSS_ATTN_NAME  = f"expl_both_cedir_dino_g-ca_{RUN_TS}_cloth_fold"
-BOX_BOTH_CROSS_ATTN_NAME        = f"expl_both_cedir_dino_ca_{RUN_TS}_cloth_box"
-BOX_BOTH_GATED_CROSS_ATTN_NAME  = f"expl_both_cedir_dino_g-ca_{RUN_TS}_cloth_box"
-
-# =====================================================================================
-
 # JOINT PRETRAINED CEDIRNET FOLD CHECKPOINT
 # =====================================================================================
 OUT = "/home/jose/EMAI-Thesis/vla_workspace/runtime/outputs/train/Implicit Models/Excel"
@@ -131,7 +112,7 @@ BOTH_CEDIRNET_DINO_BOX_DECODER_INIT = BOTH_CEDIRNET_DINO_BOX_CHECKPOINT_ROOT
 TASK_SUFFIX = {"fold": "cloth_fold", "box": "cloth_box"}
 TASK_DATASET = {"fold": CLOTH_FOLD_DS, "box": CLOTH_BOX_DS}
 NAME_PREFIX = {"cedirnet": "expl_cedir", "both": "expl_both_cedir_dino"}
-MODE_TAG = {"concat": "concat", "gated_concat": "g-concat", "selected_before": "ca", "selected_after": "g-ca"}
+MODE_TAG = {"concat_after": "concat_after_visual", "concat_before": "concat_before_vlm"}
 XVLA_BASE = {
     ("cedirnet", "fold"): JOINT_CEDIRNET_FOLD_XVLA_INIT,
     ("cedirnet", "box"): JOINT_CEDIRNET_BOX_XVLA_INIT,
@@ -163,162 +144,40 @@ def resolve_xvla_base(task: str = "fold", family: str = "cedirnet") -> str:
 def resolve_decoder_base(task: str = "fold", family: str = "cedirnet") -> str:
     return DECODER_BASE[(family, task)]
 
+def guided_spec(task: str, mode: str, position: str, family: str = "cedirnet") -> GuidedExperimentSpec:
+    name = run_name(task, mode, family)
+    return GuidedExperimentSpec(
+        name=name,
+        wandb_run_name=name,
+        dataset_name=resolve_ds(task)[0],
+        dataset_revision=resolve_ds(task)[1],
+        xvla_init_path=resolve_xvla_base(task, family),
+        decoder_init_path=resolve_decoder_base(task, family),
+        guidance_mode="concat",
+        guidance_insertion_position=position,
+    )
+
 FOLD_CEDIRNET_GUIDANCE = [
-    # First level: Define where concat works better. Before or After
-
-    # 0: Concatenation AFTER Visuals
-    GuidedExperimentSpec(
-        name                        =   fold_name("concat"),
-        wandb_run_name              =   fold_name("concat"),
-        dataset_name                =   resolve_ds("fold")[0],
-        dataset_revision            =   resolve_ds("fold")[1],
-        xvla_init_path              =   resolve_xvla_base("fold"),
-        decoder_init_path           =   resolve_decoder_base("fold"),
-        guidance_mode               =   "concat",
-        guidance_insertion_position =   "after_visual",
-    ),
-
-    GuidedExperimentSpec(
-        name                        =   fold_name("concat"),
-        wandb_run_name              =   fold_name("concat"),
-        dataset_name                =   resolve_ds("fold")[0],
-        dataset_revision            =   resolve_ds("fold")[1],
-        xvla_init_path              =   resolve_xvla_base("fold"),
-        decoder_init_path           =   resolve_decoder_base("fold"),
-        guidance_mode               =   "concat",
-        guidance_insertion_position =   "before_vlm",
-    ),
-
-    # # 1: Gated Concatenation
-    # GuidedExperimentSpec(
-    #     name                        =   fold_name("gated_concat"),
-    #     wandb_run_name              =   fold_name("gated_concat"),
-    #     dataset_name                =   resolve_ds("fold")[0],
-    #     dataset_revision            =   resolve_ds("fold")[1],
-    #     xvla_init_path              =   resolve_xvla_base("fold"),
-    #     decoder_init_path           =   resolve_decoder_base("fold"),
-    #     guidance_mode               =   "concat",
-    #     guidance_insertion_position =   "after_visual",
-    #     guidance_concat_gating=True,
-    # ),
-    # GuidedExperimentSpec(
-    #     name                        =   fold_name("selected_before"),
-    #     wandb_run_name              =   fold_name("selected_before"),
-    #     dataset_name                =   resolve_ds("fold")[0],
-    #     dataset_revision            =   resolve_ds("fold")[1],
-    #     xvla_init_path              =   resolve_xvla_base("fold"),
-    #     decoder_init_path           =   resolve_decoder_base("fold"),
-    #     guidance_mode               =   "selected_layers",
-    #     guidance_insertion_position =   "before_vlm",
-    #     guidance_selected_layers=(11,),
-    # ),
-    # GuidedExperimentSpec(
-    #     name                        =   fold_name("selected_after"),
-    #     wandb_run_name              =   fold_name("selected_after"),
-    #     dataset_name                =   resolve_ds("fold")[0],
-    #     dataset_revision            =   resolve_ds("fold")[1],
-    #     xvla_init_path              =   resolve_xvla_base("fold"),
-    #     decoder_init_path           =   resolve_decoder_base("fold"),
-    #     guidance_mode               =   "selected_layers",
-    #     guidance_insertion_position =   "after_visual",
-    #     guidance_selected_layers=(11,),
-    # ),
+    guided_spec("fold", "concat_after", "after_visual"),
+    guided_spec("fold", "concat_before", "before_vlm"),
 ]
 
 BOX_CEDIRNET_GUIDANCE = [
-    GuidedExperimentSpec(
-        name=BOX_CONCAT_NAME,
-        wandb_run_name=BOX_CONCAT_NAME,
-        dataset_name=CLOTH_BOX_DS[0],
-        dataset_revision=CLOTH_BOX_DS[1],
-        xvla_init_path=JOINT_CEDIRNET_BOX_XVLA_INIT,
-        decoder_init_path=JOINT_CEDIRNET_BOX_DECODER_INIT,
-        fusion_mode="concat",
-    ),
-    GuidedExperimentSpec(
-        name=BOX_GATED_CONCAT_NAME,
-        wandb_run_name=BOX_GATED_CONCAT_NAME,
-        dataset_name=CLOTH_BOX_DS[0],
-        dataset_revision=CLOTH_BOX_DS[1],
-        xvla_init_path=JOINT_CEDIRNET_BOX_XVLA_INIT,
-        decoder_init_path=JOINT_CEDIRNET_BOX_DECODER_INIT,
-        fusion_mode="gated_concat",
-    ),
-    GuidedExperimentSpec(
-        name=BOX_CROSS_ATTN_NAME,
-        wandb_run_name=BOX_CROSS_ATTN_NAME,
-        dataset_name=CLOTH_BOX_DS[0],
-        dataset_revision=CLOTH_BOX_DS[1],
-        xvla_init_path=JOINT_CEDIRNET_BOX_XVLA_INIT,
-        decoder_init_path=JOINT_CEDIRNET_BOX_DECODER_INIT,
-        guidance_mode="selected_layers",
-        guidance_insertion_position="before_vlm",
-        guidance_selected_layers=(11,),
-    ),
-    GuidedExperimentSpec(
-        name=BOX_GATED_CROSS_ATTN_NAME,
-        wandb_run_name=BOX_GATED_CROSS_ATTN_NAME,
-        dataset_name=CLOTH_BOX_DS[0],
-        dataset_revision=CLOTH_BOX_DS[1],
-        xvla_init_path=JOINT_CEDIRNET_BOX_XVLA_INIT,
-        decoder_init_path=JOINT_CEDIRNET_BOX_DECODER_INIT,
-        guidance_mode="selected_layers",
-        guidance_insertion_position="after_visual",
-        guidance_selected_layers=(11,),
-    ),
+    guided_spec("box", "concat_after", "after_visual"),
+    guided_spec("box", "concat_before", "before_vlm"),
 ]
 
 FOLD_BOTH_CEDIRNET_DINO_GUIDANCE = [
-    GuidedExperimentSpec(
-        name=FOLD_BOTH_CROSS_ATTN_NAME,
-        wandb_run_name=FOLD_BOTH_CROSS_ATTN_NAME,
-        dataset_name=CLOTH_FOLD_DS[0],
-        dataset_revision=CLOTH_FOLD_DS[1],
-        xvla_init_path=BOTH_CEDIRNET_DINO_FOLD_XVLA_INIT,
-        decoder_init_path=BOTH_CEDIRNET_DINO_FOLD_DECODER_INIT,
-        guidance_mode="selected_layers",
-        guidance_insertion_position="before_vlm",
-        guidance_selected_layers=(11,),
-    ),
-    GuidedExperimentSpec(
-        name=FOLD_BOTH_GATED_CROSS_ATTN_NAME,
-        wandb_run_name=FOLD_BOTH_GATED_CROSS_ATTN_NAME,
-        dataset_name=CLOTH_FOLD_DS[0],
-        dataset_revision=CLOTH_FOLD_DS[1],
-        xvla_init_path=BOTH_CEDIRNET_DINO_FOLD_XVLA_INIT,
-        decoder_init_path=BOTH_CEDIRNET_DINO_FOLD_DECODER_INIT,
-        guidance_mode="selected_layers",
-        guidance_insertion_position="after_visual",
-        guidance_selected_layers=(11,),
-    ),
+    guided_spec("fold", "concat_after", "after_visual", family="both"),
+    guided_spec("fold", "concat_before", "before_vlm", family="both"),
 ]
 
 BOX_BOTH_CEDIRNET_DINO_GUIDANCE = [
-    GuidedExperimentSpec(
-        name=BOX_BOTH_CROSS_ATTN_NAME,
-        wandb_run_name=BOX_BOTH_CROSS_ATTN_NAME,
-        dataset_name=CLOTH_BOX_DS[0],
-        dataset_revision=CLOTH_BOX_DS[1],
-        xvla_init_path=BOTH_CEDIRNET_DINO_BOX_XVLA_INIT,
-        decoder_init_path=BOTH_CEDIRNET_DINO_BOX_DECODER_INIT,
-        guidance_mode="selected_layers",
-        guidance_insertion_position="before_vlm",
-        guidance_selected_layers=(11,),
-    ),
-    GuidedExperimentSpec(
-        name=BOX_BOTH_GATED_CROSS_ATTN_NAME,
-        wandb_run_name=BOX_BOTH_GATED_CROSS_ATTN_NAME,
-        dataset_name=CLOTH_BOX_DS[0],
-        dataset_revision=CLOTH_BOX_DS[1],
-        xvla_init_path=BOTH_CEDIRNET_DINO_BOX_XVLA_INIT,
-        decoder_init_path=BOTH_CEDIRNET_DINO_BOX_DECODER_INIT,
-        guidance_mode="selected_layers",
-        guidance_insertion_position="after_visual",
-        guidance_selected_layers=(11,),
-    ),
+    guided_spec("box", "concat_after", "after_visual", family="both"),
+    guided_spec("box", "concat_before", "before_vlm", family="both"),
 ]
 
-EXPERIMENTS = 
+EXPERIMENTS = FOLD_CEDIRNET_GUIDANCE + BOX_CEDIRNET_GUIDANCE + FOLD_BOTH_CEDIRNET_DINO_GUIDANCE + BOX_BOTH_CEDIRNET_DINO_GUIDANCE
 
 def main() -> None:
     run_experiments(workspace_dir=WORKSPACE_DIR, defaults=DEFAULTS, experiments=EXPERIMENTS)
