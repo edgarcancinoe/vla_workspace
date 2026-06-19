@@ -5,6 +5,7 @@ import csv
 import dataclasses
 import json
 import math
+import os
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -355,6 +356,91 @@ def _optimizer_parameter_count(optimizer: torch.optim.Optimizer) -> int:
     return sum(int(parameter.numel()) for group in optimizer.param_groups for parameter in group["params"])
 
 
+def _tensor_nbytes(tensor: torch.Tensor) -> int:
+    return int(tensor.numel()) * int(tensor.element_size())
+
+
+def _mb(value_bytes: int) -> float:
+    return float(value_bytes / (1024 ** 2))
+
+
+def _print_gpu_block(title: str, lines: list[str]) -> None:
+    width = max(len(title) + 8, *(len(line) for line in lines), 48)
+    border = "=" * width
+    print(border)
+    print(f"GPU LOG | {title}")
+    print(border)
+    for line in lines: print(line)
+    print(border)
+
+
+def _gpu_tensor_stats(obj: Any, prefix: str = "") -> dict[str, dict[str, Any]]:
+    stats: dict[str, dict[str, Any]] = {}
+    if torch.is_tensor(obj):
+        if obj.is_cuda:
+            stats[prefix or "tensor"] = {"bytes": _tensor_nbytes(obj), "shape": list(obj.shape), "dtype": str(obj.dtype), "device": str(obj.device)}
+        return stats
+    if isinstance(obj, TeacherTarget):
+        target_prefix = prefix or "teacher_target"
+        stats.update(_gpu_tensor_stats(obj.tensor, f"{target_prefix}.tensor"))
+        if isinstance(obj.aux, dict):
+            for key, value in obj.aux.items(): stats.update(_gpu_tensor_stats(value, f"{target_prefix}.aux.{key}"))
+        return stats
+    if isinstance(obj, dict):
+        for key, value in obj.items(): stats.update(_gpu_tensor_stats(value, f"{prefix}.{key}" if prefix else str(key)))
+        return stats
+    if isinstance(obj, (list, tuple)):
+        for idx, value in enumerate(obj): stats.update(_gpu_tensor_stats(value, f"{prefix}[{idx}]" if prefix else f"[{idx}]"))
+    return stats
+
+
+def _module_gpu_residency(module: nn.Module, prefix: str) -> dict[str, Any]:
+    param_bytes = sum(_tensor_nbytes(parameter) for parameter in module.parameters() if parameter.is_cuda)
+    buffer_bytes = sum(_tensor_nbytes(buffer) for buffer in module.buffers() if buffer.is_cuda)
+    return {
+        "name": prefix,
+        "param_bytes": int(param_bytes),
+        "buffer_bytes": int(buffer_bytes),
+        "total_bytes": int(param_bytes + buffer_bytes),
+        "param_mb": float(param_bytes / (1024 ** 2)),
+        "buffer_mb": float(buffer_bytes / (1024 ** 2)),
+        "total_mb": float((param_bytes + buffer_bytes) / (1024 ** 2)),
+    }
+
+
+def _log_gpu_payload(event: str, payload_name: str, payload: Any, *, step: int, rank: int, wandb_run=None) -> None:
+    stats = _gpu_tensor_stats(payload, payload_name)
+    total_bytes = sum(int(entry["bytes"]) for entry in stats.values())
+    record = {"event": event, "step": int(step), "rank": int(rank), "payload": payload_name, "gpu_total_bytes": int(total_bytes), "gpu_total_mb": float(total_bytes / (1024 ** 2)), "entries": stats}
+    lines = [f"step={int(step)} rank={int(rank)} payload={payload_name} total={_mb(total_bytes):.2f} MB"]
+    for key in sorted(stats):
+        entry = stats[key]
+        lines.append(f"{key}: {_mb(int(entry['bytes'])):.2f} MB  shape={entry['shape']}  dtype={entry['dtype']}  device={entry['device']}")
+    _print_gpu_block(f"{event}", lines)
+    if wandb_run is not None:
+        scalars = {f"gpu/{payload_name}_mb": float(total_bytes / (1024 ** 2))}
+        for key, value in stats.items(): scalars[f"gpu/{key}_mb"] = float(int(value["bytes"]) / (1024 ** 2))
+        wandb_run.log(scalars, step=int(step))
+
+
+def _log_gpu_model_residency(policy, *, step: int, rank: int, wandb_run=None) -> None:
+    modules = {
+        "policy": policy,
+        "policy.model": policy.model,
+        "policy.model.vlm": policy.model.vlm,
+        "policy.model.transformer": policy.model.transformer,
+        "policy.model.guidance_decoder": policy.model.guidance_decoder,
+    }
+    entries = {name: _module_gpu_residency(module, name) for name, module in modules.items()}
+    record = {"event": "gpu_model_residency", "step": int(step), "rank": int(rank), "entries": entries}
+    lines = [f"step={int(step)} rank={int(rank)}"]
+    for name in sorted(entries):
+        entry = entries[name]
+        lines.append(f"{name}: total={entry['total_mb']:.2f} MB  params={entry['param_mb']:.2f} MB  buffers={entry['buffer_mb']:.2f} MB")
+    _print_gpu_block("gpu_model_residency", lines)
+    if wandb_run is not None: wandb_run.log({f"gpu_model/{name}_mb": float(entry["total_mb"]) for name, entry in entries.items()}, step=int(step))
+
+
 def _trainability_metrics(policy, optimizer: JointTrainingState) -> dict[str, float]:
     guidance_decoder_params = list(policy.model.guidance_decoder.parameters())
     vlm_params = list(policy.model.vlm.parameters())
@@ -585,14 +671,18 @@ class GuidedTrainingModule(nn.Module):
         self.policy = policy
         self._config = config
 
-    def forward(self, processed_batch: dict[str, Any], target):
+    def forward(self, processed_batch: dict[str, Any], target, *, step: int | None = None, rank: int = 0, wandb_run=None):
         inputs = self.policy._build_model_inputs(processed_batch)
+        if step is not None: _log_gpu_payload("gpu_payload_inputs", "inputs", inputs, step=int(step), rank=int(rank), wandb_run=wandb_run)
         enc = self.policy.model.forward_vlm(input_ids=inputs["input_ids"], pixel_values=inputs["image_input"], image_mask=inputs["image_mask"])
+        if step is not None: _log_gpu_payload("gpu_payload_encoder", "encoder", enc, step=int(step), rank=int(rank), wandb_run=wandb_run)
         action_loss, action_stats, guidance_tokens = compute_guided_action_loss_from_encoder(self.policy, processed_batch, inputs, enc, config=self._config, guidance_mode="train")
+        if step is not None: _log_gpu_payload("gpu_payload_guidance", "guidance_tokens", guidance_tokens, step=int(step), rank=int(rank), wandb_run=wandb_run)
         if float(self._config.expert_loss_weight) > 0.0:
             expert_loss, expert_stats = compute_guidance_loss(self.policy, target, guidance_tokens)
         else:
             expert_loss, expert_stats = action_loss.new_zeros(()), {"expert_total": 0.0}
+        if step is not None: _log_gpu_payload("gpu_payload_teacher_target", "teacher_target", target, step=int(step), rank=int(rank), wandb_run=wandb_run)
         total_loss = float(self._config.action_loss_weight) * action_loss + float(self._config.expert_loss_weight) * expert_loss
         return total_loss, action_stats, expert_stats
 
@@ -654,6 +744,13 @@ def train_guided_xvla(config: GuidedXVLATrainConfig) -> None:
         trainability_metrics = {"event": "param_trainability", "step": int(step), "guidance_train_mode": str(config.guidance_train_mode), "freeze_xvla_vlm": bool(config.freeze_xvla_vlm), **_trainability_metrics(policy, optimizer)}
         print(json.dumps(trainability_metrics))
         if wandb_run is not None: wandb_run.log({key: value for key, value in trainability_metrics.items() if key != "event"}, step=int(step))
+        _log_gpu_model_residency(policy, step=int(step), rank=int(accelerator.process_index), wandb_run=wandb_run)
+        if torch.cuda.is_available():
+            device = torch.cuda.current_device()
+            props = torch.cuda.get_device_properties(device)
+            gpu_record = {"event": "gpu_device_state", "step": int(step), "rank": int(accelerator.process_index), "device_index": int(device), "device_name": str(props.name), "total_memory_mb": float(props.total_memory / (1024 ** 2)), "pid": int(os.getpid())}
+            print(json.dumps(gpu_record))
+            if wandb_run is not None: wandb_run.log({"gpu/device_total_mb": float(props.total_memory / (1024 ** 2))}, step=int(step))
     if is_main and step == 0 and val_loader is not None and should_run_validation_step(0, config.steps, config.validation_freq, emitted_validation_steps):
         val_metrics = {"event": "validation_step", "step": 0, **_validation_metrics(config, runtime, runtime.policy, guidance_source, val_loader)}
         print(json.dumps(val_metrics))
@@ -668,7 +765,7 @@ def train_guided_xvla(config: GuidedXVLATrainConfig) -> None:
             processed_batch = preprocess_batch(runtime, raw_batch)
             target = load_guidance_target(guidance_source, raw_batch, config, runtime.teacher_image_key)
             with accelerator.accumulate(train_module):
-                total_loss, action_stats, expert_stats = train_module(processed_batch, target)
+                total_loss, action_stats, expert_stats = train_module(processed_batch, target, step=int(current_step), rank=int(accelerator.process_index), wandb_run=wandb_run if is_main else None)
                 accelerator.backward(total_loss)
                 if not accelerator.sync_gradients: continue
                 debug_every = int(config.guidance_debug_every)
