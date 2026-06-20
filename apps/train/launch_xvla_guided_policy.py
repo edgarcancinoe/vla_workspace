@@ -30,7 +30,7 @@ GA = 1
 DEC_LR = 5e-5
 XVLA_LR = 5e-6
 MODE = "accelerate"
-DEVICES = (2,3)
+DEVICES = (0,1)
 
 RUNTIME_CONFIG = GuidedRuntimeConfig(launch_mode=MODE, cuda_devices=DEVICES, num_workers=4, dry_run=False)
 MULT = 1 if MODE == "single" else len(DEVICES)
@@ -206,8 +206,8 @@ FOLD_CEDIRNET_GUIDANCE = [
     guided_spec("fold", "concat_before", "before_vlm"),
 ] # RAN
 FOLD_CEDIRNET_INTERFACE_GUIDANCE = [
-    guided_spec("fold", "iface_after", "after_visual", guidance_use_interface_projection=True, guidance_interface_num_tokens=64),
-    guided_spec("fold", "iface_before", "before_vlm", guidance_use_interface_projection=True, guidance_interface_num_tokens=64  ),
+    # guided_spec("fold", "iface_after", "after_visual", guidance_use_interface_projection=True, guidance_interface_num_tokens=64),
+    guided_spec("fold", "iface_before", "before_vlm", guidance_use_interface_projection=True, guidance_interface_num_tokens=32),
 ] # RUNNING BEFORE_VLM
 FOLD_CEDIRNET_GATED_GUIDANCE = [
     guided_spec("fold", "gated_after", "after_visual", guidance_concat_gating=True),
@@ -280,8 +280,7 @@ BOX_BOTH_CEDIRNET_DINO_SELECTED_GUIDANCE = [
 # EXPERIMENTS = [FOLD_CEDIRNET_GUIDANCE[0]]
 # EXPERIMENTS = [BOX_CEDIRNET_GUIDANCE[0]]
 # EXPERIMENTS = [BOX_CEDIRNET_GUIDANCE[1]]
-EXPERIMENTS = [FOLD_CEDIRNET_SELECTED_GUIDANCE[0]]
-EXPERIMENTS = BOX_CEDIRNET_SELECTED_GUIDANCE
+EXPERIMENTS = [FOLD_CEDIRNET_INTERFACE_GUIDANCE[0]]
 def main() -> None:
     run_experiments(workspace_dir=WORKSPACE_DIR, defaults=DEFAULTS, experiments=EXPERIMENTS)
 
