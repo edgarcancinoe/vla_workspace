@@ -778,7 +778,7 @@ def train_guided_xvla(config: GuidedXVLATrainConfig) -> None:
     from accelerate.utils import DistributedDataParallelKwargs
 
     accum_steps = max(int(config.gradient_accumulation_steps), 1)
-    accelerator = Accelerator(step_scheduler_with_optimizer=False, kwargs_handlers=[DistributedDataParallelKwargs(find_unused_parameters=False)], gradient_accumulation_steps=accum_steps)
+    accelerator = Accelerator(step_scheduler_with_optimizer=False, kwargs_handlers=[DistributedDataParallelKwargs(find_unused_parameters=True)], gradient_accumulation_steps=accum_steps)
     if torch.cuda.is_available(): torch.cuda.set_device(accelerator.local_process_index)
     is_main = accelerator.is_main_process
     _set_seed(config.seed)
@@ -808,7 +808,7 @@ def train_guided_xvla(config: GuidedXVLATrainConfig) -> None:
     progress = tqdm(total=max(int(config.steps) - int(step), 0), desc=config.name, disable=not is_main)
     emitted_validation_steps: set[int] = set()
     accelerator.unwrap_model(train_module).policy.model.set_guidance_trainability(step)
-    if is_main: print(json.dumps({"event": "ddp_config", "gradient_accumulation_steps": int(accum_steps), "num_processes": int(accelerator.num_processes)}))
+    if is_main: print(json.dumps({"event": "ddp_config", "gradient_accumulation_steps": int(accum_steps), "num_processes": int(accelerator.num_processes), "find_unused_parameters": True}))
     if is_main:
         schedule = _guidance_schedule_state(config, int(step))
         trainability_metrics = {"event": "param_trainability", "step": int(step), "guidance_train_mode": str(config.guidance_train_mode), "guidance_training_schedule": str(config.guidance_training_schedule), "guidance_warmup_steps": int(config.guidance_warmup_steps), "guidance_corruption_restore_step": int(config.guidance_corruption_restore_step), "guidance_phase2_expert_loss_weight": _effective_phase2_expert_loss_weight(config), "guidance_phase": int(schedule.phase), "guidance_phase_name": str(schedule.phase_name), "guidance_decoder_trainable": bool(schedule.decoder_trainable), "guidance_corruption_enabled": bool(schedule.corruption_enabled), "effective_action_loss_weight": float(schedule.action_loss_weight), "effective_expert_loss_weight": float(schedule.expert_loss_weight), "freeze_xvla_vlm": bool(config.freeze_xvla_vlm), **_trainability_metrics(policy, optimizer)}
