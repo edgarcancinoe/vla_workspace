@@ -728,21 +728,27 @@ class GuidedTrainingModule(nn.Module):
         super().__init__()
         self.policy = policy
         self._config = config
+        self._gpu_payload_events_logged: set[str] = set()
+
+    def _maybe_log_gpu_payload(self, event: str, payload_name: str, payload: Any, *, step: int | None, rank: int, wandb_run=None) -> None:
+        if step is None or event in self._gpu_payload_events_logged: return
+        _log_gpu_payload(event, payload_name, payload, step=int(step), rank=int(rank), wandb_run=wandb_run)
+        self._gpu_payload_events_logged.add(event)
 
     def forward(self, processed_batch: dict[str, Any], target, *, step: int | None = None, rank: int = 0, wandb_run=None, schedule: GuidedScheduleState | None = None):
         inputs = self.policy._build_model_inputs(processed_batch)
-        if step is not None: _log_gpu_payload("gpu_payload_inputs", "inputs", inputs, step=int(step), rank=int(rank), wandb_run=wandb_run)
+        self._maybe_log_gpu_payload("gpu_payload_inputs", "inputs", inputs, step=step, rank=int(rank), wandb_run=wandb_run)
         enc = self.policy.model.forward_vlm(input_ids=inputs["input_ids"], pixel_values=inputs["image_input"], image_mask=inputs["image_mask"])
-        if step is not None: _log_gpu_payload("gpu_payload_encoder", "encoder", enc, step=int(step), rank=int(rank), wandb_run=wandb_run)
+        self._maybe_log_gpu_payload("gpu_payload_encoder", "encoder", enc, step=step, rank=int(rank), wandb_run=wandb_run)
         corruption_enabled = True if schedule is None else bool(schedule.corruption_enabled)
         action_loss, action_stats, guidance_tokens = compute_guided_action_loss_from_encoder(self.policy, processed_batch, inputs, enc, config=self._config, guidance_mode="train", corruption_enabled=corruption_enabled)
-        if step is not None: _log_gpu_payload("gpu_payload_guidance", "guidance_tokens", guidance_tokens, step=int(step), rank=int(rank), wandb_run=wandb_run)
+        self._maybe_log_gpu_payload("gpu_payload_guidance", "guidance_tokens", guidance_tokens, step=step, rank=int(rank), wandb_run=wandb_run)
         expert_weight = float(self._config.expert_loss_weight) if schedule is None else float(schedule.expert_loss_weight)
         if expert_weight > 0.0:
             expert_loss, expert_stats = compute_guidance_loss(self.policy, target, guidance_tokens)
         else:
             expert_loss, expert_stats = action_loss.new_zeros(()), {"expert_total": 0.0}
-        if step is not None: _log_gpu_payload("gpu_payload_teacher_target", "teacher_target", target, step=int(step), rank=int(rank), wandb_run=wandb_run)
+        self._maybe_log_gpu_payload("gpu_payload_teacher_target", "teacher_target", target, step=step, rank=int(rank), wandb_run=wandb_run)
         action_weight = float(self._config.action_loss_weight) if schedule is None else float(schedule.action_loss_weight)
         total_loss = action_weight * action_loss + expert_weight * expert_loss
         return total_loss, action_stats, expert_stats
