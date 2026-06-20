@@ -40,9 +40,9 @@ from thesis_vla.training.xvla_finetune_launcher import AdaptationConfig, Experim
 WORKSPACE_DIR = PROJECT_ROOT
 
 RUNTIME_CONFIG = RuntimeConfig(
-    launch_mode="accelerate", # single / accelerate
-    cuda_devices=(2,3),
-    num_workers=2,
+    launch_mode="single", # single / accelerate
+    cuda_devices=(2,),
+    num_workers=6,
     dry_run=False,
 )
 
@@ -68,11 +68,11 @@ DEFAULTS = LaunchConfig(
     ),
 
     # ------------ Optimization settings ------------
-    batch_size=32,
+    batch_size=64,
     gradient_accumulation_steps=1,
     optimizer_lr=1e-4,
     scheduler_decay_lr=1e-5,
-    steps=30_000,
+    steps=15_000,
 
     # ------- Logging and checkpoint settings -------
     log_freq=400,
@@ -170,7 +170,7 @@ CLOTH_DROP = [
         action_mode="so101_ee6d",   
         base_model=BASE_ORANGE_196,     
         dataset_name=DATASET_CLOTH_DROP,
-        batch_size=16,  optimizer_lr=1e-4,  steps=50_000,  scheduler_decay_lr=1e-5, gradient_accumulation_steps=4,
+        batch_size=32,  optimizer_lr=1e-4,  steps=15_000,  scheduler_decay_lr=1e-5, gradient_accumulation_steps=2,
         adaptation=ADAPT_STAGED,
         enable_augmentation=False, 
     )
@@ -182,7 +182,7 @@ CLOTH_FOLD = [
         action_mode="so101_ee6d",   
         base_model=BASE_ORANGE_196,     
         dataset_name=DATASET_CLOTH_FOLD,
-        batch_size=16,  optimizer_lr=1e-4,  steps=50_000,  scheduler_decay_lr=1e-5, gradient_accumulation_steps=2,
+        batch_size=32,  optimizer_lr=1e-4,  steps=15_000,  scheduler_decay_lr=1e-5, gradient_accumulation_steps=2,
         adaptation=ADAPT_STAGED,
         enable_augmentation=False, 
     ),
@@ -197,7 +197,7 @@ CLOTH_FOLD = [
 ]
 
 # EXPERIMENTS = [MULTICOLOR_CUBE[1]]
-EXPERIMENTS = [CLOTH_FOLD[0], CLOTH_FOLD[1]]
+EXPERIMENTS = [CLOTH_DROP[0], CLOTH_FOLD[0]]
 # EXPERIMENTS = CLOTH_FOLD
 # EXPERIMENTS = [EXPERIMENTS] if isinstance(EXPERIMENTS, ExperimentSpec) else EXPERIMENTS
 

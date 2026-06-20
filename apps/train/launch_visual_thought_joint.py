@@ -24,7 +24,16 @@ from thesis_vla.training.visual_thought_launcher import VisualThoughtExperimentS
 WORKSPACE_DIR = PROJECT_ROOT
 RUN_TS = dt.datetime.now().strftime("%Y%m%d_%H%M%S")
 
-RUNTIME_CONFIG = VisualThoughtRuntimeConfig(launch_mode="accelerate", cuda_devices=(0,1), num_workers=2, dry_run=False)
+MODE = "accelerate"
+DEVICES = (0,1)
+RUNTIME_CONFIG = VisualThoughtRuntimeConfig(launch_mode=MODE, cuda_devices=DEVICES, num_workers=3, dry_run=False)
+
+BS = 8
+GRAD_ACC_STEPS = 2
+EXP_W = 0.5
+LR = 5e-5
+
+MULT = 1 if MODE == "single" else len(DEVICES)
 
 DEFAULTS = VisualThoughtLaunchConfig(
     hf_user="edgarcancinoe",
@@ -36,20 +45,20 @@ DEFAULTS = VisualThoughtLaunchConfig(
     xvla_init_path="lerobot/xvla-base",
     decoder_stack_config_path=str(CONFIG_ROOT / "visual_thought" / "cedirnet_stack.yaml"),
     decoder_task_config_path=str(CONFIG_ROOT / "visual_thought" / "cedirnet_head.yaml"),
-    batch_size=8,
-    gradient_accumulation_steps=1,
+    batch_size=BS,
+    gradient_accumulation_steps=GRAD_ACC_STEPS,
     
-    decoder_optimizer_lr=1e-4,
+    decoder_optimizer_lr=LR,
     xvla_adaptation_mode="staged_prompt_warmup",
     xvla_freeze_steps=0,
     xvla_warmup_steps=0,
     xvla_learning_coef=0.1,
     profile_step_time_every=20,
-    xvla_scheduler_decay_steps=30000,
+    xvla_scheduler_decay_steps=8000,
     xvla_scheduler_decay_lr=1e-5,
 
     wandb_enable=True,
-    wandb_project="visual-thought",
+    wandb_project="visual-thought-joint3k",
     validation_enable=True,
     validation_split_ratio=0.1,
     validation_freq=250,
@@ -59,12 +68,12 @@ DEFAULTS = VisualThoughtLaunchConfig(
     vis_final=False,
     push_to_hub=True,
     push_repo_id=None,
-    push_every=4000,
+    push_every=3000,
     action_loss_weight=1.0,
-    expert_loss_weight=0.5,
-    steps=8000,
+    expert_loss_weight=EXP_W,
+    steps=3000,
     log_every=20,
-    save_every=4000,
+    save_every=2500,
     name_prefix=f"visual-thought-{RUN_TS}",
 )
 
@@ -72,9 +81,9 @@ DEFAULTS = VisualThoughtLaunchConfig(
 # =====================================================================================
 # XVLA -------------------------------------------------------------------------------
 OUT = "/home/jose/EMAI-Thesis/vla_workspace/runtime/outputs/train/"
-XVLA_INIT_CUBES                     = OUT + "orange196_pickplace-multicolor_7p5hz_so101_ee6d_am_sm_b16_ga2_eb64_full_adapt_stagedpw_v1_20260604_141258/checkpoints/015000/pretrained_model"
-XVLA_INIT_CLOTHFOLD                 = OUT + "orange196_cloth-corner-fold_7p5hz_so101_ee6d_am_sm_b16_ga2_eb64_full_adapt_stagedpw_v1_20260604_230620/checkpoints/015000/pretrained_model"  
-XVLA_INIT_CLOTHDROP                 = OUT + "orange196_cloth-corner-box_7p5hz_so101_ee6d_am_sm_b8_ga4_eb64_full_adapt_stagedpw_v1_20260603_111556/checkpoints/030000/pretrained_model"
+XVLA_INIT_CUBES                     = OUT + "Baselines/orange196_pickplace-multicolor_7p5hz_so101_ee6d_am_sm_b16_ga2_eb64_full_adapt_stagedpw_v1_20260604_141258/checkpoints/015000/pretrained_model"
+XVLA_INIT_CLOTHFOLD                 = OUT + "Baselines/orange196_cloth-corner-fold_7p5hz_so101_ee6d_am_sm_b16_ga2_eb64_full_adapt_stagedpw_v1_20260604_230620/checkpoints/015000/pretrained_model"  
+XVLA_INIT_CLOTHDROP                 = OUT + "Baselines/new_orange196_cloth-corner-box_7p5hz_so101_ee6d_am_sm_b32_ga2_eb64_full_adapt_stagedpw_v1_20260618_233011/checkpoints/015000/pretrained_model"
 
 # CEDIRNET DECODER ----------------------------------------------------------------------
 CEDIRNET_DECODER_INIT               = "/home/jose/EMAI-Thesis/vla_workspace/models/cedirnet_legacy_32x32"
@@ -83,9 +92,9 @@ CEDIRNET_DECODER_INIT_STACK_CONFIG  = "/home/jose/EMAI-Thesis/vla_workspace/conf
 CEDIRNET_DECODER_INIT_TASK_CONFIG   = "/home/jose/EMAI-Thesis/vla_workspace/config/visual_thought/cedirnet_head.yaml"
 
 # DINO DECODER --------------------------------------------------------------------------
-DINO_CUBES_DECODER_INIT             = OUT + "dino_tokenseq_distill_cubes_20260611_005813/checkpoint_final"
-DINO_CLOTH_DECODER_INIT             = OUT + "dino_tokenseq_distill_cloth_fold_20260611_000622/checkpoint_final"
-DINO_CLOTH_DROP_DECODER_INIT        = OUT + "dino_tokenseq_distill_cloth_box_20260611_005813/checkpoint_final"
+DINO_CUBES_DECODER_INIT             = OUT + "Decoders/dino_tokenseq_distill_cubes_20260611_005813/checkpoint_final"
+DINO_CLOTH_DECODER_INIT             = OUT + "Decoders/dino_tokenseq_distill_cloth_fold_20260611_000622/checkpoint_final"
+DINO_CLOTH_DROP_DECODER_INIT        = OUT + "Decoders/dino_tokenseq_distill_cloth_box_20260611_005813/checkpoint_final"
 
 DINO_STACK_CONFIG                   = str(CONFIG_ROOT / "visual_thought" / "dino_stack.yaml")
 DINO_TOKENSEQ_CONFIG                = str(CONFIG_ROOT / "visual_thought" / "dino_decoder.yaml")  # target_kind: token_sequence
@@ -93,14 +102,14 @@ DINO_TOKENSEQ_CONFIG                = str(CONFIG_ROOT / "visual_thought" / "dino
 
 # EXP NAMING
 # =====================================================================================
-FOLD_CEDIRNET_NAME      = f"cedirnet_joint_stage_{RUN_TS}_cloth_fold"
-DROP_CEDIRNET_NAME      = f"cedirnet_joint_stage_{RUN_TS}_cloth_box"
+FOLD_CEDIRNET_NAME      = f"{EXP_W}___cedirnet___fold_{RUN_TS}___{LR}_bs{BS * GRAD_ACC_STEPS * MULT}"
+DROP_CEDIRNET_NAME      = f"{EXP_W}___cedirnet___box_{RUN_TS}___{LR}_bs{BS * GRAD_ACC_STEPS * MULT}"
 
-DINO_CUBES_NAME         = f"dino_tokenseq_joint_cubes_{RUN_TS}"
-DINO_CLOTH_FOLD_NAME    = f"dino_tokenseq_joint_clothfold_{RUN_TS}"
-DINO_CLOTH_DROP_NAME    = f"dino_tokenseq_joint_clothbox_{RUN_TS}"
-BOTH_CLOTH_FOLD_NAME    = f"both_cedirnet_dino_joint_clothfold_{RUN_TS}"
-BOTH_CLOTH_DROP_NAME    = f"both_cedirnet_dino_joint_cloth_box_{RUN_TS}"
+DINO_CUBES_NAME         = f"{EXP_W}___dino___cubes_{RUN_TS}___{LR}_bs{BS * GRAD_ACC_STEPS * MULT}"
+DINO_CLOTH_FOLD_NAME    = f"{EXP_W}___dino___fold_{RUN_TS}___{LR}_bs{BS * GRAD_ACC_STEPS * MULT}"
+DINO_CLOTH_DROP_NAME    = f"{EXP_W}___dino___box_{RUN_TS}___{LR}_bs{BS * GRAD_ACC_STEPS * MULT}"
+BOTH_CLOTH_DROP_NAME    = f"{EXP_W}___both___box_{RUN_TS}___{LR}_bs{BS * GRAD_ACC_STEPS * MULT}"
+BOTH_CLOTH_FOLD_NAME    = f"{EXP_W}___both___fold_{RUN_TS}___{LR}_bs{BS * GRAD_ACC_STEPS * MULT}"
 # =====================================================================================
 
 # DATASETS
@@ -128,7 +137,7 @@ FOLD_CEDIRNET = [
     )
 ]
 
-CLOTH_DROP_CEDIRNET = [
+BOX_CEDIRNET = [
     VisualThoughtExperimentSpec(
         expert_type                 ="cedirnet",
         training_stage              ="joint_multitask",
@@ -196,8 +205,8 @@ BOTH_CLOTH_FOLD = [
         dino_decoder_task_config_path   =DINO_TOKENSEQ_CONFIG,
         wandb_run_name                  =BOTH_CLOTH_FOLD_NAME,
         action_loss_weight=1.0,
-        cedirnet_expert_loss_weight=0.50,
-        dino_expert_loss_weight=0.5,
+        cedirnet_expert_loss_weight=EXP_W,
+        dino_expert_loss_weight=EXP_W,
     ),
 ]
 
@@ -220,8 +229,8 @@ BOTH_CLOTH_DROP = [
         dino_decoder_task_config_path   =DINO_TOKENSEQ_CONFIG,
         wandb_run_name                  =BOTH_CLOTH_DROP_NAME,
         action_loss_weight=1.0,
-        cedirnet_expert_loss_weight=0.50,
-        dino_expert_loss_weight=0.5,
+        cedirnet_expert_loss_weight=EXP_W,
+        dino_expert_loss_weight=EXP_W,
     ),
 ]
 
@@ -242,11 +251,17 @@ DINO_CUBES = [
     ),
 ]
 
-# Pendiente correr estos. Ajustar a bs 32. Dino antes habia corrido con un mal pre-trained decoder. Los otros hay q volver a correrlos solo extended
-EXPERIMENTS = DINO_CLOTH_FOLD + DINO_CLOTH_DROP
-EXPERIMENTS = DINO_CUBES + FOLD_CEDIRNET + CLOTH_DROP_CEDIRNET 
-# EXPERIMENTS = FOLD_CEDIRNET + CLOTH_DROP_CEDIRNET + DINO_CLOTH_FOLD + DINO_CLOTH_DROP + DINO_CUBES
-EXPERIMENTS = BOTH_CLOTH_DROP
+EXPERIMENTS = DINO_CUBES
+
+# Running on 5e-5 on bs 16 and bs 32 exp_w 0.25
+# EXPERIMENTS = BOTH_CLOTH_FOLD + BOTH_CLOTH_DROP
+
+# Running on 5e-5 on bs 16 and bs 32 exp_w 0.5
+# EXPERIMENTS = DINO_CLOTH_FOLD + DINO_CLOTH_DROP 
+
+# Running on 5e-5 on bs 16 and bs 32 exp_w 1.0
+# EXPERIMENTS = BOX_CEDIRNET + FOLD_CEDIRNET  
+
 def main() -> None:
     run_experiments(workspace_dir=WORKSPACE_DIR, defaults=DEFAULTS, experiments=EXPERIMENTS)
 
