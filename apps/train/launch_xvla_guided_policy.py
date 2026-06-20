@@ -24,7 +24,17 @@ from thesis_vla.training.xvla_guided_launcher import GuidedExperimentSpec, Guide
 WORKSPACE_DIR = PROJECT_ROOT
 RUN_TS = dt.datetime.now().strftime("%Y%m%d_%H%M%S")
 
-RUNTIME_CONFIG = GuidedRuntimeConfig(launch_mode="accelerate", cuda_devices=(2,3), num_workers=4, dry_run=False)
+
+BS = 8
+GA = 1
+DEC_LR = 5e-5
+XVLA_LR = 5e-6
+MODE = "accelerate"
+DEVICES = (2,3)
+
+RUNTIME_CONFIG = GuidedRuntimeConfig(launch_mode=MODE, cuda_devices=DEVICES, num_workers=4, dry_run=False)
+MULT = 1 if MODE == "single" else len(DEVICES)
+
 
 DEFAULTS = GuidedLaunchConfig(
     hf_user="edgarcancinoe",
@@ -38,41 +48,35 @@ DEFAULTS = GuidedLaunchConfig(
     guided_stage_config_path=str(CONFIG_ROOT / "visual_thought" / "cedirnet_guided_policy.yaml"),
 
     # LEARNING CONFIUGRATIONS ----–-----–-----–-----–-
-    batch_size=8,
-    gradient_accumulation_steps=1,
-    decoder_optimizer_lr=1e-4,
-    xvla_optimizer_lr=1e-5,
+    batch_size=BS,
+    gradient_accumulation_steps=GA,
+    decoder_optimizer_lr=DEC_LR,
+    xvla_optimizer_lr=XVLA_LR,
     xvla_scheduler_decay_lr=2.5e-6,
-    steps=8000,
+    steps=4000,
     # ----–-----–-----–-----–-----–-----–-----–-----–-
 
     # Guidance use configuration ---------------------
-    guidance_train_mode="train_from_start", # frozen | train_from_start | warmup_freeze
-    guidance_unfreeze_step = 1000,
-    guidance_training_schedule="decoder_warmup_then_policy",
-    guidance_warmup_steps=1000,
-    guidance_phase2_expert_loss_weight=0.10,
-    guidance_corruption_restore_step=2000,
-    guidance_dropout_prob=0.15,
-    guidance_noise_prob=0.15,
-    guidance_noise_std=0.10,
-    freeze_xvla_vlm=True, # staged schedule requires True
-    # Reliability staging presets:
-    # guidance_training_schedule="legacy",
-    # guidance_training_schedule="decoder_warmup_then_policy",
-    # guidance_warmup_steps=1500,
-    # guidance_phase2_expert_loss_weight=0.05,
-    # guidance_corruption_restore_step=3000,
+
     # Legacy-only decoder trainability knobs:
     # guidance_train_mode="frozen",
     # guidance_train_mode="train_from_start",
     # guidance_train_mode="warmup_freeze",
-    # guidance_unfreeze_step=1000,
-    # Staged schedule semantics:
+    guidance_train_mode="train_from_start", # frozen | train_from_start | warmup_freeze
+    guidance_unfreeze_step = 1000,
+    # ^ ^ ^ ^ ^ ^ ^ ^ ^ ^ ^ ^ Overriden if guidance_training_schedule="decoder_warmup_then_policy"
+
+    guidance_training_schedule="decoder_warmup_then_policy",
     # Phase 1  (step <= guidance_warmup_steps): decoder-only, action loss off, expert loss = 1.0, corruption off
+    guidance_warmup_steps=100,
     # Phase 2a (warmup < step < guidance_corruption_restore_step): decoder frozen, action loss on, phase2 expert loss on, corruption off
+    guidance_phase2_expert_loss_weight=0.1,
     # Phase 2b (step >= guidance_corruption_restore_step): same as phase 2a, but dropout/noise restored
-    # ----–-----–-----–-----–-----–-----–-----–-----–-
+    guidance_corruption_restore_step=2500,
+    guidance_dropout_prob=0.15,
+    guidance_noise_prob=0.15,
+    guidance_noise_std=0.10,
+    freeze_xvla_vlm=True, # staged schedule requires True
 
     # Saving and logging -----------------------------
     log_every=20,
@@ -82,8 +86,8 @@ DEFAULTS = GuidedLaunchConfig(
     validation_enable=True,
     validation_split_ratio=0.1,
     validation_freq=250,
-    validation_max_batches=10,
-    validation_include_no_guidance=True,
+    validation_max_batches=1000000,
+    validation_include_no_guidance=False,
     validation_seed=1337,
     name_prefix=f"xvla-guided-{RUN_TS}",
 )
@@ -96,39 +100,47 @@ CLOTH_BOX_DS  = ("cloth-corner-box_7p5hz",      "main")
 
 # JOINT PRETRAINED CEDIRNET FOLD CHECKPOINT
 # =====================================================================================
-OUT = "/home/jose/EMAI-Thesis/vla_workspace/runtime/outputs/train/Implicit Models/Excel"
+OUT = "/home/jose/EMAI-Thesis/vla_workspace/runtime/outputs/train/Implicit Models/Best3k-Bases/"
 
 # -------------------------
-# CEDIRNet joint: cloth fold
+# CEDIRNet: cloth fold
 # -------------------------
-JOINT_CEDIRNET_FOLD_CHECKPOINT_ROOT = OUT + "/cedirnet_joint_stage_20260613_022141_cloth_fold/checkpoint_0004000"
+PATH = "1.0___cedirnet___fold_20260619_15451____1e-04_bs16"
+CHECKPOINT = "/checkpoint_final"
+JOINT_CEDIRNET_FOLD_CHECKPOINT_ROOT = OUT + PATH + CHECKPOINT
 JOINT_CEDIRNET_FOLD_XVLA_INIT = JOINT_CEDIRNET_FOLD_CHECKPOINT_ROOT + "/policy"
 JOINT_CEDIRNET_FOLD_DECODER_INIT = JOINT_CEDIRNET_FOLD_CHECKPOINT_ROOT
 
-# CEDIRNet joint: cloth box
+# CEDIRNet: cloth box
 # -------------------------
-JOINT_CEDIRNET_BOX_CHECKPOINT_ROOT = OUT + "/cedirnet_joint_stage_20260613_022141_cloth_box/checkpoint_0004000"
+PATH = "1.0___cedirnet___box_20260619_154558___1e-04_bs16"
+CHECKPOINT = "/checkpoint_final"
+JOINT_CEDIRNET_BOX_CHECKPOINT_ROOT = OUT + PATH + CHECKPOINT
 JOINT_CEDIRNET_BOX_XVLA_INIT = JOINT_CEDIRNET_BOX_CHECKPOINT_ROOT + "/policy"
 JOINT_CEDIRNET_BOX_DECODER_INIT = JOINT_CEDIRNET_BOX_CHECKPOINT_ROOT
 
 # BOTH: CEDIRNet + DINO joint, cloth fold
 # -------------------------
-BOTH_CEDIRNET_DINO_FOLD_CHECKPOINT_ROOT = OUT + "/both_cedirnet_dino_joint_clothfold_20260612_192204/checkpoint_0004000"
+PATH = "None" # "/both_cedirnet_dino_joint_clothfold_20260612_192204/checkpoint_0004000"
+CHECKPOINT = "/checkpoint_final"
+BOTH_CEDIRNET_DINO_FOLD_CHECKPOINT_ROOT = OUT + PATH + CHECKPOINT
 BOTH_CEDIRNET_DINO_FOLD_XVLA_INIT = BOTH_CEDIRNET_DINO_FOLD_CHECKPOINT_ROOT + "/policy"
 BOTH_CEDIRNET_DINO_FOLD_DECODER_INIT = BOTH_CEDIRNET_DINO_FOLD_CHECKPOINT_ROOT
 
 # BOTH: CEDIRNet + DINO joint, cloth box
 # -------------------------
-BOTH_CEDIRNET_DINO_BOX_CHECKPOINT_ROOT = OUT + "/both_cedirnet_dino_joint_cloth_box_20260613_022649/checkpoint_0004000"
+PATH = "None" # "/both_cedirnet_dino_joint_cloth_box_20260613_022649/checkpoint_0004000"
+CHECKPOINT = "/checkpoint_final"
+BOTH_CEDIRNET_DINO_BOX_CHECKPOINT_ROOT = OUT + PATH + CHECKPOINT
 BOTH_CEDIRNET_DINO_BOX_XVLA_INIT = BOTH_CEDIRNET_DINO_BOX_CHECKPOINT_ROOT + "/policy"
 BOTH_CEDIRNET_DINO_BOX_DECODER_INIT = BOTH_CEDIRNET_DINO_BOX_CHECKPOINT_ROOT
 # =====================================================================================
 
 # RESOLVERS
 # =====================================================================================
-TASK_SUFFIX  = {"fold": "cloth_fold", "box": "cloth_box"}
+TASK_SUFFIX  = {"fold": "fold", "box": "box"}
 TASK_DATASET = {"fold": CLOTH_FOLD_DS, "box": CLOTH_BOX_DS}
-NAME_PREFIX  = {"cedirnet": "expl_cedir", "both": "expl_both_cedir_dino"}
+NAME_PREFIX  = {"cedirnet": "cedir", "both": "both"}
 
 MODE_TAG = {
     "concat_after": "concat_after_visual",
@@ -137,6 +149,8 @@ MODE_TAG = {
     "iface_before": "concat_iface_before_vlm",
     "gated_after": "concat_gated_after_visual",
     "gated_before": "concat_gated_before_vlm",
+    "selected_after": "selected_layers_after_visual",
+    "selected_before": "selected_layers_before_vlm",
 }
 
 XVLA_BASE = {
@@ -153,7 +167,7 @@ DECODER_BASE = {
 }
 
 def run_name(task: str, mode: str, family: str = "cedirnet") -> str:
-    return f"{NAME_PREFIX[family]}_{MODE_TAG[mode]}_{RUN_TS}_{TASK_SUFFIX[task]}"
+    return f"{TASK_SUFFIX[task]}__{NAME_PREFIX[family]}__{MODE_TAG[mode]}__bs{MULT * GA * BS}_dec_lr{DEC_LR}_vla_lr{XVLA_LR}__{RUN_TS}"
 
 def fold_name(mode: str, family: str = "cedirnet") -> str:
     return run_name("fold", mode, family)
@@ -179,80 +193,68 @@ def guided_spec(task: str, mode: str, position: str, family: str = "cedirnet", *
         dataset_revision=resolve_ds(task)[1],
         xvla_init_path=resolve_xvla_base(task, family),
         decoder_init_path=resolve_decoder_base(task, family),
-        guidance_mode="concat",
-        guidance_insertion_position=position,
+        guidance_mode=overrides.pop("guidance_mode", "concat"),
+        guidance_insertion_position=overrides.pop("guidance_insertion_position", position),
         **overrides,
     )
 
 # ===== FOLD ==================================================
-
 # ONLY CEDIRNET
+
 FOLD_CEDIRNET_GUIDANCE = [
     guided_spec("fold", "concat_after", "after_visual"),
     guided_spec("fold", "concat_before", "before_vlm"),
-]
-
+] # RAN
 FOLD_CEDIRNET_INTERFACE_GUIDANCE = [
     guided_spec("fold", "iface_after", "after_visual", guidance_use_interface_projection=True, guidance_interface_num_tokens=64),
     guided_spec("fold", "iface_before", "before_vlm", guidance_use_interface_projection=True, guidance_interface_num_tokens=64  ),
-]
-
+] # RUNNING BEFORE_VLM
 FOLD_CEDIRNET_GATED_GUIDANCE = [
     guided_spec("fold", "gated_after", "after_visual", guidance_concat_gating=True),
     guided_spec("fold", "gated_before", "before_vlm", guidance_concat_gating=True),
 ]
-
 FOLD_CEDIRNET_SELECTED_GUIDANCE = [
-    guided_spec("fold", "selected_after", "after_visual", guidance_mode="selected_layers", guidance_selected_layers=(11,)),
     guided_spec("fold", "selected_before", "before_vlm", guidance_mode="selected_layers", guidance_selected_layers=(11,)),
-]
+    guided_spec("fold", "selected_before", "before_vlm", guidance_mode="selected_layers", guidance_selected_layers=(6,12,18)),
+] # Running Before VLM
 
 # CEDIRNET AND DINO
 FOLD_BOTH_CEDIRNET_DINO_GUIDANCE = [
     guided_spec("fold", "concat_after", "after_visual", family="both"),
     guided_spec("fold", "concat_before", "before_vlm", family="both"),
 ]
-
 FOLD_BOTH_CEDIRNET_DINO_INTERFACE_GUIDANCE = [
     guided_spec("fold", "iface_after", "after_visual", family="both", guidance_use_interface_projection=True, guidance_interface_num_tokens=64),
     guided_spec("fold", "iface_before", "before_vlm", family="both", guidance_use_interface_projection=True, guidance_interface_num_tokens=64),
 ]
-
 FOLD_BOTH_CEDIRNET_DINO_GATED_GUIDANCE = [
     guided_spec("fold", "gated_after", "after_visual", family="both", guidance_concat_gating=True),
     guided_spec("fold", "gated_before", "before_vlm", family="both", guidance_concat_gating=True),
 ]
-
 FOLD_BOTH_CEDIRNET_DINO_SELECTED_GUIDANCE = [
     guided_spec("fold", "selected_after", "after_visual", family="both", guidance_mode="selected_layers", guidance_selected_layers=(11,)),
     guided_spec("fold", "selected_before", "before_vlm", family="both", guidance_mode="selected_layers", guidance_selected_layers=(11,)),
 ]
-
 # =============================================================
 
 
 # ===== BOX ===================================================
-
 # ONLY CEDIRNET
-
 BOX_CEDIRNET_GUIDANCE = [
     guided_spec("box", "concat_after", "after_visual"),
     guided_spec("box", "concat_before", "before_vlm"),
-]
-
+] # RAN
 BOX_CEDIRNET_INTERFACE_GUIDANCE = [
     guided_spec("box", "iface_after", "after_visual", guidance_use_interface_projection=True, guidance_interface_num_tokens=64),
     guided_spec("box", "iface_before", "before_vlm", guidance_use_interface_projection=True, guidance_interface_num_tokens=64),
-]
-
+] # RUNNING BEFORE_VLM
 BOX_CEDIRNET_GATED_GUIDANCE = [
     guided_spec("box", "gated_after", "after_visual", guidance_concat_gating=True),
     guided_spec("box", "gated_before", "before_vlm", guidance_concat_gating=True),
 ]
-
 BOX_CEDIRNET_SELECTED_GUIDANCE = [
-    guided_spec("box", "selected_after", "after_visual", guidance_mode="selected_layers", guidance_selected_layers=(11,)),
     guided_spec("box", "selected_before", "before_vlm", guidance_mode="selected_layers", guidance_selected_layers=(11,)),
+    guided_spec("box", "selected_before", "before_vlm", guidance_mode="selected_layers", guidance_selected_layers=(6,12,18)),
 ]
 
 # CEDIRNET AND DINO
@@ -260,27 +262,26 @@ BOX_BOTH_CEDIRNET_DINO_INTERFACE_GUIDANCE = [
     guided_spec("box", "iface_after", "after_visual", family="both", guidance_use_interface_projection=True, guidance_interface_num_tokens=64),
     guided_spec("box", "iface_before", "before_vlm", family="both", guidance_use_interface_projection=True, guidance_interface_num_tokens=64),
 ]
-
 BOX_BOTH_CEDIRNET_DINO_GATED_GUIDANCE = [
     guided_spec("box", "gated_after", "after_visual", family="both", guidance_concat_gating=True),
     guided_spec("box", "gated_before", "before_vlm", family="both", guidance_concat_gating=True),
 ]
-
 BOX_BOTH_CEDIRNET_DINO_GUIDANCE = [
     guided_spec("box", "concat_after", "after_visual", family="both"),
     guided_spec("box", "concat_before", "before_vlm", family="both"),
 ]
-
 BOX_BOTH_CEDIRNET_DINO_SELECTED_GUIDANCE = [
     guided_spec("box", "selected_after", "after_visual", family="both", guidance_mode="selected_layers", guidance_selected_layers=(11,)),
     guided_spec("box", "selected_before", "before_vlm", family="both", guidance_mode="selected_layers", guidance_selected_layers=(11,)),
 ]
-
 # =============================================================
 
 
-EXPERIMENTS = BOX_CEDIRNET_GUIDANCE
-
+# EXPERIMENTS = [FOLD_CEDIRNET_GUIDANCE[0]]
+# EXPERIMENTS = [BOX_CEDIRNET_GUIDANCE[0]]
+# EXPERIMENTS = [BOX_CEDIRNET_GUIDANCE[1]]
+EXPERIMENTS = [FOLD_CEDIRNET_SELECTED_GUIDANCE[0]]
+EXPERIMENTS = BOX_CEDIRNET_SELECTED_GUIDANCE
 def main() -> None:
     run_experiments(workspace_dir=WORKSPACE_DIR, defaults=DEFAULTS, experiments=EXPERIMENTS)
 
