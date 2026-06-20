@@ -144,16 +144,16 @@ NAME_PREFIX  = {"cedirnet": "cedir", "both": "both"}
 
 MODE_TAG = {
     "baseline": "baseline_control",
+    "hidden": "hidden_guidance_control",
     "concat_after": "concat_after_visual",
     "concat_before": "concat_before_vlm",
     "iface_after": "concat_iface_after_visual",
     "iface_before": "concat_iface_before_vlm",
-    "selected_after": "selected_layers_after_visual",
-    "selected_before": "selected_layers_before_vlm",
     "gated_after": "concat_gated_after_visual",
     "gated_before": "concat_gated_before_vlm",
     "selected_after": "selected_layers_after_visual",
     "selected_before": "selected_layers_before_vlm",
+    "shuffled": "shuffled_guidance_control",
 }
 
 XVLA_BASE = {
@@ -201,6 +201,10 @@ def guided_spec(task: str, mode: str, position: str, family: str = "cedirnet", *
         **overrides,
     )
 
+
+def ablation_spec(task: str, mode: str, family: str = "cedirnet", *, guidance_ablation_mode: str, **overrides) -> GuidedExperimentSpec:
+    return guided_spec(task, mode, "after_visual", family=family, guidance_ablation_mode=guidance_ablation_mode, **overrides)
+
 # ===== FOLD ==================================================
 # ONLY CEDIRNET
 
@@ -223,6 +227,12 @@ FOLD_CEDIRNET_SELECTED_GUIDANCE = [
 
 FOLD_CEDIRNET_BASELINE_CONTROL = [
     guided_spec("fold", "baseline", "after_visual", guidance_mode="disabled", expert_loss_weight=0.0, validation_include_no_guidance=False),
+]
+FOLD_CEDIRNET_HIDDEN_GUIDANCE_CONTROL = [
+    ablation_spec("fold", "hidden", guidance_ablation_mode="hidden_guidance"),
+]
+FOLD_CEDIRNET_SHUFFLED_GUIDANCE_CONTROL = [
+    ablation_spec("fold", "shuffled", guidance_ablation_mode="shuffled_guidance"),
 ]
 
 # CEDIRNET AND DINO
@@ -266,6 +276,12 @@ BOX_CEDIRNET_SELECTED_GUIDANCE = [
 
 BOX_CEDIRNET_BASELINE_CONTROL = [
     guided_spec("box", "baseline", "after_visual", guidance_mode="disabled", expert_loss_weight=0.0, validation_include_no_guidance=False),
+]
+BOX_CEDIRNET_HIDDEN_GUIDANCE_CONTROL = [
+    ablation_spec("box", "hidden", guidance_ablation_mode="hidden_guidance"),
+]
+BOX_CEDIRNET_SHUFFLED_GUIDANCE_CONTROL = [
+    ablation_spec("box", "shuffled", guidance_ablation_mode="shuffled_guidance"),
 ]
 
 # CEDIRNET AND DINO

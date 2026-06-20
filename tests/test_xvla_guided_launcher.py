@@ -15,6 +15,7 @@ def test_guided_launcher_resolves_stage_defaults(tmp_path):
     assert resolved.fusion_mode == "concat"
     assert resolved.guidance_mode == "concat"
     assert resolved.guidance_insertion_position == "after_visual"
+    assert resolved.guidance_ablation_mode == "none"
     assert resolved.guidance_train_mode == "frozen"
     assert resolved.guidance_unfreeze_step == 1000
     assert resolved.guidance_training_schedule == "decoder_warmup_then_policy"
@@ -77,12 +78,13 @@ def test_guided_launcher_resolves_dino_guidance_expert(tmp_path):
 
 def test_guided_launcher_supports_interface_and_position_overrides(tmp_path):
     defaults = GuidedLaunchConfig(hf_user="tester", dataset_name="dataset", xvla_init_path="lerobot/xvla-base", decoder_init_path="/tmp/decoder")
-    resolved = resolve_experiment(tmp_path, defaults, GuidedExperimentSpec(guidance_mode="concat", guidance_insertion_position="before_vlm", guidance_use_interface_projection=True, guidance_interface_num_tokens=4, guidance_concat_gating=True))
+    resolved = resolve_experiment(tmp_path, defaults, GuidedExperimentSpec(guidance_mode="concat", guidance_insertion_position="before_vlm", guidance_use_interface_projection=True, guidance_interface_num_tokens=4, guidance_concat_gating=True, guidance_ablation_mode="hidden_guidance"))
     assert resolved.guidance_mode == "concat"
     assert resolved.guidance_insertion_position == "before_vlm"
     assert resolved.guidance_use_interface_projection is True
     assert resolved.guidance_interface_num_tokens == 4
     assert resolved.guidance_concat_gating is True
+    assert resolved.guidance_ablation_mode == "hidden_guidance"
 
 
 def test_guided_launcher_allows_normalization_and_resume_override(tmp_path):

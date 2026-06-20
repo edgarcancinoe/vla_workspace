@@ -10,7 +10,7 @@ for candidate in [Path(__file__).resolve().parents[2] / "repos" / "lerobot" / "s
 from lerobot.policies.xvla.action_contract import build_slice_map, get_so101_slice_spec
 from lerobot.policies.xvla.modeling_xvla import pad_tensor_along_dim, pad_vector
 from lerobot.processor.slice_processor import SliceProcessorStep
-from thesis_vla.training.xvla_guided_trainer import GuidedScheduleState, GuidedXVLATrainConfig, _concat_gate_stats, _configure_explicit_stage_trainability, _episode_split_indices, _guidance_conditioning, _guidance_schedule_state, _maybe_init_wandb, _validation_metrics, assert_guided_resume_compatible, build_xvla_runtime, compute_guidance_loss, compute_guided_action_loss_from_encoder
+from thesis_vla.training.xvla_guided_trainer import GuidedScheduleState, GuidedXVLATrainConfig, _apply_guidance_ablation, _concat_gate_stats, _configure_explicit_stage_trainability, _episode_split_indices, _guidance_conditioning, _guidance_schedule_state, _maybe_init_wandb, _validation_metrics, assert_guided_resume_compatible, build_xvla_runtime, compute_guidance_loss, compute_guided_action_loss_from_encoder
 from thesis_vla.visual_thought.targets import TeacherTarget
 
 
@@ -114,6 +114,38 @@ def test_guidance_conditioning_can_disable_corruption_during_training():
     conditioned, available = _guidance_conditioning(guidance_tokens, config, mode="train", corruption_enabled=False)
     assert torch.equal(conditioned, guidance_tokens)
     assert torch.equal(available, torch.ones(2, 1, 1))
+
+
+def test_guidance_ablation_mode_validation_and_disabled_reset():
+    config = GuidedXVLATrainConfig(name="guided", xvla_init_path="base", decoder_init_path="decoder", decoder_stack_config_path="stack.yaml", decoder_task_config_path="task.yaml", dataset_repo_id="user/dataset", dataset_revision="main", dataset_root=None, output_dir="/tmp/out", device="cpu", guidance_ablation_mode="hidden_guidance")
+    assert config.guidance_ablation_mode == "hidden_guidance"
+    disabled = GuidedXVLATrainConfig(name="guided", xvla_init_path="base", decoder_init_path="decoder", decoder_stack_config_path="stack.yaml", decoder_task_config_path="task.yaml", dataset_repo_id="user/dataset", dataset_revision="main", dataset_root=None, output_dir="/tmp/out", device="cpu", guidance_mode="disabled", guidance_ablation_mode="shuffled_guidance")
+    assert disabled.guidance_ablation_mode == "none"
+
+
+def test_guidance_ablation_hidden_and_shuffled_modes():
+    guidance_tokens = torch.arange(24, dtype=torch.float32).view(2, 2, 6)
+    guidance_available = torch.ones(2, 1, 1)
+    hidden_cfg = GuidedXVLATrainConfig(name="guided", xvla_init_path="base", decoder_init_path="decoder", decoder_stack_config_path="stack.yaml", decoder_task_config_path="task.yaml", dataset_repo_id="user/dataset", dataset_revision="main", dataset_root=None, output_dir="/tmp/out", device="cpu", guidance_ablation_mode="hidden_guidance")
+    hidden_tokens, hidden_available, hidden_stats = _apply_guidance_ablation(guidance_tokens, guidance_available, hidden_cfg, mode="train")
+    shuffled_cfg = GuidedXVLATrainConfig(name="guided", xvla_init_path="base", decoder_init_path="decoder", decoder_stack_config_path="stack.yaml", decoder_task_config_path="task.yaml", dataset_repo_id="user/dataset", dataset_revision="main", dataset_root=None, output_dir="/tmp/out", device="cpu", guidance_ablation_mode="shuffled_guidance")
+    shuffled_tokens, shuffled_available, shuffled_stats = _apply_guidance_ablation(guidance_tokens, guidance_available, shuffled_cfg, mode="train")
+    assert torch.equal(hidden_tokens, torch.zeros_like(guidance_tokens))
+    assert torch.equal(hidden_available, torch.zeros_like(guidance_available))
+    assert hidden_stats == {"guidance_ablation_applied": 1.0, "guidance_ablation_hidden_fallback": 1.0}
+    assert torch.equal(shuffled_tokens, guidance_tokens.flip(0))
+    assert torch.equal(shuffled_available, guidance_available.flip(0))
+    assert shuffled_stats == {"guidance_ablation_applied": 1.0, "guidance_ablation_hidden_fallback": 0.0}
+
+
+def test_guidance_ablation_shuffled_falls_back_for_singleton_batch():
+    guidance_tokens = torch.ones(1, 2, 6)
+    guidance_available = torch.ones(1, 1, 1)
+    config = GuidedXVLATrainConfig(name="guided", xvla_init_path="base", decoder_init_path="decoder", decoder_stack_config_path="stack.yaml", decoder_task_config_path="task.yaml", dataset_repo_id="user/dataset", dataset_revision="main", dataset_root=None, output_dir="/tmp/out", device="cpu", guidance_ablation_mode="shuffled_guidance")
+    ablated_tokens, ablated_available, stats = _apply_guidance_ablation(guidance_tokens, guidance_available, config, mode="train")
+    assert torch.equal(ablated_tokens, torch.zeros_like(guidance_tokens))
+    assert torch.equal(ablated_available, torch.zeros_like(guidance_available))
+    assert stats == {"guidance_ablation_applied": 1.0, "guidance_ablation_hidden_fallback": 1.0}
 
 
 def test_guidance_loss_helper_smoke():
