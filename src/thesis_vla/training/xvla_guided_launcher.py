@@ -72,6 +72,7 @@ class GuidedLaunchConfig:
     guidance_interface_num_tokens: int | None = None
     guidance_concat_gating: bool = False
     guidance_selected_layers: tuple[int, ...] = ()
+    guidance_ablation_mode: str = "none"
     guidance_train_mode: str = "frozen"
     guidance_unfreeze_step: int = 1_000
     guidance_training_schedule: str = "decoder_warmup_then_policy"
@@ -135,6 +136,7 @@ class GuidedExperimentSpec:
     guidance_interface_num_tokens: int | None = None
     guidance_concat_gating: bool | None = None
     guidance_selected_layers: tuple[int, ...] | None = None
+    guidance_ablation_mode: str | None = None
     guidance_train_mode: str | None = None
     guidance_unfreeze_step: int | None = None
     guidance_training_schedule: str | None = None
@@ -198,6 +200,7 @@ class ResolvedGuidedExperiment:
     guidance_interface_num_tokens: int | None
     guidance_concat_gating: bool
     guidance_selected_layers: tuple[int, ...]
+    guidance_ablation_mode: str
     guidance_train_mode: str
     guidance_unfreeze_step: int
     guidance_training_schedule: str
@@ -251,7 +254,7 @@ def _with_overrides(base, **overrides):
 
 def _stage_defaults(path: str | Path) -> dict:
     payload = _read_yaml(path)
-    return {key: payload[key] for key in ["fusion_mode", "guidance_fusion_mode", "gated_fusion", "guidance_mode", "guidance_insertion_position", "guidance_use_interface_projection", "guidance_interface_num_tokens", "guidance_concat_gating", "guidance_selected_layers", "guidance_train_mode", "guidance_unfreeze_step", "guidance_training_schedule", "guidance_warmup_steps", "guidance_phase2_expert_loss_weight", "guidance_corruption_restore_step", "freeze_xvla_vlm", "action_loss_weight", "expert_loss_weight"] if key in payload}
+    return {key: payload[key] for key in ["fusion_mode", "guidance_fusion_mode", "gated_fusion", "guidance_mode", "guidance_insertion_position", "guidance_use_interface_projection", "guidance_interface_num_tokens", "guidance_concat_gating", "guidance_selected_layers", "guidance_ablation_mode", "guidance_train_mode", "guidance_unfreeze_step", "guidance_training_schedule", "guidance_warmup_steps", "guidance_phase2_expert_loss_weight", "guidance_corruption_restore_step", "freeze_xvla_vlm", "action_loss_weight", "expert_loss_weight"] if key in payload}
 
 
 def _default_stage_config_path(guidance_expert_type: str) -> str:
@@ -274,6 +277,7 @@ def _resolve_guidance_settings(*, defaults: GuidedLaunchConfig, experiment: Guid
     guidance_interface_num_tokens = experiment.guidance_interface_num_tokens if experiment.guidance_interface_num_tokens is not None else stage_defaults.get("guidance_interface_num_tokens", defaults.guidance_interface_num_tokens)
     guidance_concat_gating = experiment.guidance_concat_gating if experiment.guidance_concat_gating is not None else stage_defaults.get("guidance_concat_gating", defaults.guidance_concat_gating)
     guidance_selected_layers = experiment.guidance_selected_layers if experiment.guidance_selected_layers is not None else stage_defaults.get("guidance_selected_layers", defaults.guidance_selected_layers)
+    guidance_ablation_mode = experiment.guidance_ablation_mode if experiment.guidance_ablation_mode is not None else stage_defaults.get("guidance_ablation_mode", defaults.guidance_ablation_mode)
     if experiment.guidance_mode is None and "guidance_mode" not in stage_defaults:
         guidance_mode, gated_from_alias = guidance_mode_from_fusion_alias(fusion_mode, gated_fusion)
         if guidance_mode == "concat":
@@ -281,6 +285,7 @@ def _resolve_guidance_settings(*, defaults: GuidedLaunchConfig, experiment: Guid
     guidance_mode = normalize_guidance_mode(guidance_mode)
     guidance_insertion_position = normalize_guidance_insertion_position(guidance_insertion_position)
     guidance_selected_layers = tuple(sorted(set(int(idx) for idx in (guidance_selected_layers or ()))))
+    guidance_ablation_mode = str(guidance_ablation_mode).strip().lower()
     fusion_mode = "gated_concat" if guidance_mode == "concat" and bool(guidance_concat_gating) else guidance_mode
     return {
         "fusion_mode": fusion_mode,
@@ -290,6 +295,7 @@ def _resolve_guidance_settings(*, defaults: GuidedLaunchConfig, experiment: Guid
         "guidance_interface_num_tokens": None if guidance_interface_num_tokens is None else int(guidance_interface_num_tokens),
         "guidance_concat_gating": bool(guidance_concat_gating),
         "guidance_selected_layers": guidance_selected_layers,
+        "guidance_ablation_mode": guidance_ablation_mode,
     }
 
 
@@ -351,6 +357,7 @@ def resolve_experiment(workspace_dir: Path, defaults: GuidedLaunchConfig, experi
         guidance_interface_num_tokens=guidance_settings["guidance_interface_num_tokens"],
         guidance_concat_gating=guidance_settings["guidance_concat_gating"],
         guidance_selected_layers=guidance_settings["guidance_selected_layers"],
+        guidance_ablation_mode=guidance_settings["guidance_ablation_mode"],
         guidance_train_mode=experiment.guidance_train_mode or str(stage_defaults.get("guidance_train_mode", defaults.guidance_train_mode)),
         guidance_unfreeze_step=experiment.guidance_unfreeze_step if experiment.guidance_unfreeze_step is not None else int(stage_defaults.get("guidance_unfreeze_step", defaults.guidance_unfreeze_step)),
         guidance_training_schedule=experiment.guidance_training_schedule or str(stage_defaults.get("guidance_training_schedule", defaults.guidance_training_schedule)),
@@ -456,6 +463,7 @@ def print_run_summary(index: int, total: int, resolved: ResolvedGuidedExperiment
     print(f"  Decoder Init:       {resolved.decoder_init_path}")
     print(f"  Fusion:             {resolved.fusion_mode}")
     print(f"  Guidance Mode:      {resolved.guidance_mode}")
+    print(f"  Guidance Ablation:  {resolved.guidance_ablation_mode}")
     print(f"  Guidance Position:  {resolved.guidance_insertion_position}")
     if resolved.guidance_mode == "concat":
         print(f"  Guidance Interface: {resolved.guidance_use_interface_projection} tokens={resolved.guidance_interface_num_tokens}")
