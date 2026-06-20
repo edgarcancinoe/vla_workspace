@@ -84,6 +84,7 @@ class GuidedXVLATrainConfig:
     guidance_use_interface_projection: bool = False
     guidance_interface_num_tokens: int | None = None
     guidance_concat_gating: bool = False
+    guidance_selected_layer_gating: bool = False
     guidance_selected_layers: tuple[int, ...] = ()
     guidance_ablation_mode: str = "none"
     guidance_train_mode: str = "frozen"
@@ -127,6 +128,7 @@ class GuidedXVLATrainConfig:
             self.guidance_use_interface_projection = False
             self.guidance_interface_num_tokens = None
             self.guidance_concat_gating = False
+            self.guidance_selected_layer_gating = False
             self.guidance_selected_layers = ()
             self.guidance_ablation_mode = "none"
             self.validation_include_no_guidance = False
@@ -135,6 +137,8 @@ class GuidedXVLATrainConfig:
             if self.guidance_use_interface_projection: raise ValueError("selected_layers mode does not support guidance_use_interface_projection in v1.")
             if self.guidance_concat_gating: raise ValueError("selected_layers mode does not support guidance_concat_gating in v1.")
             if len(self.guidance_selected_layers) == 0: raise ValueError("selected_layers mode requires a non-empty guidance_selected_layers tuple.")
+        elif self.guidance_selected_layer_gating:
+            raise ValueError("guidance_selected_layer_gating requires guidance_mode='selected_layers'.")
         if self.guidance_expert_type not in {"cedirnet", "dino"}: raise ValueError(f"guidance_expert_type must be one of: cedirnet, dino. Got {self.guidance_expert_type!r}.")
         if not 0.0 <= float(self.guidance_dropout_prob) <= 1.0: raise ValueError("guidance_dropout_prob must be in [0, 1].")
         if not 0.0 <= float(self.guidance_noise_prob) <= 1.0: raise ValueError("guidance_noise_prob must be in [0, 1].")
@@ -318,6 +322,7 @@ def assert_guided_resume_compatible(config: GuidedXVLATrainConfig, snapshot: dic
     _resume_check("guidance_use_interface_projection", bool(config.guidance_use_interface_projection), snapshot.get("guidance_use_interface_projection"))
     _resume_check("guidance_interface_num_tokens", config.guidance_interface_num_tokens, snapshot.get("guidance_interface_num_tokens"))
     _resume_check("guidance_concat_gating", bool(config.guidance_concat_gating), snapshot.get("guidance_concat_gating"))
+    _resume_check("guidance_selected_layer_gating", bool(config.guidance_selected_layer_gating), snapshot.get("guidance_selected_layer_gating"))
     _resume_check("guidance_selected_layers", tuple(config.guidance_selected_layers), snapshot.get("guidance_selected_layers"))
     _resume_check("guidance_ablation_mode", config.guidance_ablation_mode, snapshot.get("guidance_ablation_mode"))
     _resume_check("guidance_train_mode", config.guidance_train_mode, snapshot.get("guidance_train_mode"))
@@ -403,6 +408,7 @@ def _init_guided_policy_from_base(runtime: XVLARuntime, config: GuidedXVLATrainC
         guidance_use_interface_projection=bool(config.guidance_use_interface_projection),
         guidance_interface_num_tokens=config.guidance_interface_num_tokens,
         guidance_concat_gating=bool(config.guidance_concat_gating),
+        guidance_selected_layer_gating=bool(config.guidance_selected_layer_gating),
         guidance_selected_layers=config.guidance_selected_layers,
         guidance_train_mode=config.guidance_train_mode,
         guidance_unfreeze_step=config.guidance_unfreeze_step,

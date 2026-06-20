@@ -82,6 +82,7 @@ class GuidedSoftPromptedTransformer(nn.Module):
         guidance_use_interface_projection: bool,
         guidance_interface_num_tokens: int | None,
         guidance_concat_gating: bool,
+        guidance_selected_layer_gating: bool,
         guidance_selected_layers: tuple[int, ...] | list[int],
     ) -> None:
         super().__init__()
@@ -93,9 +94,10 @@ class GuidedSoftPromptedTransformer(nn.Module):
         self.guidance_insertion_position = str(guidance_insertion_position).lower()
         self.guidance_use_interface_projection = bool(guidance_use_interface_projection)
         self.guidance_concat_gating = bool(guidance_concat_gating)
+        self.guidance_selected_layer_gating = bool(guidance_selected_layer_gating)
         self.guidance_selected_layers = tuple(sorted(set(int(idx) for idx in guidance_selected_layers)))
         self.guidance_fusion_mode = "gated_concat" if self.guidance_mode == "concat" and self.guidance_concat_gating else self.guidance_mode
-        self.guidance_gated = bool(self.guidance_concat_gating)
+        self.guidance_gated = bool(self.guidance_concat_gating or self.guidance_selected_layer_gating)
         self.blocks = nn.ModuleList([TransformerBlock(hidden_size, num_heads, mlp_ratio=mlp_ratio) for _ in range(depth)])
         if self.use_hetero_proj:
             self.vlm_proj = DomainAwareLinear(multi_modal_input_size, hidden_size, num_domains=num_domains)
@@ -114,6 +116,7 @@ class GuidedSoftPromptedTransformer(nn.Module):
             self.soft_prompt_hub = nn.Embedding(num_domains, self.len_soft_prompts * hidden_size)
             nn.init.normal_(self.soft_prompt_hub.weight, std=0.02)
         self.concat_gate = nn.Linear(hidden_size * 2, 1) if self.guidance_concat_gating else None
+        self.selected_layer_gate = nn.Linear(hidden_size * 2, 1) if self.guidance_selected_layer_gating else None
         self.guidance_interface = None if not self.guidance_use_interface_projection else GuidanceInterfaceProjector(hidden_size=hidden_size, num_tokens=int(guidance_interface_num_tokens or 0), num_heads=guidance_num_heads, dropout=0.1)
         self.apply(basic_init)
 
@@ -139,12 +142,16 @@ class GuidedSoftPromptedTransformer(nn.Module):
     def _apply_concat_fusion(self, action_proj: torch.Tensor, z_proj: torch.Tensor, aux_proj: torch.Tensor, guidance_tokens: torch.Tensor) -> torch.Tensor:
         appended = guidance_tokens
         if self.concat_gate is not None:
-            pooled_visual = torch.cat([z_proj, aux_proj], dim=1).mean(dim=1)
-            pooled_guidance = guidance_tokens.mean(dim=1)
-            gate = torch.sigmoid(self.concat_gate(torch.cat([pooled_visual, pooled_guidance], dim=-1))).view(-1, 1, 1)
+            gate = self._guidance_gate(self.concat_gate, torch.cat([z_proj, aux_proj], dim=1), guidance_tokens)
             appended = gate * guidance_tokens
         if self.guidance_insertion_position == "before_vlm": return torch.cat([action_proj, appended, z_proj, aux_proj], dim=1)
         return torch.cat([action_proj, z_proj, aux_proj, appended], dim=1)
+
+    def _guidance_gate(self, gate_layer: nn.Linear | None, native_tokens: torch.Tensor, guidance_tokens: torch.Tensor) -> torch.Tensor:
+        if gate_layer is None: return torch.ones((guidance_tokens.shape[0], 1, 1), device=guidance_tokens.device, dtype=guidance_tokens.dtype)
+        pooled_native = native_tokens.mean(dim=1)
+        pooled_guidance = guidance_tokens.mean(dim=1)
+        return torch.sigmoid(gate_layer(torch.cat([pooled_native, pooled_guidance], dim=-1))).view(-1, 1, 1)
 
     def _append_soft_prompts(self, x: torch.Tensor, domain_id: torch.LongTensor) -> torch.Tensor:
         if self.len_soft_prompts <= 0: return x
@@ -167,7 +174,8 @@ class GuidedSoftPromptedTransformer(nn.Module):
             return torch.cat([base_mask[:, :action_len], guidance_keep_mask, base_mask[:, action_len:], soft_mask], dim=1)
         return torch.cat([base_mask, guidance_keep_mask, soft_mask], dim=1)
 
-    def _run_selected_layer_with_guidance(self, block: nn.Module, x: torch.Tensor, guidance_tokens: torch.Tensor, guidance_available: torch.Tensor, *, action_len: int, visual_len: int, base_nonsoft_len: int) -> torch.Tensor:
+    def _run_selected_layer_with_guidance(self, block: nn.Module, x: torch.Tensor, guidance_tokens: torch.Tensor, guidance_available: torch.Tensor, *, action_len: int, visual_len: int, base_nonsoft_len: int, guidance_gate: torch.Tensor | None = None) -> torch.Tensor:
+        guidance_tokens = guidance_tokens if guidance_gate is None else guidance_gate * guidance_tokens
         guidance_len = int(guidance_tokens.shape[1]); soft_len = int(x.shape[1] - (action_len + visual_len)); pos_start = self._selected_layer_pos_start(action_len, base_nonsoft_len)
         if pos_start + guidance_len > self.pos_emb.shape[1]: raise ValueError(f"Guidance insertion requires positional slots up to {pos_start + guidance_len}, exceeding max_len_seq={self.pos_emb.shape[1]}.")
         guidance_with_pos = guidance_tokens + self.pos_emb[:, pos_start : pos_start + guidance_len, :]
@@ -211,8 +219,9 @@ class GuidedSoftPromptedTransformer(nn.Module):
             x = x + self.pos_emb[:, :base_nonsoft_len, :]
             x = self._append_soft_prompts(x, domain_id)
             guidance_context = guidance_context * guidance_available
+            selected_layer_gate = self._guidance_gate(self.selected_layer_gate, torch.cat([z_proj, aux_proj], dim=1), guidance_context) if self.selected_layer_gate is not None else None
             for idx, block in enumerate(self.blocks):
-                x = self._run_selected_layer_with_guidance(block, x, guidance_context, guidance_available, action_len=action_len, visual_len=visual_len, base_nonsoft_len=base_nonsoft_len) if idx in self.guidance_selected_layers else self._run_block(block, x)
+                x = self._run_selected_layer_with_guidance(block, x, guidance_context, guidance_available, action_len=action_len, visual_len=visual_len, base_nonsoft_len=base_nonsoft_len, guidance_gate=selected_layer_gate) if idx in self.guidance_selected_layers else self._run_block(block, x)
         return self.action_decoder(self.norm(x[:, : action_with_noise.shape[1]]), domain_id)
 
 
@@ -244,6 +253,7 @@ class XVLAGuidedModel(XVLAModel):
             guidance_use_interface_projection=config.guidance_use_interface_projection,
             guidance_interface_num_tokens=config.guidance_appended_num_tokens if config.guidance_use_interface_projection else None,
             guidance_concat_gating=config.guidance_concat_gating,
+            guidance_selected_layer_gating=config.guidance_selected_layer_gating,
             guidance_selected_layers=config.guidance_selected_layers,
         )
         self._apply_freezing()

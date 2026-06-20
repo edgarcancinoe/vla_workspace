@@ -152,6 +152,7 @@ MODE_TAG = {
     "gated_before": "concat_gated_before_vlm",
     "selected_after": "selected_layers_after_visual",
     "selected_before": "selected_layers_before_vlm",
+    "selected_gated_before": "selected_layers_gated_before_vlm",
     "shuffled": "shuffled_guidance_control",
 }
 
@@ -218,6 +219,10 @@ FOLD_CEDIRNET_SELECTED_GUIDANCE = [
     guided_spec("fold", "selected_before", "before_vlm", guidance_mode="selected_layers", guidance_selected_layers=(11,)),
     guided_spec("fold", "selected_before", "before_vlm", guidance_mode="selected_layers", guidance_selected_layers=(6,12,18)),
 ] # Running Before VLM
+FOLD_CEDIRNET_SELECTED_GATED_GUIDANCE = [
+    guided_spec("fold", "selected_gated_before", "before_vlm", guidance_mode="selected_layers", guidance_selected_layer_gating=True, guidance_selected_layers=(11,)),
+    guided_spec("fold", "selected_gated_before", "before_vlm", guidance_mode="selected_layers", guidance_selected_layer_gating=True, guidance_selected_layers=(6,12,18)),
+]
 
 # BASELINES --------------------
 FOLD_CEDIRNET_BASELINE_CONTROL = [
@@ -241,6 +246,10 @@ FOLD_BOTH_CEDIRNET_DINO_GATED_GUIDANCE = [
 FOLD_BOTH_CEDIRNET_DINO_SELECTED_GUIDANCE = [
     guided_spec("fold", "selected_before", "before_vlm", family="both", guidance_mode="selected_layers", guidance_selected_layers=(11,)),
     guided_spec("fold", "selected_before", "before_vlm", family="both", guidance_mode="selected_layers", guidance_selected_layers=(6,12,18)),
+]
+FOLD_BOTH_CEDIRNET_DINO_SELECTED_GATED_GUIDANCE = [
+    guided_spec("fold", "selected_gated_before", "before_vlm", family="both", guidance_mode="selected_layers", guidance_selected_layer_gating=True, guidance_selected_layers=(11,)),
+    guided_spec("fold", "selected_gated_before", "before_vlm", family="both", guidance_mode="selected_layers", guidance_selected_layer_gating=True, guidance_selected_layers=(6,12,18)),
 ]
 FOLD_BOTH_CEDIRNET_DINO_BASELINE_CONTROL = [
     guided_spec("fold", "baseline", "after_visual", family="both", guidance_mode="disabled", expert_loss_weight=0.0, validation_include_no_guidance=False),
@@ -267,6 +276,10 @@ BOX_CEDIRNET_SELECTED_GUIDANCE = [
     guided_spec("box", "selected_before", "before_vlm", guidance_mode="selected_layers", guidance_selected_layers=(11,)),
     guided_spec("box", "selected_before", "before_vlm", guidance_mode="selected_layers", guidance_selected_layers=(6,12,18)),
 ]
+BOX_CEDIRNET_SELECTED_GATED_GUIDANCE = [
+    guided_spec("box", "selected_gated_before", "before_vlm", guidance_mode="selected_layers", guidance_selected_layer_gating=True, guidance_selected_layers=(11,)),
+    guided_spec("box", "selected_gated_before", "before_vlm", guidance_mode="selected_layers", guidance_selected_layer_gating=True, guidance_selected_layers=(6,12,18)),
+]
 
 BOX_CEDIRNET_BASELINE_CONTROL = [
     guided_spec("box", "baseline", "after_visual", guidance_mode="disabled", expert_loss_weight=0.0, validation_include_no_guidance=False),
@@ -288,6 +301,10 @@ BOX_BOTH_CEDIRNET_DINO_GUIDANCE = [
 BOX_BOTH_CEDIRNET_DINO_SELECTED_GUIDANCE = [
     guided_spec("box", "selected_before", "before_vlm", family="both", guidance_mode="selected_layers", guidance_selected_layers=(11,)),
     guided_spec("box", "selected_before", "before_vlm", family="both", guidance_mode="selected_layers", guidance_selected_layers=(6,12,18)),
+]
+BOX_BOTH_CEDIRNET_DINO_SELECTED_GATED_GUIDANCE = [
+    guided_spec("box", "selected_gated_before", "before_vlm", family="both", guidance_mode="selected_layers", guidance_selected_layer_gating=True, guidance_selected_layers=(11,)),
+    guided_spec("box", "selected_gated_before", "before_vlm", family="both", guidance_mode="selected_layers", guidance_selected_layer_gating=True, guidance_selected_layers=(6,12,18)),
 ]
 BOX_BOTH_CEDIRNET_DINO_BASELINE_CONTROL = [
     guided_spec("box", "baseline", "after_visual", family="both", guidance_mode="disabled", expert_loss_weight=0.0, validation_include_no_guidance=False),

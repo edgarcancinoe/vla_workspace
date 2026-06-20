@@ -94,12 +94,12 @@ def _make_guided_config(guidance_expert_type="cedirnet", **overrides):
 
 def test_guided_transformer_supports_concat_and_selected_layer_variants():
     variants = [
-        dict(guidance_mode="concat", guidance_insertion_position="after_visual", guidance_use_interface_projection=False, guidance_interface_num_tokens=None, guidance_concat_gating=False, guidance_selected_layers=()),
-        dict(guidance_mode="concat", guidance_insertion_position="before_vlm", guidance_use_interface_projection=False, guidance_interface_num_tokens=None, guidance_concat_gating=False, guidance_selected_layers=()),
-        dict(guidance_mode="concat", guidance_insertion_position="before_vlm", guidance_use_interface_projection=True, guidance_interface_num_tokens=3, guidance_concat_gating=False, guidance_selected_layers=()),
-        dict(guidance_mode="concat", guidance_insertion_position="before_vlm", guidance_use_interface_projection=False, guidance_interface_num_tokens=None, guidance_concat_gating=True, guidance_selected_layers=()),
-        dict(guidance_mode="selected_layers", guidance_insertion_position="before_vlm", guidance_use_interface_projection=False, guidance_interface_num_tokens=None, guidance_concat_gating=False, guidance_selected_layers=(1,)),
-        dict(guidance_mode="selected_layers", guidance_insertion_position="after_visual", guidance_use_interface_projection=False, guidance_interface_num_tokens=None, guidance_concat_gating=False, guidance_selected_layers=(0, 1)),
+        dict(guidance_mode="concat", guidance_insertion_position="after_visual", guidance_use_interface_projection=False, guidance_interface_num_tokens=None, guidance_concat_gating=False, guidance_selected_layer_gating=False, guidance_selected_layers=()),
+        dict(guidance_mode="concat", guidance_insertion_position="before_vlm", guidance_use_interface_projection=False, guidance_interface_num_tokens=None, guidance_concat_gating=False, guidance_selected_layer_gating=False, guidance_selected_layers=()),
+        dict(guidance_mode="concat", guidance_insertion_position="before_vlm", guidance_use_interface_projection=True, guidance_interface_num_tokens=3, guidance_concat_gating=False, guidance_selected_layer_gating=False, guidance_selected_layers=()),
+        dict(guidance_mode="concat", guidance_insertion_position="before_vlm", guidance_use_interface_projection=False, guidance_interface_num_tokens=None, guidance_concat_gating=True, guidance_selected_layer_gating=False, guidance_selected_layers=()),
+        dict(guidance_mode="selected_layers", guidance_insertion_position="before_vlm", guidance_use_interface_projection=False, guidance_interface_num_tokens=None, guidance_concat_gating=False, guidance_selected_layer_gating=False, guidance_selected_layers=(1,)),
+        dict(guidance_mode="selected_layers", guidance_insertion_position="after_visual", guidance_use_interface_projection=False, guidance_interface_num_tokens=None, guidance_concat_gating=False, guidance_selected_layer_gating=True, guidance_selected_layers=(0, 1)),
     ]
     for kwargs in variants:
         model = GuidedSoftPromptedTransformer(hidden_size=16, multi_modal_input_size=16, guidance_input_size=8, depth=2, num_heads=4, guidance_num_heads=4, mlp_ratio=2.0, num_domains=3, dim_action=4, dim_propio=4, dim_time=8, len_soft_prompts=2, max_len_seq=64, use_hetero_proj=False, **kwargs)
@@ -112,7 +112,7 @@ def test_guided_transformer_supports_legacy_blocks_without_token_keep_mask():
         def forward(self, x):
             return x
 
-    model = GuidedSoftPromptedTransformer(hidden_size=16, multi_modal_input_size=16, guidance_input_size=8, depth=1, num_heads=4, guidance_num_heads=4, mlp_ratio=2.0, num_domains=3, dim_action=4, dim_propio=4, dim_time=8, len_soft_prompts=2, max_len_seq=64, use_hetero_proj=False, guidance_mode="concat", guidance_insertion_position="after_visual", guidance_use_interface_projection=False, guidance_interface_num_tokens=None, guidance_concat_gating=False, guidance_selected_layers=())
+    model = GuidedSoftPromptedTransformer(hidden_size=16, multi_modal_input_size=16, guidance_input_size=8, depth=1, num_heads=4, guidance_num_heads=4, mlp_ratio=2.0, num_domains=3, dim_action=4, dim_propio=4, dim_time=8, len_soft_prompts=2, max_len_seq=64, use_hetero_proj=False, guidance_mode="concat", guidance_insertion_position="after_visual", guidance_use_interface_projection=False, guidance_interface_num_tokens=None, guidance_concat_gating=False, guidance_selected_layer_gating=False, guidance_selected_layers=())
     model.blocks = nn.ModuleList([_LegacyBlock()])
     out = model(domain_id=torch.zeros(2, dtype=torch.long), vlm_features=torch.randn(2, 6, 16), aux_visual_inputs=torch.randn(2, 4, 16), guidance_tokens=torch.randn(2, 5, 8), guidance_available=torch.ones(2, 1, 1), action_with_noise=torch.randn(2, 4, 4), proprio=torch.randn(2, 4), t=torch.rand(2))
     assert out.shape == (2, 4, 4)
@@ -146,7 +146,7 @@ def test_guided_transformer_concat_sequence_shape_rules():
     vlm_features, aux_visual_inputs, guidance_tokens = torch.randn(2, 6, 16), torch.randn(2, 4, 16), torch.randn(2, 5, 8)
     action_with_noise, proprio, t = torch.randn(2, 4, 4), torch.randn(2, 4), torch.rand(2)
     for use_interface, gating in [(False, False), (True, False), (False, True)]:
-        model = GuidedSoftPromptedTransformer(hidden_size=16, multi_modal_input_size=16, guidance_input_size=8, depth=2, num_heads=4, guidance_num_heads=4, mlp_ratio=2.0, num_domains=3, dim_action=4, dim_propio=4, dim_time=8, len_soft_prompts=2, max_len_seq=64, use_hetero_proj=False, guidance_mode="concat", guidance_insertion_position="before_vlm", guidance_use_interface_projection=use_interface, guidance_interface_num_tokens=3 if use_interface else None, guidance_concat_gating=gating, guidance_selected_layers=())
+        model = GuidedSoftPromptedTransformer(hidden_size=16, multi_modal_input_size=16, guidance_input_size=8, depth=2, num_heads=4, guidance_num_heads=4, mlp_ratio=2.0, num_domains=3, dim_action=4, dim_propio=4, dim_time=8, len_soft_prompts=2, max_len_seq=64, use_hetero_proj=False, guidance_mode="concat", guidance_insertion_position="before_vlm", guidance_use_interface_projection=use_interface, guidance_interface_num_tokens=3 if use_interface else None, guidance_concat_gating=gating, guidance_selected_layer_gating=False, guidance_selected_layers=())
         action_proj, z_proj, aux_proj = model._project_native_tokens(domain_id, vlm_features, aux_visual_inputs, action_with_noise, proprio, t)
         guidance_proj = model._prepare_guidance_context(guidance_tokens, domain_id)
         fused = model._apply_concat_fusion(action_proj, z_proj, aux_proj, guidance_proj)
@@ -160,8 +160,8 @@ def test_guided_transformer_no_guidance_is_invariant_for_concat_and_selected_lay
     guidance_a, guidance_b = torch.randn(2, 5, 8), torch.randn(2, 5, 8)
     guidance_off = torch.zeros(2, 1, 1)
     for kwargs in [
-        dict(guidance_mode="concat", guidance_insertion_position="before_vlm", guidance_use_interface_projection=False, guidance_interface_num_tokens=None, guidance_concat_gating=False, guidance_selected_layers=()),
-        dict(guidance_mode="selected_layers", guidance_insertion_position="before_vlm", guidance_use_interface_projection=False, guidance_interface_num_tokens=None, guidance_concat_gating=False, guidance_selected_layers=(1,)),
+        dict(guidance_mode="concat", guidance_insertion_position="before_vlm", guidance_use_interface_projection=False, guidance_interface_num_tokens=None, guidance_concat_gating=False, guidance_selected_layer_gating=False, guidance_selected_layers=()),
+        dict(guidance_mode="selected_layers", guidance_insertion_position="before_vlm", guidance_use_interface_projection=False, guidance_interface_num_tokens=None, guidance_concat_gating=False, guidance_selected_layer_gating=True, guidance_selected_layers=(1,)),
     ]:
         model = GuidedSoftPromptedTransformer(hidden_size=16, multi_modal_input_size=16, guidance_input_size=8, depth=2, num_heads=4, guidance_num_heads=4, mlp_ratio=2.0, num_domains=3, dim_action=4, dim_propio=4, dim_time=8, len_soft_prompts=2, max_len_seq=64, use_hetero_proj=False, **kwargs)
         model.eval()
@@ -181,12 +181,35 @@ def test_guided_transformer_selected_layers_only_expand_selected_blocks():
             self.seen.append(int(x.shape[1]))
             return x
 
-    model = GuidedSoftPromptedTransformer(hidden_size=16, multi_modal_input_size=16, guidance_input_size=8, depth=3, num_heads=4, guidance_num_heads=4, mlp_ratio=2.0, num_domains=3, dim_action=4, dim_propio=4, dim_time=8, len_soft_prompts=2, max_len_seq=64, use_hetero_proj=False, guidance_mode="selected_layers", guidance_insertion_position="before_vlm", guidance_use_interface_projection=False, guidance_interface_num_tokens=None, guidance_concat_gating=False, guidance_selected_layers=(1,))
+    model = GuidedSoftPromptedTransformer(hidden_size=16, multi_modal_input_size=16, guidance_input_size=8, depth=3, num_heads=4, guidance_num_heads=4, mlp_ratio=2.0, num_domains=3, dim_action=4, dim_propio=4, dim_time=8, len_soft_prompts=2, max_len_seq=64, use_hetero_proj=False, guidance_mode="selected_layers", guidance_insertion_position="before_vlm", guidance_use_interface_projection=False, guidance_interface_num_tokens=None, guidance_concat_gating=False, guidance_selected_layer_gating=True, guidance_selected_layers=(1,))
     model.blocks = nn.ModuleList([_RecordingBlock(), _RecordingBlock(), _RecordingBlock()])
     _ = model(domain_id=torch.zeros(2, dtype=torch.long), vlm_features=torch.randn(2, 6, 16), aux_visual_inputs=torch.randn(2, 4, 16), guidance_tokens=torch.randn(2, 5, 8), action_with_noise=torch.randn(2, 4, 4), proprio=torch.randn(2, 4), t=torch.rand(2))
     assert model.blocks[0].seen == [16]
     assert model.blocks[1].seen == [21]
     assert model.blocks[2].seen == [16]
+
+
+def test_guided_config_rejects_selected_layer_gating_outside_selected_layers():
+    try:
+        _ = _make_guided_config(guidance_mode="concat", guidance_selected_layer_gating=True)
+    except ValueError as exc:
+        assert "guidance_selected_layer_gating" in str(exc)
+    else:
+        raise AssertionError("Expected concat mode to reject guidance_selected_layer_gating.")
+
+
+def test_guided_transformer_selected_layer_gating_changes_guided_outputs():
+    kwargs = dict(hidden_size=16, multi_modal_input_size=16, guidance_input_size=8, depth=2, num_heads=4, guidance_num_heads=4, mlp_ratio=2.0, num_domains=3, dim_action=4, dim_propio=4, dim_time=8, len_soft_prompts=2, max_len_seq=64, use_hetero_proj=False, guidance_mode="selected_layers", guidance_insertion_position="before_vlm", guidance_use_interface_projection=False, guidance_interface_num_tokens=None, guidance_concat_gating=False, guidance_selected_layers=(1,))
+    base = GuidedSoftPromptedTransformer(**kwargs, guidance_selected_layer_gating=False)
+    gated = GuidedSoftPromptedTransformer(**kwargs, guidance_selected_layer_gating=True)
+    gated.load_state_dict({**base.state_dict(), "selected_layer_gate.weight": torch.zeros_like(gated.selected_layer_gate.weight), "selected_layer_gate.bias": torch.zeros_like(gated.selected_layer_gate.bias)}, strict=False)
+    domain_id = torch.zeros(2, dtype=torch.long)
+    inputs = dict(domain_id=domain_id, vlm_features=torch.randn(2, 6, 16), aux_visual_inputs=torch.randn(2, 4, 16), guidance_tokens=torch.randn(2, 5, 8), guidance_available=torch.ones(2, 1, 1), action_with_noise=torch.randn(2, 4, 4), proprio=torch.randn(2, 4), t=torch.rand(2))
+    base.eval(); gated.eval()
+    with torch.no_grad():
+        base_out = base(**inputs)
+        gated_out = gated(**inputs)
+    assert not torch.allclose(base_out, gated_out, atol=1e-6)
 
 
 def test_guided_policy_save_load_and_runtime_resolution(monkeypatch):

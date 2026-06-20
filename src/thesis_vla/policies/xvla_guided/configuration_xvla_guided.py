@@ -65,6 +65,7 @@ class XVLAGuidedConfig(XVLAConfig):
     guidance_use_interface_projection: bool = False
     guidance_interface_num_tokens: int | None = None
     guidance_concat_gating: bool = False
+    guidance_selected_layer_gating: bool = False
     guidance_selected_layers: tuple[int, ...] = ()
     guidance_decoder_stack: dict[str, Any] = field(default_factory=dict)
     guidance_decoder_head: dict[str, Any] = field(default_factory=dict)
@@ -83,6 +84,7 @@ class XVLAGuidedConfig(XVLAConfig):
         self.guidance_selected_layers = tuple(sorted(set(int(idx) for idx in self.guidance_selected_layers)))
         if self.guidance_interface_num_tokens is not None and int(self.guidance_interface_num_tokens) <= 0: raise ValueError("guidance_interface_num_tokens must be > 0 when provided.")
         self.guidance_concat_gating = bool(self.guidance_concat_gating)
+        self.guidance_selected_layer_gating = bool(self.guidance_selected_layer_gating)
         self.guidance_fusion_mode = "gated_concat" if self.guidance_mode == "concat" and self.guidance_concat_gating else self.guidance_mode
         self.guidance_gated = bool(self.guidance_concat_gating)
         if self.guidance_expert_type not in {"cedirnet", "dino"}: raise ValueError(f"guidance_expert_type must be one of: cedirnet, dino. Got {self.guidance_expert_type!r}.")
@@ -99,6 +101,8 @@ class XVLAGuidedConfig(XVLAConfig):
             if self.guidance_use_interface_projection: raise ValueError("selected_layers mode does not support guidance_use_interface_projection in v1.")
             if self.guidance_concat_gating: raise ValueError("selected_layers mode does not support guidance_concat_gating in v1.")
             if len(self.guidance_selected_layers) == 0: raise ValueError("selected_layers mode requires a non-empty guidance_selected_layers tuple.")
+        elif self.guidance_selected_layer_gating:
+            raise ValueError("guidance_selected_layer_gating requires guidance_mode='selected_layers'.")
         target_kind = str(self.guidance_decoder_teacher.get("target_kind", "")).strip()
         if self.guidance_expert_type == "cedirnet":
             CeDirNetTeacherConfig.from_dict(self.guidance_decoder_teacher)
@@ -148,6 +152,7 @@ class XVLAGuidedConfig(XVLAConfig):
         guidance_use_interface_projection: bool = False,
         guidance_interface_num_tokens: int | None = None,
         guidance_concat_gating: bool = False,
+        guidance_selected_layer_gating: bool = False,
         guidance_selected_layers: tuple[int, ...] | list[int] = (),
         guidance_train_mode: str = "warmup_freeze",
         guidance_unfreeze_step: int = 1_000,
@@ -174,6 +179,7 @@ class XVLAGuidedConfig(XVLAConfig):
             guidance_use_interface_projection=bool(guidance_use_interface_projection),
             guidance_interface_num_tokens=guidance_interface_num_tokens,
             guidance_concat_gating=bool(guidance_concat_gating),
+            guidance_selected_layer_gating=bool(guidance_selected_layer_gating),
             guidance_selected_layers=tuple(int(idx) for idx in guidance_selected_layers),
             guidance_train_mode=str(guidance_train_mode),
             guidance_unfreeze_step=int(guidance_unfreeze_step),

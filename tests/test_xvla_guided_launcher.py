@@ -16,6 +16,7 @@ def test_guided_launcher_resolves_stage_defaults(tmp_path):
     assert resolved.guidance_mode == "concat"
     assert resolved.guidance_insertion_position == "after_visual"
     assert resolved.guidance_ablation_mode == "none"
+    assert resolved.guidance_selected_layer_gating is False
     assert resolved.guidance_train_mode == "frozen"
     assert resolved.guidance_unfreeze_step == 1000
     assert resolved.guidance_training_schedule == "decoder_warmup_then_policy"
@@ -65,13 +66,14 @@ def test_guided_launcher_allows_action_mode_and_scheduler_override(tmp_path):
 
 def test_guided_launcher_resolves_dino_guidance_expert(tmp_path):
     stage_cfg = tmp_path / "dino_guided_stage.yaml"
-    stage_cfg.write_text("guidance_mode: selected_layers\nguidance_selected_layers: [1]\nguidance_train_mode: train_from_start\n")
+    stage_cfg.write_text("guidance_mode: selected_layers\nguidance_selected_layer_gating: true\nguidance_selected_layers: [1]\nguidance_train_mode: train_from_start\n")
     defaults = GuidedLaunchConfig(hf_user="tester", dataset_name="dataset", xvla_init_path="lerobot/xvla-base", decoder_init_path="/tmp/decoder")
     resolved = resolve_experiment(tmp_path, defaults, GuidedExperimentSpec(guidance_expert_type="dino", guided_stage_config_path=str(stage_cfg)))
     assert resolved.guidance_expert_type == "dino"
     assert resolved.decoder_stack_config_path.endswith("dino_stack.yaml")
     assert resolved.decoder_task_config_path.endswith("dino_decoder.yaml")
     assert resolved.guidance_mode == "selected_layers"
+    assert resolved.guidance_selected_layer_gating is True
     assert resolved.guidance_selected_layers == (1,)
     assert resolved.guidance_train_mode == "train_from_start"
 
@@ -85,6 +87,14 @@ def test_guided_launcher_supports_interface_and_position_overrides(tmp_path):
     assert resolved.guidance_interface_num_tokens == 4
     assert resolved.guidance_concat_gating is True
     assert resolved.guidance_ablation_mode == "hidden_guidance"
+
+
+def test_guided_launcher_supports_selected_layer_gating_override(tmp_path):
+    defaults = GuidedLaunchConfig(hf_user="tester", dataset_name="dataset", xvla_init_path="lerobot/xvla-base", decoder_init_path="/tmp/decoder")
+    resolved = resolve_experiment(tmp_path, defaults, GuidedExperimentSpec(guidance_mode="selected_layers", guidance_insertion_position="before_vlm", guidance_selected_layer_gating=True, guidance_selected_layers=(1, 3)))
+    assert resolved.guidance_mode == "selected_layers"
+    assert resolved.guidance_selected_layer_gating is True
+    assert resolved.guidance_selected_layers == (1, 3)
 
 
 def test_guided_launcher_allows_normalization_and_resume_override(tmp_path):
