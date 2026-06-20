@@ -10,7 +10,7 @@ for candidate in [Path(__file__).resolve().parents[2] / "repos" / "lerobot" / "s
 from lerobot.policies.xvla.action_contract import build_slice_map, get_so101_slice_spec
 from lerobot.policies.xvla.modeling_xvla import pad_tensor_along_dim, pad_vector
 from lerobot.processor.slice_processor import SliceProcessorStep
-from thesis_vla.training.xvla_guided_trainer import GuidedXVLATrainConfig, _concat_gate_stats, _configure_explicit_stage_trainability, _episode_split_indices, _guidance_conditioning, _maybe_init_wandb, _validation_metrics, assert_guided_resume_compatible, build_xvla_runtime, compute_guidance_loss, compute_guided_action_loss_from_encoder
+from thesis_vla.training.xvla_guided_trainer import GuidedScheduleState, GuidedXVLATrainConfig, _concat_gate_stats, _configure_explicit_stage_trainability, _episode_split_indices, _guidance_conditioning, _guidance_schedule_state, _maybe_init_wandb, _validation_metrics, assert_guided_resume_compatible, build_xvla_runtime, compute_guidance_loss, compute_guided_action_loss_from_encoder
 from thesis_vla.visual_thought.targets import TeacherTarget
 
 
@@ -106,6 +106,14 @@ def test_guidance_conditioning_modes_cover_guided_disabled_dropout_and_noise():
     assert torch.equal(dropped_available, torch.zeros(2, 1, 1))
     assert torch.equal(noisy_available, torch.ones(2, 1, 1))
     assert not torch.equal(noisy_tokens, guidance_tokens)
+
+
+def test_guidance_conditioning_can_disable_corruption_during_training():
+    guidance_tokens = torch.ones(2, 4, 6)
+    config = GuidedXVLATrainConfig(name="guided", xvla_init_path="base", decoder_init_path="decoder", decoder_stack_config_path="stack.yaml", decoder_task_config_path="task.yaml", dataset_repo_id="user/dataset", dataset_revision="main", dataset_root=None, output_dir="/tmp/out", device="cpu", guidance_dropout_prob=1.0, guidance_noise_prob=1.0, guidance_noise_std=0.5)
+    conditioned, available = _guidance_conditioning(guidance_tokens, config, mode="train", corruption_enabled=False)
+    assert torch.equal(conditioned, guidance_tokens)
+    assert torch.equal(available, torch.ones(2, 1, 1))
 
 
 def test_guidance_loss_helper_smoke():
@@ -309,16 +317,43 @@ def test_guided_resume_compatibility_checks_guidance_expert_type():
         raise AssertionError("Expected guided resume compatibility check to reject mismatched guidance_expert_type.")
 
 
+def test_staged_guidance_schedule_transitions():
+    config = GuidedXVLATrainConfig(name="guided", xvla_init_path="base", decoder_init_path="decoder", decoder_stack_config_path="stack.yaml", decoder_task_config_path="task.yaml", dataset_repo_id="user/dataset", dataset_revision="main", dataset_root=None, output_dir="/tmp/out", device="cpu", freeze_xvla_vlm=True, action_loss_weight=1.0, expert_loss_weight=0.25, guidance_training_schedule="decoder_warmup_then_policy", guidance_warmup_steps=1000, guidance_phase2_expert_loss_weight=0.1, guidance_corruption_restore_step=2000)
+    warmup = _guidance_schedule_state(config, 1000)
+    early_phase2 = _guidance_schedule_state(config, 1001)
+    late_phase2 = _guidance_schedule_state(config, 2000)
+    assert warmup == GuidedScheduleState(phase=1, phase_name="warmup", action_loss_weight=0.0, expert_loss_weight=1.0, decoder_trainable=True, corruption_enabled=False)
+    assert early_phase2 == GuidedScheduleState(phase=2, phase_name="phase2_pre_corruption", action_loss_weight=1.0, expert_loss_weight=0.1, decoder_trainable=False, corruption_enabled=False)
+    assert late_phase2 == GuidedScheduleState(phase=2, phase_name="phase2", action_loss_weight=1.0, expert_loss_weight=0.1, decoder_trainable=False, corruption_enabled=True)
+
+
+def test_legacy_guidance_schedule_preserves_guidance_train_mode():
+    config = GuidedXVLATrainConfig(name="guided", xvla_init_path="base", decoder_init_path="decoder", decoder_stack_config_path="stack.yaml", decoder_task_config_path="task.yaml", dataset_repo_id="user/dataset", dataset_revision="main", dataset_root=None, output_dir="/tmp/out", device="cpu", freeze_xvla_vlm=False, guidance_training_schedule="legacy", guidance_train_mode="warmup_freeze", guidance_unfreeze_step=10)
+    before = _guidance_schedule_state(config, 10)
+    after = _guidance_schedule_state(config, 11)
+    assert before == GuidedScheduleState(phase=0, phase_name="legacy", action_loss_weight=1.0, expert_loss_weight=0.25, decoder_trainable=False, corruption_enabled=True)
+    assert after == GuidedScheduleState(phase=0, phase_name="legacy", action_loss_weight=1.0, expert_loss_weight=0.25, decoder_trainable=True, corruption_enabled=True)
+
+
+def test_staged_schedule_requires_frozen_vlm():
+    try:
+        GuidedXVLATrainConfig(name="guided", xvla_init_path="base", decoder_init_path="decoder", decoder_stack_config_path="stack.yaml", decoder_task_config_path="task.yaml", dataset_repo_id="user/dataset", dataset_revision="main", dataset_root=None, output_dir="/tmp/out", device="cpu", freeze_xvla_vlm=False, guidance_training_schedule="decoder_warmup_then_policy")
+    except ValueError as exc:
+        assert "freeze_xvla_vlm" in str(exc)
+    else:
+        raise AssertionError("Expected staged guidance schedule to require freeze_xvla_vlm=True.")
+
+
 def test_validation_metrics_optionally_adds_no_guidance(monkeypatch):
     calls = []
 
-    def _fake_run_validation(config, runtime, policy, guidance_source, val_loader, prefix="val", guidance_mode="guided"):
-        calls.append((prefix, guidance_mode))
+    def _fake_run_validation(config, runtime, policy, guidance_source, val_loader, prefix="val", guidance_mode="guided", schedule=None):
+        calls.append((prefix, guidance_mode, schedule))
         return {f"{prefix}_loss": 1.0 if guidance_mode == "guided" else 2.0}
 
     monkeypatch.setattr("thesis_vla.training.xvla_guided_trainer.run_validation", _fake_run_validation)
     config = GuidedXVLATrainConfig(name="guided", xvla_init_path="base", decoder_init_path="decoder", decoder_stack_config_path="stack.yaml", decoder_task_config_path="task.yaml", dataset_repo_id="user/dataset", dataset_revision="main", dataset_root=None, output_dir="/tmp/out", device="cpu", validation_include_no_guidance=True)
-    metrics = _validation_metrics(config, runtime=object(), policy=object(), guidance_source=object(), val_loader=object())
+    metrics = _validation_metrics(config, runtime=object(), policy=object(), guidance_source=object(), val_loader=object(), step=0)
     assert metrics["val_loss"] == 1.0
     assert metrics["val_no_guidance_loss"] == 2.0
-    assert calls == [("val", "guided"), ("val_no_guidance", "disabled")]
+    assert calls == [("val", "guided", GuidedScheduleState(phase=1, phase_name="warmup", action_loss_weight=0.0, expert_loss_weight=1.0, decoder_trainable=True, corruption_enabled=False)), ("val_no_guidance", "disabled", GuidedScheduleState(phase=1, phase_name="warmup", action_loss_weight=0.0, expert_loss_weight=1.0, decoder_trainable=True, corruption_enabled=False))]

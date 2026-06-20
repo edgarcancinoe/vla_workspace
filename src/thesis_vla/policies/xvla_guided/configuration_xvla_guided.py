@@ -15,6 +15,7 @@ GUIDANCE_MODES = frozenset({"concat", "selected_layers"})
 GUIDANCE_INSERTION_POSITIONS = frozenset({"before_vlm", "after_visual"})
 GUIDANCE_FUSION_ALIASES = frozenset({"concat", "gated_concat", "selected_layers"})
 LEGACY_REMOVED_FUSION_ALIASES = frozenset({"cross_attention", "gated_cross_attention", "cross_attn"})
+GUIDANCE_TRAINING_SCHEDULES = frozenset({"legacy", "decoder_warmup_then_policy"})
 
 
 def normalize_guidance_mode(mode: str) -> str:
@@ -53,6 +54,8 @@ class XVLAGuidedConfig(XVLAConfig):
     guidance_source: str = "decoder_tokens"
     guidance_train_mode: str = "warmup_freeze"
     guidance_unfreeze_step: int = 1_000
+    guidance_training_schedule: str = "legacy"
+    guidance_warmup_steps: int = 1_000
     guidance_num_heads: int | None = None
     guidance_mode: str = "concat"
     guidance_insertion_position: str = "after_visual"
@@ -83,6 +86,9 @@ class XVLAGuidedConfig(XVLAConfig):
         if self.guidance_source != "decoder_tokens": raise ValueError(f"Only decoder_tokens guidance_source is supported in v1, got {self.guidance_source!r}.")
         if self.guidance_train_mode not in {"warmup_freeze", "train_from_start", "frozen"}: raise ValueError(f"guidance_train_mode must be one of: warmup_freeze, train_from_start, frozen. Got {self.guidance_train_mode!r}.")
         if int(self.guidance_unfreeze_step) < 0: raise ValueError("guidance_unfreeze_step must be >= 0.")
+        self.guidance_training_schedule = str(self.guidance_training_schedule).strip().lower()
+        if self.guidance_training_schedule not in GUIDANCE_TRAINING_SCHEDULES: raise ValueError(f"guidance_training_schedule must be one of: {', '.join(sorted(GUIDANCE_TRAINING_SCHEDULES))}. Got {self.guidance_training_schedule!r}.")
+        if int(self.guidance_warmup_steps) < 0: raise ValueError("guidance_warmup_steps must be >= 0.")
         if not isinstance(self.guidance_decoder_stack, dict) or not self.guidance_decoder_stack: raise ValueError("guidance_decoder_stack must be a non-empty mapping.")
         if not isinstance(self.guidance_decoder_head, dict) or not self.guidance_decoder_head: raise ValueError("guidance_decoder_head must be a non-empty mapping.")
         if not isinstance(self.guidance_decoder_teacher, dict) or not self.guidance_decoder_teacher: raise ValueError("guidance_decoder_teacher must be a non-empty mapping.")
@@ -142,6 +148,8 @@ class XVLAGuidedConfig(XVLAConfig):
         guidance_selected_layers: tuple[int, ...] | list[int] = (),
         guidance_train_mode: str = "warmup_freeze",
         guidance_unfreeze_step: int = 1_000,
+        guidance_training_schedule: str = "legacy",
+        guidance_warmup_steps: int = 1_000,
         guidance_num_heads: int | None = None,
         guidance_fusion_mode: str | None = None,
         guidance_gated: bool | None = None,
@@ -166,6 +174,8 @@ class XVLAGuidedConfig(XVLAConfig):
             guidance_selected_layers=tuple(int(idx) for idx in guidance_selected_layers),
             guidance_train_mode=str(guidance_train_mode),
             guidance_unfreeze_step=int(guidance_unfreeze_step),
+            guidance_training_schedule=str(guidance_training_schedule),
+            guidance_warmup_steps=int(guidance_warmup_steps),
             guidance_num_heads=guidance_num_heads,
             guidance_decoder_stack=dict(guidance_decoder_stack),
             guidance_decoder_head=dict(guidance_decoder_head),

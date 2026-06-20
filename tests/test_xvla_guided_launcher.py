@@ -17,6 +17,10 @@ def test_guided_launcher_resolves_stage_defaults(tmp_path):
     assert resolved.guidance_insertion_position == "after_visual"
     assert resolved.guidance_train_mode == "frozen"
     assert resolved.guidance_unfreeze_step == 1000
+    assert resolved.guidance_training_schedule == "decoder_warmup_then_policy"
+    assert resolved.guidance_warmup_steps == 1000
+    assert resolved.guidance_phase2_expert_loss_weight is None
+    assert resolved.guidance_corruption_restore_step == 2000
     assert resolved.guidance_dropout_prob == 0.15
     assert resolved.guidance_noise_prob == 0.15
     assert resolved.guidance_noise_std == 0.10

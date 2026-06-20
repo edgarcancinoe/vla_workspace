@@ -205,6 +205,16 @@ def test_guided_policy_save_load_and_runtime_resolution(monkeypatch):
         assert include_eef_state is False
 
 
+def test_guided_policy_staged_schedule_switches_decoder_trainability(monkeypatch):
+    _patch_dummy_vlm(monkeypatch)
+    config = _make_guided_config(guidance_training_schedule="decoder_warmup_then_policy", guidance_warmup_steps=5)
+    policy = XVLAGuidedPolicy(config)
+    policy.model.set_guidance_trainability(5)
+    assert all(parameter.requires_grad for parameter in policy.model.guidance_decoder.parameters())
+    policy.model.set_guidance_trainability(6)
+    assert all(not parameter.requires_grad for parameter in policy.model.guidance_decoder.parameters())
+
+
 def test_guided_dino_policy_save_load_and_runtime_resolution(monkeypatch):
     _patch_dummy_vlm(monkeypatch)
     config = _make_guided_config(guidance_expert_type="dino", guidance_mode="selected_layers", guidance_selected_layers=(1,))

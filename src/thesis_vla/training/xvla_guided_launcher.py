@@ -74,6 +74,10 @@ class GuidedLaunchConfig:
     guidance_selected_layers: tuple[int, ...] = ()
     guidance_train_mode: str = "frozen"
     guidance_unfreeze_step: int = 1_000
+    guidance_training_schedule: str = "decoder_warmup_then_policy"
+    guidance_warmup_steps: int = 1_000
+    guidance_phase2_expert_loss_weight: float | None = None
+    guidance_corruption_restore_step: int = 2_000
     guidance_dropout_prob: float = 0.15
     guidance_noise_prob: float = 0.15
     guidance_noise_std: float = 0.10
@@ -133,6 +137,10 @@ class GuidedExperimentSpec:
     guidance_selected_layers: tuple[int, ...] | None = None
     guidance_train_mode: str | None = None
     guidance_unfreeze_step: int | None = None
+    guidance_training_schedule: str | None = None
+    guidance_warmup_steps: int | None = None
+    guidance_phase2_expert_loss_weight: float | None = None
+    guidance_corruption_restore_step: int | None = None
     guidance_dropout_prob: float | None = None
     guidance_noise_prob: float | None = None
     guidance_noise_std: float | None = None
@@ -192,6 +200,10 @@ class ResolvedGuidedExperiment:
     guidance_selected_layers: tuple[int, ...]
     guidance_train_mode: str
     guidance_unfreeze_step: int
+    guidance_training_schedule: str
+    guidance_warmup_steps: int
+    guidance_phase2_expert_loss_weight: float | None
+    guidance_corruption_restore_step: int
     guidance_dropout_prob: float
     guidance_noise_prob: float
     guidance_noise_std: float
@@ -239,7 +251,7 @@ def _with_overrides(base, **overrides):
 
 def _stage_defaults(path: str | Path) -> dict:
     payload = _read_yaml(path)
-    return {key: payload[key] for key in ["fusion_mode", "guidance_fusion_mode", "gated_fusion", "guidance_mode", "guidance_insertion_position", "guidance_use_interface_projection", "guidance_interface_num_tokens", "guidance_concat_gating", "guidance_selected_layers", "guidance_train_mode", "guidance_unfreeze_step", "freeze_xvla_vlm", "action_loss_weight", "expert_loss_weight"] if key in payload}
+    return {key: payload[key] for key in ["fusion_mode", "guidance_fusion_mode", "gated_fusion", "guidance_mode", "guidance_insertion_position", "guidance_use_interface_projection", "guidance_interface_num_tokens", "guidance_concat_gating", "guidance_selected_layers", "guidance_train_mode", "guidance_unfreeze_step", "guidance_training_schedule", "guidance_warmup_steps", "guidance_phase2_expert_loss_weight", "guidance_corruption_restore_step", "freeze_xvla_vlm", "action_loss_weight", "expert_loss_weight"] if key in payload}
 
 
 def _default_stage_config_path(guidance_expert_type: str) -> str:
@@ -341,6 +353,10 @@ def resolve_experiment(workspace_dir: Path, defaults: GuidedLaunchConfig, experi
         guidance_selected_layers=guidance_settings["guidance_selected_layers"],
         guidance_train_mode=experiment.guidance_train_mode or str(stage_defaults.get("guidance_train_mode", defaults.guidance_train_mode)),
         guidance_unfreeze_step=experiment.guidance_unfreeze_step if experiment.guidance_unfreeze_step is not None else int(stage_defaults.get("guidance_unfreeze_step", defaults.guidance_unfreeze_step)),
+        guidance_training_schedule=experiment.guidance_training_schedule or str(stage_defaults.get("guidance_training_schedule", defaults.guidance_training_schedule)),
+        guidance_warmup_steps=experiment.guidance_warmup_steps if experiment.guidance_warmup_steps is not None else int(stage_defaults.get("guidance_warmup_steps", defaults.guidance_warmup_steps)),
+        guidance_phase2_expert_loss_weight=experiment.guidance_phase2_expert_loss_weight if experiment.guidance_phase2_expert_loss_weight is not None else stage_defaults.get("guidance_phase2_expert_loss_weight", defaults.guidance_phase2_expert_loss_weight),
+        guidance_corruption_restore_step=experiment.guidance_corruption_restore_step if experiment.guidance_corruption_restore_step is not None else int(stage_defaults.get("guidance_corruption_restore_step", defaults.guidance_corruption_restore_step)),
         guidance_dropout_prob=experiment.guidance_dropout_prob if experiment.guidance_dropout_prob is not None else defaults.guidance_dropout_prob,
         guidance_noise_prob=experiment.guidance_noise_prob if experiment.guidance_noise_prob is not None else defaults.guidance_noise_prob,
         guidance_noise_std=experiment.guidance_noise_std if experiment.guidance_noise_std is not None else defaults.guidance_noise_std,
@@ -447,6 +463,11 @@ def print_run_summary(index: int, total: int, resolved: ResolvedGuidedExperiment
     else:
         print(f"  Selected Layers:    {resolved.guidance_selected_layers}")
     print(f"  Guidance Train:     {resolved.guidance_train_mode} @ step {resolved.guidance_unfreeze_step}")
+    print(f"  Guidance Schedule:  {resolved.guidance_training_schedule}")
+    if resolved.guidance_training_schedule == "decoder_warmup_then_policy":
+        print(f"  Warmup Steps:       {resolved.guidance_warmup_steps}")
+        print(f"  Phase2 Expert W:    {resolved.guidance_phase2_expert_loss_weight if resolved.guidance_phase2_expert_loss_weight is not None else resolved.expert_loss_weight}")
+        print(f"  Restore Corruption: {resolved.guidance_corruption_restore_step}")
     print(f"  Guidance Dropout:   p_drop={resolved.guidance_dropout_prob} p_noise={resolved.guidance_noise_prob} noise_std={resolved.guidance_noise_std}")
     print(f"  Guidance Debug:     every {resolved.guidance_debug_every} steps")
     print(f"  Freeze XVLA VLM:    {resolved.freeze_xvla_vlm}")

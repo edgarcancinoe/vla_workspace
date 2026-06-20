@@ -251,9 +251,12 @@ class XVLAGuidedModel(XVLAModel):
         self._apply_dtype()
 
     def set_guidance_trainability(self, step: int) -> None:
-        mode = str(self.config.guidance_train_mode)
-        trainable = mode == "train_from_start" or (mode == "warmup_freeze" and int(step) > int(self.config.guidance_unfreeze_step))
-        if mode == "frozen": trainable = False
+        if str(self.config.guidance_training_schedule) == "decoder_warmup_then_policy":
+            trainable = int(step) <= int(self.config.guidance_warmup_steps)
+        else:
+            mode = str(self.config.guidance_train_mode)
+            trainable = mode == "train_from_start" or (mode == "warmup_freeze" and int(step) > int(self.config.guidance_unfreeze_step))
+            if mode == "frozen": trainable = False
         for parameter in self.guidance_decoder.parameters(): parameter.requires_grad = trainable
         self.guidance_decoder.train(trainable and self.training)
         if not trainable: self.guidance_decoder.eval()
