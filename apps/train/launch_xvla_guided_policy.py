@@ -213,7 +213,6 @@ FOLD_CEDIRNET_INTERFACE_GUIDANCE = [
     guided_spec("fold", "iface_before", "before_vlm", guidance_use_interface_projection=True, guidance_interface_num_tokens=32),
 ] # RUNNING BEFORE_VLM
 FOLD_CEDIRNET_GATED_GUIDANCE = [
-    guided_spec("fold", "gated_after", "after_visual", guidance_concat_gating=True),
     guided_spec("fold", "gated_before", "before_vlm", guidance_concat_gating=True),
 ]
 FOLD_CEDIRNET_SELECTED_GUIDANCE = [
@@ -256,7 +255,6 @@ BOX_CEDIRNET_INTERFACE_GUIDANCE = [
     guided_spec("box", "iface_before", "before_vlm", guidance_use_interface_projection=True, guidance_interface_num_tokens=64),
 ] # RUNNING BEFORE_VLM
 BOX_CEDIRNET_GATED_GUIDANCE = [
-    guided_spec("box", "gated_after", "after_visual", guidance_concat_gating=True),
     guided_spec("box", "gated_before", "before_vlm", guidance_concat_gating=True),
 ]
 BOX_CEDIRNET_SELECTED_GUIDANCE = [
@@ -292,6 +290,11 @@ BOX_BOTH_CEDIRNET_DINO_SELECTED_GUIDANCE = [
 # EXPERIMENTS = [BOX_CEDIRNET_GUIDANCE[0]]
 # EXPERIMENTS = [BOX_CEDIRNET_GUIDANCE[1]]
 EXPERIMENTS = [FOLD_CEDIRNET_INTERFACE_GUIDANCE[0]]
+EXPERIMENTS = FOLD_CEDIRNET_BASELINE_CONTROL
+EXPERIMENTS = BOX_CEDIRNET_BASELINE_CONTROL
+
+EXPERIMENTS = FOLD_CEDIRNET_GATED_GUIDANCE + BOX_CEDIRNET_GATED_GUIDANCE
+
 def main() -> None:
     run_experiments(workspace_dir=WORKSPACE_DIR, defaults=DEFAULTS, experiments=EXPERIMENTS)
 
