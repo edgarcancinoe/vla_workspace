@@ -49,10 +49,29 @@ DEFAULTS = GuidedLaunchConfig(
     # Guidance use configuration ---------------------
     guidance_train_mode="train_from_start", # frozen | train_from_start | warmup_freeze
     guidance_unfreeze_step = 1000,
+    guidance_training_schedule="decoder_warmup_then_policy",
+    guidance_warmup_steps=1000,
+    guidance_phase2_expert_loss_weight=0.10,
+    guidance_corruption_restore_step=2000,
     guidance_dropout_prob=0.15,
     guidance_noise_prob=0.15,
     guidance_noise_std=0.10,
-    freeze_xvla_vlm=True,
+    freeze_xvla_vlm=True, # staged schedule requires True
+    # Reliability staging presets:
+    # guidance_training_schedule="legacy",
+    # guidance_training_schedule="decoder_warmup_then_policy",
+    # guidance_warmup_steps=1500,
+    # guidance_phase2_expert_loss_weight=0.05,
+    # guidance_corruption_restore_step=3000,
+    # Legacy-only decoder trainability knobs:
+    # guidance_train_mode="frozen",
+    # guidance_train_mode="train_from_start",
+    # guidance_train_mode="warmup_freeze",
+    # guidance_unfreeze_step=1000,
+    # Staged schedule semantics:
+    # Phase 1  (step <= guidance_warmup_steps): decoder-only, action loss off, expert loss = 1.0, corruption off
+    # Phase 2a (warmup < step < guidance_corruption_restore_step): decoder frozen, action loss on, phase2 expert loss on, corruption off
+    # Phase 2b (step >= guidance_corruption_restore_step): same as phase 2a, but dropout/noise restored
     # ----–-----–-----–-----–-----–-----–-----–-----–-
 
     # Saving and logging -----------------------------
