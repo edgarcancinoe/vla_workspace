@@ -11,9 +11,9 @@ from lerobot.policies.xvla.configuration_xvla import XVLAConfig
 from thesis_vla.visual_thought.config import CeDirNetTeacherConfig, DinoTeacherConfig
 
 
-GUIDANCE_MODES = frozenset({"concat", "selected_layers"})
+GUIDANCE_MODES = frozenset({"concat", "disabled", "selected_layers"})
 GUIDANCE_INSERTION_POSITIONS = frozenset({"before_vlm", "after_visual"})
-GUIDANCE_FUSION_ALIASES = frozenset({"concat", "gated_concat", "selected_layers"})
+GUIDANCE_FUSION_ALIASES = frozenset({"concat", "disabled", "gated_concat", "selected_layers"})
 LEGACY_REMOVED_FUSION_ALIASES = frozenset({"cross_attention", "gated_cross_attention", "cross_attn"})
 GUIDANCE_TRAINING_SCHEDULES = frozenset({"legacy", "decoder_warmup_then_policy"})
 
@@ -34,6 +34,9 @@ def normalize_guidance_fusion_mode(mode: str, gated: bool | None = None) -> str:
     mode = str(mode).strip().lower()
     if mode in LEGACY_REMOVED_FUSION_ALIASES: raise ValueError("Legacy cross-attention guidance modes are no longer supported. Use concat with ordering/interface options or selected_layers.")
     if mode == "concat": return "gated_concat" if bool(gated) else "concat"
+    if mode == "disabled":
+        if bool(gated): raise ValueError("disabled guidance mode does not support gated_fusion.")
+        return "disabled"
     if mode == "selected_layers":
         if bool(gated): raise ValueError("selected_layers does not support gated_fusion in v1.")
         return "selected_layers"

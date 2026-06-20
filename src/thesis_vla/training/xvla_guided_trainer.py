@@ -36,6 +36,10 @@ METADATA_FILENAME = "metadata.json"
 CONFIG_FILENAME = "guided_training_config.json"
 
 
+def _guidance_disabled(config) -> bool:
+    return str(getattr(config, "guidance_mode", "")) == "disabled"
+
+
 @dataclass
 class GuidedXVLATrainConfig:
     name: str
@@ -112,6 +116,12 @@ class GuidedXVLATrainConfig:
         self.guidance_insertion_position = normalize_guidance_insertion_position(self.guidance_insertion_position)
         self.guidance_selected_layers = tuple(sorted(set(int(idx) for idx in self.guidance_selected_layers)))
         self.guidance_training_schedule = str(self.guidance_training_schedule).strip().lower()
+        if _guidance_disabled(self):
+            self.guidance_use_interface_projection = False
+            self.guidance_interface_num_tokens = None
+            self.guidance_concat_gating = False
+            self.guidance_selected_layers = ()
+            self.validation_include_no_guidance = False
         if self.guidance_interface_num_tokens is not None and int(self.guidance_interface_num_tokens) <= 0: raise ValueError("guidance_interface_num_tokens must be > 0 when provided.")
         if self.guidance_mode == "selected_layers":
             if self.guidance_use_interface_projection: raise ValueError("selected_layers mode does not support guidance_use_interface_projection in v1.")
@@ -207,6 +217,7 @@ def _resolve_guidance_decoder_config_paths(config: GuidedXVLATrainConfig) -> tup
 
 
 def _load_guidance_task_config(config: GuidedXVLATrainConfig):
+    if _guidance_disabled(config): return None
     stack_path, task_path = _resolve_guidance_decoder_config_paths(config)
     if config.guidance_expert_type == "cedirnet": return load_cedirnet_decoder_config(stack_path, task_path)
     task_cfg = load_dino_decoder_config(stack_path, task_path)
@@ -227,11 +238,13 @@ def _resolved_guidance_decoder_payload(config: GuidedXVLATrainConfig, task_cfg) 
 
 
 def _load_decoder_init(model, config: GuidedXVLATrainConfig) -> None:
+    if _guidance_disabled(config): return
     state = load_decoder_state(_resolve_guidance_decoder_state_path(config.decoder_init_path, config.guidance_expert_type))
     model.model.guidance_decoder.load_state_dict(state, strict=True)
 
 
 def _build_guidance_source(runtime: XVLARuntime, config: GuidedXVLATrainConfig, task_cfg):
+    if _guidance_disabled(config): return None
     if config.guidance_expert_type == "cedirnet": return CeDiRNetTargetCache.resolve(dataset_repo_id=config.dataset_repo_id, dataset_revision=config.dataset_revision, dataset_root=_resolve_dataset_root(config), dataset_length=len(runtime.dataset), teacher_cfg=task_cfg.teacher, cache_root=config.teacher_target_cache_root)
     return DinoV2Teacher(task_cfg.teacher)
 
@@ -330,6 +343,7 @@ def _configure_explicit_stage_trainability(policy, config: GuidedXVLATrainConfig
 
 
 def _legacy_decoder_trainable(config: GuidedXVLATrainConfig, step: int) -> bool:
+    if _guidance_disabled(config): return False
     mode = str(config.guidance_train_mode)
     if mode == "frozen": return False
     if mode == "train_from_start": return True
@@ -337,10 +351,12 @@ def _legacy_decoder_trainable(config: GuidedXVLATrainConfig, step: int) -> bool:
 
 
 def _effective_phase2_expert_loss_weight(config: GuidedXVLATrainConfig) -> float:
+    if _guidance_disabled(config): return 0.0
     return float(config.guidance_phase2_expert_loss_weight if config.guidance_phase2_expert_loss_weight is not None else config.expert_loss_weight)
 
 
 def _guidance_schedule_state(config: GuidedXVLATrainConfig, step: int) -> GuidedScheduleState:
+    if _guidance_disabled(config): return GuidedScheduleState(phase=0, phase_name="disabled", action_loss_weight=float(config.action_loss_weight), expert_loss_weight=0.0, decoder_trainable=False, corruption_enabled=False)
     if str(config.guidance_training_schedule) != "decoder_warmup_then_policy":
         return GuidedScheduleState(phase=0, phase_name="legacy", action_loss_weight=float(config.action_loss_weight), expert_loss_weight=float(config.expert_loss_weight), decoder_trainable=_legacy_decoder_trainable(config, step), corruption_enabled=True)
     if int(step) <= int(config.guidance_warmup_steps):
@@ -349,17 +365,21 @@ def _guidance_schedule_state(config: GuidedXVLATrainConfig, step: int) -> Guided
     return GuidedScheduleState(phase=2, phase_name="phase2" if corruption_enabled else "phase2_pre_corruption", action_loss_weight=float(config.action_loss_weight), expert_loss_weight=_effective_phase2_expert_loss_weight(config), decoder_trainable=False, corruption_enabled=corruption_enabled)
 
 
-def _step_guided_optimizer(optimizer: JointTrainingState, schedule: GuidedScheduleState) -> None:
-    if int(schedule.phase) == 1:
+def _step_guided_optimizer(optimizer: torch.optim.Optimizer | JointTrainingState, schedule: GuidedScheduleState, policy_scheduler=None) -> None:
+    if isinstance(optimizer, JointTrainingState) and int(schedule.phase) == 1:
         optimizer.decoder_optimizer.step()
         return
     step_optimizer(optimizer)
+    if not isinstance(optimizer, JointTrainingState) and policy_scheduler is not None: policy_scheduler.step()
 
 
 def _init_guided_policy_from_base(runtime: XVLARuntime, config: GuidedXVLATrainConfig, task_cfg):
     from lerobot.policies.xvla.modeling_xvla import XVLAPolicy
     from thesis_vla.policies.xvla_guided import XVLAGuidedConfig, XVLAGuidedPolicy
 
+    if _guidance_disabled(config):
+        _configure_explicit_stage_trainability(runtime.policy, config)
+        return runtime.policy
     base_cfg = runtime.policy.config
     stack_payload, head_payload, teacher_payload = _resolved_guidance_decoder_payload(config, task_cfg)
     guided_cfg = XVLAGuidedConfig.from_xvla_config(
@@ -392,7 +412,10 @@ def _init_guided_policy_from_base(runtime: XVLARuntime, config: GuidedXVLATrainC
     return policy
 
 
-def build_optimizer(config: GuidedXVLATrainConfig, policy) -> JointTrainingState:
+def build_optimizer(config: GuidedXVLATrainConfig, policy) -> torch.optim.Optimizer | JointTrainingState:
+    if _guidance_disabled(config) or not hasattr(policy.model, "guidance_decoder"):
+        policy_optimizer = policy.config.get_optimizer_preset().build(policy.get_optim_params())
+        return policy_optimizer
     decoder_params = list(policy.model.guidance_decoder.parameters())
     decoder_optimizer = torch.optim.AdamW(decoder_params, lr=config.decoder_optimizer_lr, weight_decay=config.weight_decay)
     policy_named_params = {name: parameter for name, parameter in policy.get_optim_params().items() if not name.startswith("model.guidance_decoder.")}
@@ -482,8 +505,8 @@ def _log_gpu_model_residency(policy, *, step: int, rank: int, wandb_run=None) ->
         "policy.model": policy.model,
         "policy.model.vlm": policy.model.vlm,
         "policy.model.transformer": policy.model.transformer,
-        "policy.model.guidance_decoder": policy.model.guidance_decoder,
     }
+    if hasattr(policy.model, "guidance_decoder"): modules["policy.model.guidance_decoder"] = policy.model.guidance_decoder
     entries = {name: _module_gpu_residency(module, name) for name, module in modules.items()}
     record = {"event": "gpu_model_residency", "step": int(step), "rank": int(rank), "entries": entries}
     lines = [f"step={int(step)} rank={int(rank)}"]
@@ -494,18 +517,20 @@ def _log_gpu_model_residency(policy, *, step: int, rank: int, wandb_run=None) ->
     if wandb_run is not None: wandb_run.log({f"gpu_model/{name}_mb": float(entry["total_mb"]) for name, entry in entries.items()}, step=int(step))
 
 
-def _trainability_metrics(policy, optimizer: JointTrainingState) -> dict[str, float]:
-    guidance_decoder_params = list(policy.model.guidance_decoder.parameters())
+def _trainability_metrics(policy, optimizer: torch.optim.Optimizer | JointTrainingState) -> dict[str, float]:
+    guidance_decoder_params = list(policy.model.guidance_decoder.parameters()) if hasattr(policy.model, "guidance_decoder") else []
     vlm_params = list(policy.model.vlm.parameters())
     all_trainable = [parameter for parameter in policy.parameters() if parameter.requires_grad]
+    policy_optimizer_count = float(_optimizer_parameter_count(optimizer.policy_optimizer)) if isinstance(optimizer, JointTrainingState) else float(_optimizer_parameter_count(optimizer))
+    decoder_optimizer_count = float(_optimizer_parameter_count(optimizer.decoder_optimizer)) if isinstance(optimizer, JointTrainingState) and guidance_decoder_params else 0.0
     return {
         "params_trainable_total": float(_count_parameters(all_trainable)),
         "params_guidance_decoder_total": float(_count_parameters(guidance_decoder_params)),
         "params_guidance_decoder_trainable": float(_count_parameters([parameter for parameter in guidance_decoder_params if parameter.requires_grad])),
         "params_vlm_total": float(_count_parameters(vlm_params)),
         "params_vlm_trainable": float(_count_parameters([parameter for parameter in vlm_params if parameter.requires_grad])),
-        "params_policy_optimizer": float(_optimizer_parameter_count(optimizer.policy_optimizer)),
-        "params_decoder_optimizer": float(_optimizer_parameter_count(optimizer.decoder_optimizer)),
+        "params_policy_optimizer": policy_optimizer_count,
+        "params_decoder_optimizer": decoder_optimizer_count,
     }
 
 
@@ -606,6 +631,13 @@ def compute_guided_action_loss_from_encoder(policy, processed_batch: dict[str, A
     return action_loss, stats, guidance_tokens
 
 
+def compute_plain_action_loss(policy, processed_batch: dict[str, Any]) -> tuple[torch.Tensor, dict[str, float]]:
+    loss, log_dict = policy(processed_batch)
+    action_stats = {key: float(value) for key, value in log_dict.items() if key.endswith("_loss")}
+    action_stats["action_total"] = float(log_dict["loss"])
+    return loss, action_stats
+
+
 def _grad_norm(policy, prefix: str) -> float:
     total = 0.0
     for name, parameter in policy.named_parameters():
@@ -692,11 +724,15 @@ def run_validation(config: GuidedXVLATrainConfig, runtime: XVLARuntime, policy, 
     for raw_batch in val_loader:
         if batches >= max(int(config.validation_max_batches), 1): break
         processed_batch = preprocess_batch(runtime, raw_batch)
-        inputs = policy._build_model_inputs(processed_batch)
-        enc = policy.model.forward_vlm(input_ids=inputs["input_ids"], pixel_values=inputs["image_input"], image_mask=inputs["image_mask"])
-        target = load_guidance_target(guidance_source, raw_batch, config, runtime.teacher_image_key)
-        action_loss, action_stats, guidance_tokens = compute_guided_action_loss_from_encoder(policy, processed_batch, inputs, enc, config=config, guidance_mode=guidance_mode)
-        expert_loss, expert_stats = compute_guidance_loss(policy, target, guidance_tokens) if expert_weight > 0.0 else (action_loss.new_zeros(()), {"expert_total": 0.0})
+        if _guidance_disabled(config):
+            action_loss, action_stats = compute_plain_action_loss(policy, processed_batch)
+            expert_loss, expert_stats = action_loss.new_zeros(()), {"expert_total": 0.0}
+        else:
+            inputs = policy._build_model_inputs(processed_batch)
+            enc = policy.model.forward_vlm(input_ids=inputs["input_ids"], pixel_values=inputs["image_input"], image_mask=inputs["image_mask"])
+            target = load_guidance_target(guidance_source, raw_batch, config, runtime.teacher_image_key)
+            action_loss, action_stats, guidance_tokens = compute_guided_action_loss_from_encoder(policy, processed_batch, inputs, enc, config=config, guidance_mode=guidance_mode)
+            expert_loss, expert_stats = compute_guidance_loss(policy, target, guidance_tokens) if expert_weight > 0.0 else (action_loss.new_zeros(()), {"expert_total": 0.0})
         total = action_weight * action_loss + expert_weight * expert_loss
         for key, value in action_stats.items(): component_totals[f"{prefix}_{key}"] = component_totals.get(f"{prefix}_{key}", 0.0) + float(value)
         for key, value in expert_stats.items(): component_totals[f"{prefix}_{key}"] = component_totals.get(f"{prefix}_{key}", 0.0) + float(value)
@@ -716,6 +752,13 @@ def run_validation(config: GuidedXVLATrainConfig, runtime: XVLARuntime, policy, 
 def restore_guided_policy_checkpoint(config: GuidedXVLATrainConfig, runtime: XVLARuntime, policy, checkpoint_dir: str | Path) -> None:
     from thesis_vla.policies.xvla_guided import XVLAGuidedPolicy
 
+    if _guidance_disabled(config):
+        restored_policy = XVLAPolicy.from_pretrained(str(checkpoint_dir), config=policy.config)
+        policy.load_state_dict(restored_policy.state_dict(), strict=True)
+        policy.to(_as_device(config))
+        runtime.preprocessor, runtime.postprocessor = make_xvla_runtime_processors(policy=policy, pretrained_path=str(checkpoint_dir), device=runtime.policy_device, rename_map=runtime.rename_map, dataset_stats=runtime.dataset.meta.stats, use_dataset_stats=True)
+        ensure_xvla_slice_step(runtime.preprocessor, get_so101_slice_spec(getattr(policy.config, "action_mode", None)))
+        return
     restored_policy = XVLAGuidedPolicy.from_pretrained(str(checkpoint_dir), config=policy.config)
     policy.load_state_dict(restored_policy.state_dict(), strict=True)
     policy.to(_as_device(config))
@@ -736,6 +779,11 @@ class GuidedTrainingModule(nn.Module):
         self._gpu_payload_events_logged.add(event)
 
     def forward(self, processed_batch: dict[str, Any], target, *, step: int | None = None, rank: int = 0, wandb_run=None, schedule: GuidedScheduleState | None = None):
+        if _guidance_disabled(self._config):
+            action_loss, action_stats = compute_plain_action_loss(self.policy, processed_batch)
+            expert_stats = {"expert_total": 0.0}
+            action_weight = float(self._config.action_loss_weight) if schedule is None else float(schedule.action_loss_weight)
+            return action_weight * action_loss, action_stats, expert_stats
         inputs = self.policy._build_model_inputs(processed_batch)
         self._maybe_log_gpu_payload("gpu_payload_inputs", "inputs", inputs, step=step, rank=int(rank), wandb_run=wandb_run)
         enc = self.policy.model.forward_vlm(input_ids=inputs["input_ids"], pixel_values=inputs["image_input"], image_mask=inputs["image_mask"])
@@ -757,7 +805,7 @@ class GuidedTrainingModule(nn.Module):
 def _validation_metrics(config: GuidedXVLATrainConfig, runtime: XVLARuntime, policy, guidance_source, val_loader: DataLoader, *, step: int) -> dict[str, float]:
     schedule = _guidance_schedule_state(config, int(step))
     metrics = run_validation(config, runtime, policy, guidance_source, val_loader, prefix="val", guidance_mode="guided", schedule=schedule)
-    if bool(config.validation_include_no_guidance): metrics.update(run_validation(config, runtime, policy, guidance_source, val_loader, prefix="val_no_guidance", guidance_mode="disabled", schedule=schedule))
+    if bool(config.validation_include_no_guidance) and not _guidance_disabled(config): metrics.update(run_validation(config, runtime, policy, guidance_source, val_loader, prefix="val_no_guidance", guidance_mode="disabled", schedule=schedule))
     return metrics
 
 
@@ -800,14 +848,19 @@ def train_guided_xvla(config: GuidedXVLATrainConfig) -> None:
     policy.train()
     if config.freeze_xvla_vlm: policy.model.vlm.eval()
     train_module = GuidedTrainingModule(policy, config)
-    train_module, optimizer.policy_optimizer, optimizer.decoder_optimizer, loader = accelerator.prepare(train_module, optimizer.policy_optimizer, optimizer.decoder_optimizer, loader)
-    optimizer.policy_scheduler = accelerator.unwrap_model(train_module).policy.config.get_scheduler_preset().build(optimizer.policy_optimizer, config.steps)
+    plain_policy_scheduler = None
+    if isinstance(optimizer, JointTrainingState):
+        train_module, optimizer.policy_optimizer, optimizer.decoder_optimizer, loader = accelerator.prepare(train_module, optimizer.policy_optimizer, optimizer.decoder_optimizer, loader)
+        optimizer.policy_scheduler = accelerator.unwrap_model(train_module).policy.config.get_scheduler_preset().build(optimizer.policy_optimizer, config.steps)
+    else:
+        train_module, optimizer, loader = accelerator.prepare(train_module, optimizer, loader)
+        plain_policy_scheduler = accelerator.unwrap_model(train_module).policy.config.get_scheduler_preset().build(optimizer, config.steps)
     if resume_payload is not None: restore_optimizer_state(optimizer, resume_payload[2])
     step = int(resume_payload[2].get("step", 0)) if resume_payload is not None else 0
     zero_optimizer_grad(optimizer)
     progress = tqdm(total=max(int(config.steps) - int(step), 0), desc=config.name, disable=not is_main)
     emitted_validation_steps: set[int] = set()
-    accelerator.unwrap_model(train_module).policy.model.set_guidance_trainability(step)
+    if hasattr(accelerator.unwrap_model(train_module).policy.model, "set_guidance_trainability"): accelerator.unwrap_model(train_module).policy.model.set_guidance_trainability(step)
     if is_main: print(json.dumps({"event": "ddp_config", "gradient_accumulation_steps": int(accum_steps), "num_processes": int(accelerator.num_processes), "find_unused_parameters": True}))
     if is_main:
         schedule = _guidance_schedule_state(config, int(step))
@@ -832,21 +885,21 @@ def train_guided_xvla(config: GuidedXVLATrainConfig) -> None:
             if step >= config.steps: break
             current_step = step + 1
             schedule = _guidance_schedule_state(config, int(current_step))
-            accelerator.unwrap_model(train_module).policy.model.set_guidance_trainability(current_step)
+            if hasattr(accelerator.unwrap_model(train_module).policy.model, "set_guidance_trainability"): accelerator.unwrap_model(train_module).policy.model.set_guidance_trainability(current_step)
             processed_batch = preprocess_batch(runtime, raw_batch)
-            target = load_guidance_target(guidance_source, raw_batch, config, runtime.teacher_image_key)
+            target = None if _guidance_disabled(config) else load_guidance_target(guidance_source, raw_batch, config, runtime.teacher_image_key)
             with accelerator.accumulate(train_module):
                 total_loss, action_stats, expert_stats = train_module(processed_batch, target, step=int(current_step), rank=int(accelerator.process_index), wandb_run=wandb_run if is_main else None, schedule=schedule)
                 accelerator.backward(total_loss)
                 if not accelerator.sync_gradients: continue
                 debug_every = int(config.guidance_debug_every)
-                should_debug = is_main and debug_every > 0 and current_step % debug_every == 0
+                should_debug = is_main and not _guidance_disabled(config) and debug_every > 0 and current_step % debug_every == 0
                 if should_debug:
                     debug_metrics = {"event": "guidance_debug", "step": int(current_step), **collect_guidance_debug_metrics(accelerator.unwrap_model(train_module).policy, processed_batch, config)}
                     print(json.dumps(debug_metrics))
                     if wandb_run is not None: wandb_run.log({key: value for key, value in debug_metrics.items() if key != "event"}, step=int(current_step))
                 accelerator.clip_grad_norm_(train_module.parameters(), XVLA_GRAD_CLIP_NORM)
-                _step_guided_optimizer(optimizer, schedule)
+                _step_guided_optimizer(optimizer, schedule, policy_scheduler=plain_policy_scheduler)
                 zero_optimizer_grad(optimizer)
             step = current_step
             if is_main and step % max(int(config.log_every), 1) == 0:
