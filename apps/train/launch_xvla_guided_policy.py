@@ -30,8 +30,7 @@ GA = 1
 DEC_LR = 5e-5
 XVLA_LR = 5e-6
 MODE = "accelerate"
-DEVICES = (0,1)
-
+DEVICES = (2,3)
 RUNTIME_CONFIG = GuidedRuntimeConfig(launch_mode=MODE, cuda_devices=DEVICES, num_workers=4, dry_run=False)
 MULT = 1 if MODE == "single" else len(DEVICES)
 
@@ -121,7 +120,7 @@ JOINT_CEDIRNET_BOX_DECODER_INIT = JOINT_CEDIRNET_BOX_CHECKPOINT_ROOT
 
 # BOTH: CEDIRNet + DINO joint, cloth fold
 # -------------------------
-PATH = "None" # "/both_cedirnet_dino_joint_clothfold_20260612_192204/checkpoint_0004000"
+PATH = "0.25___both___fold_20260620_011142___5e-05_bs32" 
 CHECKPOINT = "/checkpoint_final"
 BOTH_CEDIRNET_DINO_FOLD_CHECKPOINT_ROOT = OUT + PATH + CHECKPOINT
 BOTH_CEDIRNET_DINO_FOLD_XVLA_INIT = BOTH_CEDIRNET_DINO_FOLD_CHECKPOINT_ROOT + "/policy"
@@ -129,7 +128,7 @@ BOTH_CEDIRNET_DINO_FOLD_DECODER_INIT = BOTH_CEDIRNET_DINO_FOLD_CHECKPOINT_ROOT
 
 # BOTH: CEDIRNet + DINO joint, cloth box
 # -------------------------
-PATH = "None" # "/both_cedirnet_dino_joint_cloth_box_20260613_022649/checkpoint_0004000"
+PATH = "0.25___both___box_20260620_011142___5e-05_bs32" 
 CHECKPOINT = "/checkpoint_final"
 BOTH_CEDIRNET_DINO_BOX_CHECKPOINT_ROOT = OUT + PATH + CHECKPOINT
 BOTH_CEDIRNET_DINO_BOX_XVLA_INIT = BOTH_CEDIRNET_DINO_BOX_CHECKPOINT_ROOT + "/policy"
@@ -212,10 +211,6 @@ FOLD_CEDIRNET_GUIDANCE = [
     guided_spec("fold", "concat_after", "after_visual"),
     guided_spec("fold", "concat_before", "before_vlm"),
 ] # RAN
-FOLD_CEDIRNET_INTERFACE_GUIDANCE = [
-    # guided_spec("fold", "iface_after", "after_visual", guidance_use_interface_projection=True, guidance_interface_num_tokens=64),
-    guided_spec("fold", "iface_before", "before_vlm", guidance_use_interface_projection=True, guidance_interface_num_tokens=32),
-] # RUNNING BEFORE_VLM
 FOLD_CEDIRNET_GATED_GUIDANCE = [
     guided_spec("fold", "gated_before", "before_vlm", guidance_concat_gating=True),
 ]
@@ -224,6 +219,7 @@ FOLD_CEDIRNET_SELECTED_GUIDANCE = [
     guided_spec("fold", "selected_before", "before_vlm", guidance_mode="selected_layers", guidance_selected_layers=(6,12,18)),
 ] # Running Before VLM
 
+# BASELINES --------------------
 FOLD_CEDIRNET_BASELINE_CONTROL = [
     guided_spec("fold", "baseline", "after_visual", guidance_mode="disabled", expert_loss_weight=0.0, validation_include_no_guidance=False),
 ]
@@ -233,23 +229,27 @@ FOLD_CEDIRNET_HIDDEN_GUIDANCE_CONTROL = [
 FOLD_CEDIRNET_SHUFFLED_GUIDANCE_CONTROL = [
     ablation_spec("fold", "shuffled", guidance_ablation_mode="shuffled_guidance"),
 ]
+# ------------------------------
 
 # CEDIRNET AND DINO
 FOLD_BOTH_CEDIRNET_DINO_GUIDANCE = [
-    guided_spec("fold", "concat_after", "after_visual", family="both"),
     guided_spec("fold", "concat_before", "before_vlm", family="both"),
 ]
-FOLD_BOTH_CEDIRNET_DINO_INTERFACE_GUIDANCE = [
-    guided_spec("fold", "iface_after", "after_visual", family="both", guidance_use_interface_projection=True, guidance_interface_num_tokens=64),
-    guided_spec("fold", "iface_before", "before_vlm", family="both", guidance_use_interface_projection=True, guidance_interface_num_tokens=64),
-]
 FOLD_BOTH_CEDIRNET_DINO_GATED_GUIDANCE = [
-    guided_spec("fold", "gated_after", "after_visual", family="both", guidance_concat_gating=True),
     guided_spec("fold", "gated_before", "before_vlm", family="both", guidance_concat_gating=True),
 ]
 FOLD_BOTH_CEDIRNET_DINO_SELECTED_GUIDANCE = [
-    guided_spec("fold", "selected_after", "after_visual", family="both", guidance_mode="selected_layers", guidance_selected_layers=(11,)),
     guided_spec("fold", "selected_before", "before_vlm", family="both", guidance_mode="selected_layers", guidance_selected_layers=(11,)),
+    guided_spec("fold", "selected_before", "before_vlm", family="both", guidance_mode="selected_layers", guidance_selected_layers=(6,12,18)),
+]
+FOLD_BOTH_CEDIRNET_DINO_BASELINE_CONTROL = [
+    guided_spec("fold", "baseline", "after_visual", family="both", guidance_mode="disabled", expert_loss_weight=0.0, validation_include_no_guidance=False),
+]
+FOLD_BOTH_CEDIRNET_DINO_HIDDEN_GUIDANCE_CONTROL = [
+    ablation_spec("fold", "hidden", family="both", guidance_ablation_mode="hidden_guidance"),
+]
+FOLD_BOTH_CEDIRNET_DINO_SHUFFLED_GUIDANCE_CONTROL = [
+    ablation_spec("fold", "shuffled", family="both", guidance_ablation_mode="shuffled_guidance"),
 ]
 # =============================================================
 
@@ -260,10 +260,6 @@ BOX_CEDIRNET_GUIDANCE = [
     guided_spec("box", "concat_after", "after_visual"),
     guided_spec("box", "concat_before", "before_vlm"),
 ] # RAN
-BOX_CEDIRNET_INTERFACE_GUIDANCE = [
-    guided_spec("box", "iface_after", "after_visual", guidance_use_interface_projection=True, guidance_interface_num_tokens=64),
-    guided_spec("box", "iface_before", "before_vlm", guidance_use_interface_projection=True, guidance_interface_num_tokens=64),
-] # RUNNING BEFORE_VLM
 BOX_CEDIRNET_GATED_GUIDANCE = [
     guided_spec("box", "gated_before", "before_vlm", guidance_concat_gating=True),
 ]
@@ -283,33 +279,48 @@ BOX_CEDIRNET_SHUFFLED_GUIDANCE_CONTROL = [
 ]
 
 # CEDIRNET AND DINO
-BOX_BOTH_CEDIRNET_DINO_INTERFACE_GUIDANCE = [
-    guided_spec("box", "iface_after", "after_visual", family="both", guidance_use_interface_projection=True, guidance_interface_num_tokens=64),
-    guided_spec("box", "iface_before", "before_vlm", family="both", guidance_use_interface_projection=True, guidance_interface_num_tokens=64),
-]
 BOX_BOTH_CEDIRNET_DINO_GATED_GUIDANCE = [
-    guided_spec("box", "gated_after", "after_visual", family="both", guidance_concat_gating=True),
     guided_spec("box", "gated_before", "before_vlm", family="both", guidance_concat_gating=True),
 ]
 BOX_BOTH_CEDIRNET_DINO_GUIDANCE = [
-    guided_spec("box", "concat_after", "after_visual", family="both"),
     guided_spec("box", "concat_before", "before_vlm", family="both"),
 ]
 BOX_BOTH_CEDIRNET_DINO_SELECTED_GUIDANCE = [
-    guided_spec("box", "selected_after", "after_visual", family="both", guidance_mode="selected_layers", guidance_selected_layers=(11,)),
     guided_spec("box", "selected_before", "before_vlm", family="both", guidance_mode="selected_layers", guidance_selected_layers=(11,)),
+    guided_spec("box", "selected_before", "before_vlm", family="both", guidance_mode="selected_layers", guidance_selected_layers=(6,12,18)),
+]
+BOX_BOTH_CEDIRNET_DINO_BASELINE_CONTROL = [
+    guided_spec("box", "baseline", "after_visual", family="both", guidance_mode="disabled", expert_loss_weight=0.0, validation_include_no_guidance=False),
+]
+BOX_BOTH_CEDIRNET_DINO_HIDDEN_GUIDANCE_CONTROL = [
+    ablation_spec("box", "hidden", family="both", guidance_ablation_mode="hidden_guidance"),
+]
+BOX_BOTH_CEDIRNET_DINO_SHUFFLED_GUIDANCE_CONTROL = [
+    ablation_spec("box", "shuffled", family="both", guidance_ablation_mode="shuffled_guidance"),
 ]
 # =============================================================
-
 
 # EXPERIMENTS = [FOLD_CEDIRNET_GUIDANCE[0]]
 # EXPERIMENTS = [BOX_CEDIRNET_GUIDANCE[0]]
 # EXPERIMENTS = [BOX_CEDIRNET_GUIDANCE[1]]
-EXPERIMENTS = [FOLD_CEDIRNET_INTERFACE_GUIDANCE[0]]
-EXPERIMENTS = FOLD_CEDIRNET_BASELINE_CONTROL
-EXPERIMENTS = BOX_CEDIRNET_BASELINE_CONTROL
+# EXPERIMENTS = [FOLD_CEDIRNET_INTERFACE_GUIDANCE[0]]
+# EXPERIMENTS = FOLD_CEDIRNET_BASELINE_CONTROL
+# EXPERIMENTS = BOX_CEDIRNET_BASELINE_CONTROL
 
-EXPERIMENTS = FOLD_CEDIRNET_GATED_GUIDANCE + BOX_CEDIRNET_GATED_GUIDANCE
+# EXPERIMENTS = FOLD_CEDIRNET_GATED_GUIDANCE + BOX_CEDIRNET_GATED_GUIDANCE
+# EXPERIMENTS = BOX_CEDIRNET_HIDDEN_GUIDANCE_CONTROL
+# EXPERIMENTS = FOLD_CEDIRNET_HIDDEN_GUIDANCE_CONTROL
+
+
+# PENDIENTES
+
+# RUNNING
+# EXPERIMENTS = FOLD_BOTH_CEDIRNET_DINO_GUIDANCE + BOX_BOTH_CEDIRNET_DINO_GUIDANCE
+# EXPERIMENTS = [FOLD_BOTH_CEDIRNET_DINO_SELECTED_GUIDANCE[0]] + [FOLD_BOTH_CEDIRNET_DINO_SELECTED_GUIDANCE[1]]
+# EXPERIMENTS = [BOX_BOTH_CEDIRNET_DINO_SELECTED_GUIDANCE[0]]  + [BOX_BOTH_CEDIRNET_DINO_SELECTED_GUIDANCE[1]]
+# EXPERIMENTS = BOX_BOTH_CEDIRNET_DINO_BASELINE_CONTROL + BOX_BOTH_CEDIRNET_DINO_HIDDEN_GUIDANCE_CONTROL
+# EXPERIMENTS = FOLD_BOTH_CEDIRNET_DINO_BASELINE_CONTROL + FOLD_BOTH_CEDIRNET_DINO_HIDDEN_GUIDANCE_CONTROL
+EXPERIMENTS = FOLD_BOTH_CEDIRNET_DINO_GATED_GUIDANCE + BOX_BOTH_CEDIRNET_DINO_GATED_GUIDANCE
 
 def main() -> None:
     run_experiments(workspace_dir=WORKSPACE_DIR, defaults=DEFAULTS, experiments=EXPERIMENTS)
