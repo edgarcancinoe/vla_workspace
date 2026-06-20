@@ -143,10 +143,13 @@ TASK_DATASET = {"fold": CLOTH_FOLD_DS, "box": CLOTH_BOX_DS}
 NAME_PREFIX  = {"cedirnet": "cedir", "both": "both"}
 
 MODE_TAG = {
+    "baseline": "baseline_control",
     "concat_after": "concat_after_visual",
     "concat_before": "concat_before_vlm",
     "iface_after": "concat_iface_after_visual",
     "iface_before": "concat_iface_before_vlm",
+    "selected_after": "selected_layers_after_visual",
+    "selected_before": "selected_layers_before_vlm",
     "gated_after": "concat_gated_after_visual",
     "gated_before": "concat_gated_before_vlm",
     "selected_after": "selected_layers_after_visual",
@@ -218,6 +221,10 @@ FOLD_CEDIRNET_SELECTED_GUIDANCE = [
     guided_spec("fold", "selected_before", "before_vlm", guidance_mode="selected_layers", guidance_selected_layers=(6,12,18)),
 ] # Running Before VLM
 
+FOLD_CEDIRNET_BASELINE_CONTROL = [
+    guided_spec("fold", "baseline", "after_visual", guidance_mode="disabled", expert_loss_weight=0.0, validation_include_no_guidance=False),
+]
+
 # CEDIRNET AND DINO
 FOLD_BOTH_CEDIRNET_DINO_GUIDANCE = [
     guided_spec("fold", "concat_after", "after_visual", family="both"),
@@ -255,6 +262,10 @@ BOX_CEDIRNET_GATED_GUIDANCE = [
 BOX_CEDIRNET_SELECTED_GUIDANCE = [
     guided_spec("box", "selected_before", "before_vlm", guidance_mode="selected_layers", guidance_selected_layers=(11,)),
     guided_spec("box", "selected_before", "before_vlm", guidance_mode="selected_layers", guidance_selected_layers=(6,12,18)),
+]
+
+BOX_CEDIRNET_BASELINE_CONTROL = [
+    guided_spec("box", "baseline", "after_visual", guidance_mode="disabled", expert_loss_weight=0.0, validation_include_no_guidance=False),
 ]
 
 # CEDIRNET AND DINO
